@@ -1,0 +1,394 @@
+import AppKit
+import SwiftUI
+import BlinkClipCore
+
+extension ReplicaSearchFilterChip.Selection {
+    var queryNode: SearchQueryNode {
+        let value: String
+        switch self {
+        case let .kind(kind):
+            switch kind {
+            case .text, .richText: value = "Text"
+            case .link: value = "Link"
+            case .image: value = "Image"
+            case .files: value = "File"
+            case .color: value = "Color"
+            case .unknown: value = "Unknown"
+            }
+        case let .source(source): value = source
+        case let .device(device): value = device
+        case let .date(filter): return SearchDateEncoding.filterNodeForRange(filter.range)
+        case let .pinboard(id): value = id
+        }
+        return .filter(group, value)
+    }
+
+    var group: UInt8 {
+        switch self {
+        case .source: return 0
+        case .kind: return 1
+        case .date: return 3
+        case .device: return 4
+        case .pinboard: return 5
+        }
+    }
+}
+
+@MainActor
+enum ReplicaFilterMatching {
+    static func chip(_ selection: ReplicaSearchFilterChip.Selection, store: ClipboardStore,
+                     rawValue: String? = nil) -> ReplicaSearchFilterChip {
+        let value: String
+        if let rawValue {
+            value = rawValue
+        } else {
+            guard case let .filter(_, canonicalValue) = selection.queryNode else { preconditionFailure() }
+            value = canonicalValue
+        }
+        let image = iconForFilterKind(kind: selection.group, value: value, store: store)
+        let title = SearchSuggestions.listNameForKind(kind: selection.group, value: value) {
+            store.tabListTarget(identifier: $0)?.name
+        }
+        return ReplicaSearchFilterChip(selection: selection, title: title, image: image)
+    }
+
+    private static func iconForFilterKind(kind: UInt8, value: String, store: ClipboardStore) -> NSImage? {
+        if kind == 5, let colorCode = store.tabListTarget(identifier: value)?.colorCode {
+            // This offline application has local, unshared groups; CKShare metadata is excluded.
+            return PinboardHeaderIcon.image(height: 12, shared: false,
+                color: PinboardColor(canonicalColorCode: colorCode).color())
+        }
+        if kind == 4, let type = store.searchDeviceType(named: value) {
+            let symbol = type == 0 ? "iphone" : type == 1 ? "ipad" : "macbook"
+            return systemImage(symbol)
+        }
+        if kind == 0, let image = store.searchApplicationImage(named: value) { return image }
+        guard let symbol = SearchFilterSymbols.symbolForFilterKind(kind: kind, value: value) else { return nil }
+        return systemImage(symbol)
+    }
+
+    private static func systemImage(_ name: String) -> NSImage {
+        // 0546e0 probes availability, then creates the image again; the required fallback traps if absent.
+        if SystemImageFunctions.makeSystemImage(name) != nil {
+            return SystemImageFunctions.makeSystemImage(name)!
+        }
+        return SystemImageFunctions.makeSystemImage("questionmark.square")!
+    }
+}
+
+// publish empty candidates before the MainActor load task.
+@MainActor
+private final class ReplicaFilterBrowserModel: ObservableObject {
+    @Published private(set) var sections: [ReplicaFilterBrowser.Section] = []
+    @Published private(set) var query: [SearchQueryNode]
+    private let onQueryChanged: ([SearchQueryNode]) -> Void
+
+    init(query: [SearchQueryNode], load: @escaping @MainActor () -> [ReplicaFilterBrowser.Section],
+         onQueryChanged: @escaping ([SearchQueryNode]) -> Void) {
+        self.query = query
+        self.onQueryChanged = onQueryChanged
+        // The original task retains its view model until loading/publication finishes.
+        Task { @MainActor [self] in sections = load() }
+    }
+
+    func hasSearchFilter(_ selection: ReplicaSearchFilterChip.Selection) -> Bool {
+        query.contains(selection.queryNode)
+    }
+
+    // 006e80 updates the model query before delivering it to the originating SearchBar.
+    func toggleSearchFilter(_ selection: ReplicaSearchFilterChip.Selection) {
+        let filter = selection.queryNode
+        var nodes = query
+        if nodes.contains(filter) {
+            nodes.removeAll { $0 == filter }
+        } else {
+            nodes.append(filter)
+        }
+        query = nodes
+        onQueryChanged(query)
+    }
+}
+
+@MainActor
+private struct ReplicaFilterBrowser: View {
+    struct Section: Identifiable {
+        let id: UInt8
+        let title: String
+        let choices: [ReplicaSearchFilterChip.Selection]
+    }
+    struct Entry: Identifiable {
+        let id: String
+        let selection: ReplicaSearchFilterChip.Selection?
+        let section: UInt8
+    }
+    @ObservedObject var state: ReplicaUIState
+    @ObservedObject var model: ReplicaFilterBrowserModel
+    private var sections: [Section] { model.sections }
+    let hideApplied: Bool
+    let close: () -> Void
+    @State private var expanded: Set<UInt8> = []
+    @State private var selectedIndex: Int?
+    @State private var keyboardMonitor: Any?
+    @FocusState private var focused: Bool
+    private let columns = Array(repeating: GridItem(.flexible(minimum: 10)), count: 3)
+
+    private var visibleSections: [(section: Section, entries: [Entry])] {
+        sections.compactMap { section in
+            let choices = section.choices.filter { !hideApplied || !model.hasSearchFilter($0) }
+            guard !choices.isEmpty else { return nil }
+            var entries = (choices.count >= 11 && !expanded.contains(section.id) ? Array(choices.prefix(8)) : choices)
+                .map { Entry(id: String(describing: $0), selection: $0, section: section.id) }
+            if choices.count >= 11 { entries.append(Entry(id: "more-\(section.id)", selection: nil, section: section.id)) }
+            return (section, entries)
+        }
+    }
+
+    private var allEntries: [Entry] { visibleSections.flatMap(\.entries) }
+
+    var body: some View {
+        ScrollViewReader { reader in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(visibleSections, id: \.section.id) { group in
+                        Text(group.section.title).font(.callout.bold()).foregroundStyle(.secondary)
+                            .padding(.vertical, 10)
+                        LazyVGrid(columns: columns, alignment: .center, spacing: 8) {
+                            ForEach(group.entries) { entry in
+                                entryView(entry).id(entry.id)
+                            }
+                        }.padding(.bottom, 8)
+                    }
+                }.padding(.horizontal, 10)
+            }
+            .contentMargins(.vertical, 10, for: .scrollIndicators)
+            .onChange(of: selectedIndex) { _, index in
+                if let index, allEntries.indices.contains(index) { reader.scrollTo(allEntries[index].id) }
+            }
+        }
+        .frame(width: 440).frame(minHeight: 230, maxHeight: 330)
+        .focusable().focusEffectDisabled().focused($focused)
+        .onAppear { focused = true; installKeyboardMonitor() }
+        .onDisappear { removeKeyboardMonitor() }
+        .onMoveCommand { move($0) }
+        .onExitCommand { close() }
+        .onKeyPress("f", phases: .down) { press in
+            guard press.modifiers == .command else { return .ignored }
+            close()
+            return .handled
+        }
+    }
+
+    @ViewBuilder private func entryView(_ entry: Entry) -> some View {
+        let highlighted = selectedIndex.flatMap { allEntries.indices.contains($0) ? allEntries[$0].id : nil } == entry.id
+        Group {
+            if let selection = entry.selection {
+                let chip = ReplicaFilterMatching.chip(selection, store: state.store)
+                FilterView(chip: chip, applied: model.hasSearchFilter(selection)) { activate(entry) }
+            } else {
+                Button { activate(entry) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: expanded.contains(entry.section) ? "chevron.up" : "chevron.down")
+                            .resizable().scaledToFit().frame(width: 12, height: 12)
+                        Text(SearchLocalization.text(expanded.contains(entry.section) ? "general.less" : "general.more"))
+                            .font(.body).lineLimit(1)
+                    }.padding(.horizontal, 10).padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: 28)
+                }.buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).frame(height: 28)
+        .overlay {
+            if highlighted {
+                Capsule(style: .continuous).strokeBorder(Color.accentColor, lineWidth: 2).padding(-4)
+            }
+        }
+    }
+
+    // f031978 / f0321d4: monitor exists only while the browser is presented.
+    private func installKeyboardMonitor() {
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { handleMonitoredKey(event) ? nil : event }
+        }
+    }
+
+    private func removeKeyboardMonitor() {
+        if let keyboardMonitor { NSEvent.removeMonitor(keyboardMonitor) }
+        keyboardMonitor = nil
+    }
+
+    // f031b60: consume physical Return/Tab only; unsupported keys stay in the responder chain.
+    private func handleMonitoredKey(_ event: NSEvent) -> Bool {
+        switch NavigationKey.fromEvent(event) {
+        case .enter:
+            if let index = selectedIndex, allEntries.indices.contains(index) {
+                activate(allEntries[index], modifierFlags: event.modifierFlags)
+            }
+            return true
+        case .tab:
+            move(event.modifierFlags.intersection([.shift, .option]).isEmpty ? .right : .left)
+            return true
+        default: return false
+        }
+    }
+
+    private func activate(_ entry: Entry, modifierFlags: NSEvent.ModifierFlags? = nil) {
+        guard let selection = entry.selection else {
+            if expanded.contains(entry.section) { expanded.remove(entry.section) }
+            else { expanded.insert(entry.section) }
+            selectedIndex = nil
+            return
+        }
+        model.toggleSearchFilter(selection)
+        if let modifierFlags {
+            if !modifierFlags.contains(.command) { close() }
+        } else if !NSEvent.modifierFlags.contains(.command) { close() }
+    }
+
+    private func move(_ direction: MoveCommandDirection) {
+        let counts = visibleSections.map { $0.entries.count }
+        let total = counts.reduce(0, +)
+        guard total > 0 else { selectedIndex = nil; return }
+        guard let selectedIndex else { self.selectedIndex = 0; return }
+        let current = min(selectedIndex, total - 1)
+        switch direction {
+        case .left: self.selectedIndex = (current - 1 + total) % total
+        case .right: self.selectedIndex = (current + 1) % total
+        case .up, .down:
+            var offset = 0
+            for (section, count) in counts.enumerated() {
+                defer { offset += count }
+                guard current < offset + count else { continue }
+                let local = current - offset
+                let column = local % 3
+                if direction == .up {
+                    if local >= 3 { self.selectedIndex = current - 3 }
+                    else if section == 0 { self.selectedIndex = total - 1 }
+                    else {
+                        let previousCount = counts[section - 1]
+                        self.selectedIndex = offset - previousCount + ((previousCount - 1) / 3) * 3
+                            + min(column, (previousCount - 1) % 3)
+                    }
+                } else if local / 3 < (count - 1) / 3 {
+                    self.selectedIndex = min(current + 3, offset + count - 1)
+                } else if section + 1 < counts.count {
+                    self.selectedIndex = offset + count + min(column, counts[section + 1] - 1)
+                } else { self.selectedIndex = 0 }
+                return
+            }
+        @unknown default: break
+        }
+    }
+
+    private struct FilterView: View {
+        let chip: ReplicaSearchFilterChip
+        let applied: Bool
+        let action: () -> Void
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    if let image = chip.image {
+                        if chip.selection.group == 5 {
+                            Image(nsImage: image).frame(width: 16, height: 16)
+                        } else {
+                            Image(nsImage: image).resizable().scaledToFit().frame(width: 16, height: 16)
+                        }
+                    }
+                    Text(chip.title).font(.body).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .frame(height: 28, alignment: .leading)
+            }.buttonStyle(FilterButtonStyle(applied: applied))
+        }
+    }
+
+    private struct FilterButtonStyle: ButtonStyle {
+        let applied: Bool
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .foregroundStyle(applied ? Color.white : Color(nsColor: .labelColor))
+                .background(Capsule(style: .continuous).fill(applied ? Color.accentColor
+                    : Color(nsColor: ToolbarAppearance.borderAndHover())))
+                .overlay(Capsule(style: .continuous).fill(Color.black.opacity(configuration.isPressed ? 0.1 : 0)))
+        }
+    }
+}
+
+extension ReplicaUIController {
+    func handleSearchCommand() {
+        func findField(_ view: NSView) -> SearchField? {
+            if let field = view as? SearchField { return field }
+            return view.subviews.lazy.compactMap { findField($0) }.first
+        }
+        guard state.searchVisible, let content = panel.contentView, let field = findField(content) else {
+            focusSearch()
+            return
+        }
+        let editor = field.makeInput().cachedTextView()
+        if panel.firstResponder === editor { showFilterBrowser(relativeTo: field.makeFiltersButton()) }
+        else { panel.makeFirstResponder(editor) }
+    }
+
+    func showFilterBrowser(relativeTo button: NSButton) {
+        if let filterBrowserPopover, filterBrowserPopover.isDisplayed { filterBrowserPopover.close(); return }
+        var ancestor: NSView? = button
+        while let view = ancestor, !(view is PanelSearchBar) { ancestor = view.superview }
+        guard let searchBar = ancestor as? PanelSearchBar else { return }
+        let popover = FilterBrowserPopover()
+        let field = button.superview as? SearchField
+        popover.onWillClose = { [weak self, weak field] in
+            self?.filterBrowserPopover = nil
+            if self?.state.searchVisible == true, let field {
+                field.window?.makeFirstResponder(field.makeInput().cachedTextView())
+            }
+            field?.animateFiltersButton()
+        }
+        let state = self.state
+        let initialQuery = searchBar.filterQuerySnapshot
+        let hideApplied = NSEvent.modifierFlags.contains(.option)
+        let model = ReplicaFilterBrowserModel(query: initialQuery,
+            load: { Self.filterBrowserSections(filters: state.availableSearchFilters()) },
+            onQueryChanged: { [weak searchBar] query in searchBar?.applySearchQuery(query) })
+        let content = ReplicaFilterBrowser(state: state, model: model,
+            hideApplied: hideApplied, close: { [weak popover] in popover?.close() })
+        let controller = NSHostingController(rootView: content)
+        controller.sizingOptions = [.preferredContentSize]
+        filterBrowserPopover = popover
+        popover.present(controller, relativeTo: button)
+        field?.animateFiltersButton()
+    }
+
+    private static func filterBrowserSections(filters: [UInt8: [SearchQueryNode]]) -> [ReplicaFilterBrowser.Section] {
+        let types = (filters[1] ?? []).compactMap { node -> ReplicaSearchFilterChip.Selection? in
+            guard case let .filter(1, value) = node,
+                  let kind = ClipboardKind(rawValue: value == "File" ? "files" : value.lowercased()) else { return nil }
+            return .kind(kind)
+        }
+        let sources = (filters[0] ?? []).compactMap { node -> ReplicaSearchFilterChip.Selection? in
+            guard case let .filter(0, value) = node else { return nil }
+            return .source(value)
+        }
+        let pinboards = (filters[5] ?? []).compactMap { node -> ReplicaSearchFilterChip.Selection? in
+            guard case let .filter(5, value) = node else { return nil }
+            return .pinboard(value)
+        }
+        let dates = (filters[3] ?? []).compactMap { node -> ReplicaSearchFilterChip.Selection? in
+            guard case let .filter(3, value) = node else { return nil }
+            let parts = value.split(separator: " ")
+            guard parts.count == 2, let start = Double(parts[0]), let end = Double(parts[1]), start <= end else { return nil }
+            return .date(.init(title: SearchDateEncoding.titleForFilterValue(value) ?? value,
+                range: Date(timeIntervalSince1970: start)..<Date(timeIntervalSince1970: end)))
+        }
+        let devices = (filters[4] ?? []).compactMap { node -> ReplicaSearchFilterChip.Selection? in
+            guard case let .filter(4, value) = node else { return nil }
+            return .device(value)
+        }
+        return [
+            .init(id: 1, title: SearchLocalization.text("search.filters.section.type"), choices: types),
+            .init(id: 0, title: SearchLocalization.text("search.filters.section.app"), choices: sources),
+            .init(id: 5, title: SearchLocalization.text("blinkclip.search.filters.section.group"), choices: pinboards),
+            .init(id: 3, title: SearchLocalization.text("search.filters.section.date"), choices: dates),
+            .init(id: 4, title: SearchLocalization.text("search.filters.section.device"), choices: devices)
+        ]
+    }
+}

@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Build/verify a macOS archive or publish already verified assets; never run the app."""
+import argparse
+import hashlib
+import json
+import os
+# Accept canonical names while keeping existing CI configuration compatible.
+for _blinkclip_key, _blinkclip_value in list(os.environ.items()):
+    if _blinkclip_key.startswith("BLINKCLIP_"):
+        os.environ["BLINKCLIP_" + _blinkclip_key[9:]] = _blinkclip_value
+from pathlib import Path
+import platform
+import plistlib
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+RELEASE_ARCHITECTURES = ["arm64", "x86_64"]
+
+
+def app_output_directory():
+    explicit = os.environ.get("BLINKCLIP_APP_OUTPUT_DIR", os.environ.get("BLINKCLIP_APP_OUTPUT_DIR"))
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    task = os.environ.get("ARTIFACT_TASK_DIR")
+    return (Path(task) / "out").resolve() if task else ROOT / "replica/dist"
+
+
+def release_output_directory():
+    explicit = os.environ.get("BLINKCLIP_RELEASE_OUTPUT_DIR", os.environ.get("BLINKCLIP_RELEASE_OUTPUT_DIR"))
+    return Path(explicit).expanduser().resolve() if explicit else app_output_directory() / "release"
+
+
+def app_build_environment():
+    environment = os.environ.copy()
+    for suffix in ("APP_OUTPUT_DIR", "RELEASE_OUTPUT_DIR", "BUILD_ROOT"):
+        if "BLINKCLIP_" + suffix in environment:
+            environment["BLINKCLIP_" + suffix] = environment["BLINKCLIP_" + suffix]
+    environment["BLINKCLIP_APP_OUTPUT_DIR"] = str(app_output_directory())
+    if not environment.get("BLINKCLIP_BUILD_ROOT"):
+        task = environment.get("ARTIFACT_TASK_DIR")
+        environment["BLINKCLIP_BUILD_ROOT"] = str(Path(task) / "build/swiftpm" if task else ROOT / "replica/.build")
+    return environment
+
+
+def bundle_version(version):
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?", version):
+        raise ValueError("Unsupported release version")
+    pieces = version.split("-dev.")
+    build = pieces[0] if len(pieces) == 1 else ".".join(pieces[0].split(".")[:2] + [pieces[1]])
+    return pieces[0], build
+
+
+def run(args, **kwargs):
+    return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def api(endpoint, *options, optional=False):
+    result = subprocess.run(["gh", "api", endpoint, *options], cwd=ROOT, capture_output=True, text=True)
+    if optional and result.returncode and "HTTP 404" in result.stderr:
+        return None
+    if result.returncode:
+        raise RuntimeError(result.stderr)
+    return json.loads(result.stdout)
+
+
+def validate_identity(version, tag, commit):
+    bundle_version(version)
+    if json.loads((ROOT / "package.json").read_text())["version"] != version or tag != "v" + version:
+        raise ValueError("Release identity does not match checked-out package.json")
+    actual = run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if actual != commit:
+        raise ValueError("Release commit does not match checkout")
+
+
+def remote_state(repo, tag, commit):
+    ref = api("repos/" + repo + "/git/ref/tags/" + tag, optional=True)
+    if ref:
+        obj = ref["object"]
+        for _ in range(8):
+            if obj["type"] == "commit":
+                break
+            if obj["type"] != "tag":
+                raise ValueError("Unexpected tag object type")
+            obj = api("repos/" + repo + "/git/tags/" + obj["sha"])["object"]
+        if obj["type"] != "commit" or obj["sha"] != commit:
+            raise ValueError("Existing version tag points to another commit; refusing overwrite")
+    release = api("repos/" + repo + "/releases/tags/" + tag, optional=True)
+    if release and not ref:
+        raise ValueError("Existing release has no matching remote tag")
+    return ref, release
+
+
+def asset_names(version):
+    names = ["BlinkClip-" + version + "-macos-universal.dmg", "SHA256SUMS.txt", "release-manifest.json"]
+    if "-dev." not in version:
+        names.append("appcast.xml")
+    return names
+
+
+def changelog_entry(version):
+    lines = (ROOT / "CHANGELOG.md").read_text().splitlines()
+    entry = None
+    for line in lines:
+        if line.startswith("## "):
+            if entry is not None:
+                break
+            if line.startswith("## " + version + " - "):
+                entry = []
+        elif entry is not None:
+            entry.append(line)
+    if entry is None or not "\n".join(entry).strip():
+        raise ValueError("Release version has no changelog entry")
+    return "\n".join(entry).strip()
+
+
+def check_existing(repo, version, tag, commit):
+    ref, release = remote_state(repo, tag, commit)
+    if release:
+        if release["draft"]:
+            raise ValueError("Existing draft needs review; refusing to overwrite assets or publish a failed attempt")
+        names = {asset["name"] for asset in release["assets"]}
+        if not set(asset_names(version)).issubset(names):
+            raise ValueError("Existing published release is incomplete; refusing overwrite")
+        print("Release already published for this commit: " + release["html_url"])
+    return ref, release
+
+
+def verify_app(app, version, architectures):
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    short_version, expected_build = bundle_version(version)
+    if (info.get("CFBundleExecutable") != "BlinkClip" or info.get("CFBundleDisplayName") != "BlinkClip"
+            or info.get("CFBundleShortVersionString") != short_version
+            or info.get("CFBundleVersion") != expected_build or info.get("BlinkClipSourceVersion") != version
+            or info.get("LSMinimumSystemVersion") != "14.0"):
+        raise ValueError("Application bundle version/name mismatch")
+    update_config = {
+        "SUFeedURL": "https://github.com/aexachao/BlinkClip/releases/latest/download/appcast.xml",
+        "SUPublicEDKey": (ROOT / "replica/Assets/UpdatePublicKey.txt").read_text().strip(),
+        "SURequireSignedFeed": True, "SUVerifyUpdateBeforeExtraction": True,
+        "SUEnableAutomaticChecks": False, "SUAutomaticallyUpdate": False, "SUSendProfileInfo": False}
+    if any(info.get(key) != value for key, value in update_config.items()):
+        raise ValueError("Invalid signed in-app update configuration")
+    run(["codesign", "--verify", "--deep", "--strict", str(app)])
+    framework = app / "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+    framework_architectures = run(["lipo", "-archs", str(framework)], capture_output=True, text=True).stdout.split()
+    if not set(architectures).issubset(framework_architectures):
+        raise ValueError("Unexpected executable architectures in Sparkle")
+    executables = [app / "Contents/MacOS/BlinkClip", app / "Contents/MacOS/blinkclip-mcp",
+                   app / "Contents/Library/LoginItems/BlinkClip Helper.app/Contents/MacOS/BlinkClipHelper"]
+    for executable in executables:
+        actual = run(["lipo", "-archs", str(executable)], capture_output=True, text=True).stdout.split()
+        if len(actual) != len(architectures) or set(actual) != set(architectures):
+            raise ValueError("Unexpected executable architectures: " + str(executable) + " " + str(actual))
+        for architecture in architectures:
+            commands = run(["otool", "-arch", architecture, "-l", str(executable)],
+                           capture_output=True, text=True).stdout
+            if re.search(r"\bminos\s+14\.0(?:\.0)?(?:\s|$)", commands) is None:
+                raise ValueError("Unexpected minimum macOS version: " + str(executable))
+            framework_path = ("@executable_path/../../../../../Frameworks" if executable.name == "BlinkClipHelper"
+                              else "@executable_path/../Frameworks")
+            if framework_path not in re.findall(r"\bpath\s+(\S+)\s+\(offset", commands):
+                raise ValueError("Missing bundled Frameworks search path: " + str(executable))
+            for library in re.findall(r"name @rpath/(libswiftCompatibility[^\s/]+\.dylib)", commands):
+                if not (app / "Contents/Frameworks" / library).is_file():
+                    raise ValueError("Missing Swift compatibility library: " + library)
+    for library in (app / "Contents/Frameworks").glob("*.dylib"):
+        actual = run(["lipo", "-archs", str(library)], capture_output=True, text=True).stdout.split()
+        if not set(architectures).issubset(actual):
+            raise ValueError("Unexpected library architectures: " + str(library) + " " + str(actual))
+
+
+def verify_intel(version):
+    if platform.system() != "Darwin" or platform.machine() != "x86_64":
+        raise ValueError("Intel verification requires a native macOS x86_64 runner")
+    verify_app(app_output_directory() / "BlinkClip.app", version, ["x86_64"])
+
+
+def verify_dmg(archive, version, architectures):
+    with tempfile.TemporaryDirectory(prefix="blinkclip-release-mount-") as temporary:
+        mount = Path(temporary)
+        run(["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(archive)])
+        try:
+            verify_app(mount / "BlinkClip.app", version, architectures)
+            applications = mount / "Applications"
+            if not applications.is_symlink() or os.readlink(applications) != "/Applications":
+                raise ValueError("Disk image is missing the Applications shortcut")
+        finally:
+            run(["hdiutil", "detach", str(mount)])
+
+
+def package(version, tag, commit):
+    if platform.system() != "Darwin":
+        raise ValueError("Release requires a macOS runner")
+    app = app_output_directory() / "BlinkClip.app"
+    output = release_output_directory()
+    output.mkdir(parents=True, exist_ok=False)
+    run(["bash", "replica/scripts/build-app.sh", "release", "universal"], env=app_build_environment())
+    verify_app(app, version, RELEASE_ARCHITECTURES)
+    name = asset_names(version)[0]
+    archive = output / name
+    run(["bash", "replica/scripts/build-dmg.sh", str(app), str(archive), "universal"])
+    verify_dmg(archive, version, RELEASE_ARCHITECTURES)
+    if "-dev." not in version:
+        run(["python3", "replica/scripts/create-update-feed.py", "--archive", str(archive), "--version", version])
+    archives = [{"archive": name, "architectures": RELEASE_ARCHITECTURES, "sha256": sha(archive)}]
+    manifest = {"version": version, "tag": tag, "commit": commit, "archives": archives, "container": "dmg",
+                "codesign_verified": True, "notarized": False,
+                "functional_tests_executed": False, "application_executed": False}
+    (output / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (output / "SHA256SUMS.txt").write_text("".join(
+        sha(output / name) + "  " + name + "\n" for name in asset_names(version) if name != "SHA256SUMS.txt"))
+
+
+def publish(repo, version, tag, commit):
+    ref, existing = check_existing(repo, version, tag, commit)
+    if existing:
+        return
+    output = release_output_directory()
+    names = asset_names(version)
+    manifest = json.loads((output / "release-manifest.json").read_text())
+    expected_archives = [{"archive": names[0], "architectures": RELEASE_ARCHITECTURES, "sha256": sha(output / names[0])}]
+    expected_sums = "".join(sha(output / name) + "  " + name + "\n"
+                            for name in names if name != "SHA256SUMS.txt")
+    if (manifest.get("commit") != commit or manifest.get("version") != version or manifest.get("tag") != tag
+            or manifest.get("container") != "dmg" or manifest.get("archives") != expected_archives
+            or manifest.get("codesign_verified") is not True
+            or (output / "SHA256SUMS.txt").read_text() != expected_sums):
+        raise ValueError("Unverified or stale local release assets")
+    verify_dmg(output / names[0], version, RELEASE_ARCHITECTURES)
+    if not ref:
+        api("repos/" + repo + "/git/refs", "--method", "POST", "-f", "ref=refs/tags/" + tag, "-f", "sha=" + commit)
+    remote_state(repo, tag, commit)
+    notes = output / "notes.md"
+    download = "https://github.com/" + repo + "/releases/download/" + tag + "/"
+    notes.write_text("[下载 macOS 通用版（Intel / Apple 芯片）](" + download + names[0] + ")\n\n"
+                     "BlinkClip " + version + " · macOS 14+。一个 Universal DMG 同时兼容 Intel 与 Apple 芯片。\n\n"
+                     "## 更新内容\n\n" + changelog_entry(version) + "\n\n"
+                     "## 安装与验证\n\n"
+                     "将 BlinkClip.app 拖入 Applications 即可安装；同时提供 SHA256SUMS.txt 与构建来源清单。\n"
+                     "应用采用临时签名，未经 Apple 公证。\n"
+                     "本次 Actions 发布任务验证编译、架构、版本、签名及安装镜像，没有在构建节点执行应用或功能回归；本机定向验证范围见上方变更日志。\n"
+                     "主程序、Helper 与 MCP 可执行文件均包含 arm64 和 x86_64 架构。\n"
+                     "正式版还提供带 Ed25519 签名的 appcast.xml，供已接入 Sparkle 的闪贴 / BlinkClip 在应用内下载、安装及重启。\n"
+                     "临时签名更新仍可能需要重新开启辅助功能授权。\n"
+                     "本流程仅上传一个 DMG、校验文件、清单及正式版更新源；页面中的 Source code (zip/tar.gz) 链接由 GitHub 自动生成，没有主动上传源码包。\n\n"
+                     "Commit: " + commit + "\n")
+    args = ["gh", "release", "create", tag, *[str(output / name) for name in names],
+            "--repo", repo, "--draft", "--verify-tag", "--target", commit,
+            "--title", "BlinkClip " + version, "--notes-file", str(notes)]
+    if "-dev." in version:
+        args += ["--prerelease", "--latest=false"]
+    run(args)
+    # Verify uploaded bytes before switching the draft to published. Never clobber assets.
+    with tempfile.TemporaryDirectory() as temporary:
+        run(["gh", "release", "download", tag, "--repo", repo, "--dir", temporary])
+        for name in names:
+            if sha(Path(temporary) / name) != sha(output / name):
+                raise ValueError("Uploaded asset mismatch; release remains a draft")
+    remote_state(repo, tag, commit)
+    edit_args = ["gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--verify-tag"]
+    if "-dev." not in version:
+        edit_args.append("--latest")
+    run(edit_args)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=["check", "verify-intel", "package", "publish"])
+    parser.add_argument("--version")
+    parser.add_argument("--tag")
+    parser.add_argument("--commit")
+    args = parser.parse_args()
+    if args.mode == "package":
+        args.version = args.version or json.loads((ROOT / "package.json").read_text())["version"]
+        args.tag = args.tag or "v" + args.version
+        args.commit = args.commit or run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    elif not all([args.version, args.tag, args.commit]):
+        parser.error("--version, --tag and --commit are required for this mode")
+    validate_identity(args.version, args.tag, args.commit)
+    if args.mode == "verify-intel":
+        verify_intel(args.version)
+        return
+    if args.mode == "check":
+        repo = os.environ["GITHUB_REPOSITORY"]
+        _, release = check_existing(repo, args.version, args.tag, args.commit)
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.write("exists=" + str(bool(release)).lower() + "\n")
+    elif args.mode == "package":
+        package(args.version, args.tag, args.commit)
+    else:
+        publish(os.environ["GITHUB_REPOSITORY"], args.version, args.tag, args.commit)
+
+
+if __name__ == "__main__":
+    main()

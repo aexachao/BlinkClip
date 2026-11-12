@@ -1,0 +1,8 @@
+module BlinkClipObjC {
+    header "PRObjCExceptionCatcher.h"
+    header "BlinkClipKeyTranslation.h"
+    header "PRPanelGlassBackground.h"
+    header "PRGlassBackgroundWindow.h"
+    header "PRCloudKitEntitlements.h"
+    export *
+}

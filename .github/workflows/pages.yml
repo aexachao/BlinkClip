@@ -1,0 +1,77 @@
+name: Deploy BlinkClip website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'scripts/check-website.py'
+      - 'scripts/test-website-i18n.cjs'
+      - 'scripts/sync-release-downloads.py'
+      - 'scripts/tests/test_sync_release_downloads.py'
+      - '.github/workflows/pages.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blinkclip-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: vars.BLINKCLIP_PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Sync downloads from the latest published stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_json="$RUNNER_TEMP/blinkclip-latest-release.json"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$release_json"; then
+            python3 scripts/sync-release-downloads.py --release-json "$release_json"
+          else
+            # A missing release is expected in a new repository. Other API failures remain errors.
+            python3 -c 'import json,sys; assert json.load(open(sys.argv[1])).get("status") in (404,"404")' "$release_json"
+            python3 scripts/sync-release-downloads.py --unreleased
+          fi
+      - name: Test download updates and rejection of incomplete releases
+        run: python3 -m unittest discover -s scripts/tests -p 'test_sync_release_downloads.py'
+      - name: Check website assets and links
+        run: python3 scripts/check-website.py
+      - name: Check browser script syntax
+        run: |
+          node --check website/i18n.js
+          node --check website/site.js
+      - name: Check language selection and translations
+        run: node scripts/test-website-i18n.cjs
+      - name: Save synchronized README and website download links
+        run: |
+          git add -- README.md README.en.md website/index.html website/i18n.js
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'docs: 同步最新正式版下载链接'
+            git push origin HEAD:main
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: website
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

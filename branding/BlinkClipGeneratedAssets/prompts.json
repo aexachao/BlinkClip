@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-11",
+  "tool": "image_gen.imagegen (built-in)",
+  "model": "Not exposed or selectable by tool; user explicitly accepted current available model. Not claimed as gpt-image-2.5.",
+  "prompt_record": "Normalized faithful prompt set; literal execution prompts appear in the image_gen tool calls in this chat.",
+  "reference_policy": "Initial four outputs were generated from text only. Foreground extraction referenced only the newly generated icon.origin.png. No upstream/recovered materials supplied.",
+  "prompts": [
+    {
+      "asset": "icon",
+      "use_case": "logo-brand",
+      "prompt": "Generate ONE original macOS launch icon for BlinkClip: blue rounded-square tile; four pale-cyan crop-viewfinder corners framing a white folded note card, short amber line and amber four-point sparkle. Crisp broad shapes legible at 32px, centered, transparent outside tile, no text, logos, locks, clipboard clip or watermark. Royal blue gradient, slight restrained material depth. Text-only original design; no reference art."
+    },
+    {
+      "asset": "direct-paste",
+      "use_case": "stylized-concept",
+      "prompt": "Tiny settings help illustration: small cobalt note card left, cyan right arrow, generic gray app window right receiving white note card. Frontal 3:2 composition, generous transparent padding, bold forms legible at 96x64 points. Blue #0E65F6, cyan #35C9FA, white and neutral gray, readable on light/dark backgrounds. Three neutral dots on window bar; no logos, text, locks or watermark."
+    },
+    {
+      "asset": "copy-to-clipboard",
+      "use_case": "stylized-concept",
+      "prompt": "Tiny settings help illustration: small royal-blue note card left, cyan right arrow, larger simple physical gray clipboard right holding white note card with blue abstract bars. Plain cyan clip. Frontal 3:2 wide composition, 96x64pt readability, real transparent padding, object-confined subtle shading, no glow/backdrop/text/logos/locks/checkmarks or watermark."
+    },
+    {
+      "asset": "permissions",
+      "use_case": "stylized-concept",
+      "prompt": "Tiny permissions help illustration: THREE generic medium-gray desktop windows in triangular arrangement, small blue note card between them, two cyan transfer arrows. Generic pale-gray titlebars with three neutral dots and blank white content blocks. 5:3 wide transparent composition legible at 240x144pt, blue/cyan/white/gray, no real app logos or text, no lock/shield/checkmark/glow/haze or watermark."
+    },
+    {
+      "asset": "icon-foreground",
+      "use_case": "background-extraction",
+      "prompt": "Edit freshly generated icon concept: remove ONLY entire blue rounded-square tile and exterior fringe; preserve four pale-cyan crop corners, white folded card with amber line and sparkle, exact arrangement/colors/relative scale. Truly transparent between objects, no blue residue/glow/haze/rectangle; complete centered square foreground for separately authored blue-gradient layer. No new components."
+    }
+  ]
+}

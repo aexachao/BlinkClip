@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2B6EFE"/>
+      <stop offset="100%" stop-color="#1340C8"/>
+    </linearGradient>
+    <linearGradient id="cardShadow" x1="512" y1="310" x2="512" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#061B66" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#061B66" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="foldGrad" x1="600" y1="312" x2="712" y2="424" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#DCE7FF"/>
+      <stop offset="100%" stop-color="#B8CEFF"/>
+    </linearGradient>
+    <linearGradient id="pillGrad" x1="368" y1="382" x2="556" y2="382" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFAA1D"/>
+      <stop offset="100%" stop-color="#FF8800"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS Squircle Background -->
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#bgGrad)"/>
+  <rect x="66" y="66" width="892" height="892" rx="198" ry="198" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="4"/>
+
+  <!-- Four Rounded Viewfinder Brackets (Scan) -->
+  <g stroke="#C7DCFF" stroke-opacity="0.88" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Top-Left -->
+    <path d="M 216 376 L 216 292 C 216 250.026 250.026 216 292 216 L 376 216"/>
+    <!-- Top-Right -->
+    <path d="M 648 216 L 732 216 C 773.974 216 808 250.026 808 292 L 808 376"/>
+    <!-- Bottom-Right -->
+    <path d="M 808 648 L 808 732 C 808 773.974 773.974 808 732 808 L 648 808"/>
+    <!-- Bottom-Left -->
+    <path d="M 376 808 L 292 808 C 250.026 808 216 773.974 216 732 L 216 648"/>
+  </g>
+
+  <!-- Subtle Drop Shadow under Center Card -->
+  <path d="M 368 326 L 600 326 L 712 438 L 712 666 C 712 701.346 683.346 730 648 730 L 368 730 C 332.654 730 304 701.346 304 666 L 304 390 C 304 354.654 332.654 326 368 326 Z"
+        fill="url(#cardShadow)"/>
+
+  <!-- Solid White Folded-Corner Note Card (Clip) -->
+  <path d="M 368 312 L 600 312 L 712 424 L 712 652 C 712 687.346 683.346 716 648 716 L 368 716 C 332.654 716 304 687.346 304 652 L 304 376 C 304 340.654 332.654 312 368 312 Z"
+        fill="#FFFFFF"/>
+
+  <!-- Folded Top-Right Corner Flap -->
+  <path d="M 600 312 L 712 424 L 636 424 C 616.118 424 600 407.882 600 388 L 600 312 Z"
+        fill="url(#foldGrad)"/>
+
+  <!-- Warm Amber Status Pill Accent -->
+  <rect x="364" y="366" width="184" height="34" rx="17" ry="17" fill="url(#pillGrad)"/>
+</svg>

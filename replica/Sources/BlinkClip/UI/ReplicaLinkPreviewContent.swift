@@ -1,0 +1,155 @@
+import AppKit
+import Combine
+import BlinkClipCore
+
+/// URL editing and footer are local. No WKWebView or network-preview request is created.
+@MainActor
+final class ReplicaLinkPreviewContent: NSView, PreviewEditableContent, NSTextViewDelegate {
+    var onCanCommitEditing: ((Bool) -> Void)?
+    var previewEditingToolbar: NSView? { nil }
+    var previewMetadataView: NSView? { metadata }
+    var preferredPreviewSize: NSSize {
+        // Both PreferredSizeProviding witnesses use half screen or zero.
+        guard let size = NSScreen.main?.frame.size else { return .zero }
+        return .init(width: size.width * 0.5, height: size.height * 0.5)
+    }
+
+    private weak var state: ReplicaUIState?
+    private let itemID: UUID
+    private var editInput: ClipboardRestoreItem?
+    private let readOnlyContent: NSView
+    private let textView = NSTextView()
+    private let metadata = NSStackView()
+    private let urlLabel = NSTextField(labelWithString: "")
+    private var openButton: ToolbarButton?
+    private var itemObservation: AnyCancellable?
+
+    init(state: ReplicaUIState, item: ClipboardItem?, input: ClipboardRestoreItem? = nil) {
+        self.state = state
+        guard let itemID = input?.id ?? item?.id else { preconditionFailure("Link preview requires an item") }
+        self.itemID = itemID
+        editInput = input
+        readOnlyContent = makeReplicaReadOnlyPreviewContent(store: state.store, itemID: itemID)
+        super.init(frame: .zero)
+        textView.isSelectable = true
+        textView.isEditable = true
+        textView.font = SearchAppearance.bodyFont()
+        textView.textColor = SearchAppearance.foregroundColor()
+        textView.textContainerInset = .init(width: 12, height: 12)
+        textView.autoresizingMask = .width
+        textView.delegate = self
+        urlLabel.font = SearchAppearance.bodyFont()
+        urlLabel.textColor = ToolbarAppearance.secondaryForeground()
+        urlLabel.isEditable = false
+        urlLabel.isSelectable = false
+        urlLabel.isBordered = false
+        urlLabel.drawsBackground = false
+        urlLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let open = ToolbarButton(title: "") { [weak self] _ in
+            guard let url = self?.currentURL() else { return }
+            NSWorkspace.shared.open(url)
+        }
+        openButton = open
+        metadata.orientation = .horizontal
+        metadata.alignment = .centerY
+        metadata.spacing = 8
+        for view in [urlLabel, spacer, open] { metadata.addArrangedSubview(view) }
+        showContent(readOnlyContent)
+        itemObservation = input?.observeChanges { [weak self] current in
+            self?.receiveNativeModel(current)
+        }
+        if itemObservation != nil, let input {
+            receiveNativeModel(input)
+        } else {
+            itemObservation = state.store.$items.sink { [weak self] items in
+                MainActor.assumeIsolated {
+                    guard let self, let current = items.first(where: { $0.id == self.itemID }) else { return }
+                    self.updateMetadata(Self.itemURL(current))
+                }
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func beginPreviewEditing() {
+        textView.setString(currentURL()?.absoluteString ?? "")
+        showContent(textView)
+        updateCanCommit()
+        window?.makeFirstResponder(textView)
+    }
+
+    func cancelPreviewEditing() {
+        showContent(readOnlyContent)
+        updateMetadata(currentURL())
+    }
+
+    func commitPreviewEditing() {
+        guard let state, let url = Self.normalizedURL(textView.string) else { return }
+        do {
+            if let editInput { try state.store.updateLinkItem(editInput, url: url) }
+            else { try state.store.updateLinkItem(id: itemID, url: url) }
+            state.normalizeSelection()
+        } catch {
+            // 3bf900: consume the transaction error and continue the editing cleanup.
+        }
+        showContent(readOnlyContent)
+        updateMetadata(currentURL())
+    }
+
+    nonisolated func textDidChange(_ notification: Notification) {
+        MainActor.assumeIsolated { updateCanCommit() }
+    }
+
+    /// The reference validates URL initialization; it does not require a host or compare to the old URL.
+    static func normalizedURL(_ string: String) -> URL? {
+        guard let url = URL(string: string) else { return nil }
+        return url.scheme == nil ? URL(string: "https://" + url.absoluteString) : url
+    }
+
+    private func updateCanCommit() { onCanCommitEditing?(Self.normalizedURL(textView.string) != nil) }
+
+    private func receiveNativeModel(_ input: ClipboardRestoreItem) {
+        editInput = input
+        updateMetadata(currentURL())
+    }
+
+    private func currentURL() -> URL? {
+        if let url = editInput?.previewLinkURL() { return url }
+        return state?.store.items.first(where: { $0.id == itemID }).map(Self.itemURL)
+    }
+
+    private static func itemURL(_ item: ClipboardItem) -> URL {
+        // Traps when canonical metadata is absent or is not a link.
+        guard let metadata = item.decodedLinkPreviewMetadata else {
+            preconditionFailure("Link preview requires canonical link metadata")
+        }
+        return metadata.url
+    }
+
+    private func updateMetadata(_ url: URL?) {
+        urlLabel.stringValue = url?.absoluteString ?? ""
+        let applicationName: String
+        if let url, let application = NSWorkspace.shared.urlForApplication(toOpen: url),
+           let name = Bundle(url: application)?.object(forInfoDictionaryKey: "CFBundleName") as? String {
+            applicationName = name
+        } else { applicationName = String(localized: PreviewLocalization.generalBrowser()) }
+        openButton?.title = String(localized: PreviewLocalization.openInApplication(applicationName))
+        openButton?.isEnabled = url != nil
+    }
+
+    private func showContent(_ view: NSView) {
+        for previous in subviews { previous.removeFromSuperview() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+}

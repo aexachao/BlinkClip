@@ -1,0 +1,13 @@
+{
+  "name": "blinkclip",
+  "version": "1.0.10",
+  "private": true,
+  "description": "闪贴 / BlinkClip：免费、离线的原生 macOS 剪贴板与截图工具",
+  "scripts": {
+    "build:app": "bash replica/scripts/build-app.sh",
+    "test:core": "swift run --package-path replica blinkclip-core-tests",
+    "test:mcp": "python3 replica/scripts/test-mcp.py",
+    "build:icon": "swift replica/scripts/build-icon.swift",
+    "build:dmg": "python3 replica/scripts/release-ci.py package"
+  }
+}

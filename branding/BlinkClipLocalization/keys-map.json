@@ -1,0 +1,2047 @@
+{
+  "brand": {
+    "en": "BlinkClip",
+    "zh-Hans": "闪贴"
+  },
+  "ordinary_keys": 123,
+  "plural_keys": 4,
+  "intended_fallback": "English outside supported Simplified Chinese; integration pending",
+  "keys": [
+    {
+      "key": "diagnostics.action.stop-and-copy-logs",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 91
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "diagnostics.start.message",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 79
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "diagnostics.start.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 75
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "diagnostics.stop.message",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 87
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "diagnostics.stop.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 83
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.discard-changes",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 63
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.save-changes",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 51
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.text.bold",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 35
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.text.italic",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 39
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.text.strikethrough",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 43
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.text.underline",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 47
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.cancel",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutControls.swift",
+          "line": 33
+        },
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 59
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutReset.swift",
+          "line": 11
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.create-pinboard",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 103
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.edit",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 67
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.pin",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 95
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.restart-paste",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 71
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.save",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 55
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.share",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 99
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.unpin",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 107
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "search.filters.section.type",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 387
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "search.filters.section.app",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 388
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "search.filters.section.pinboard",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "search.filters.section.date",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 390
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "search.filters.section.device",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 391
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.more",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 192
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.less",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 192
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.image.rotate-left",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 111
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "edit-item.toolbar.image.rotate-right",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 115
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.browser",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 119
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.open-in",
+      "table": "Localizable.strings",
+      "argument_signature": [
+        "%@"
+      ],
+      "argument_meaning": "application name",
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 141
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.multiple-files",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 123
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "preview.reveal-in-finder.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 137
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.copied",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 27
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.paste-paused",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 18
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.paste-resumed",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 19
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.until",
+      "table": "Localizable.strings",
+      "argument_signature": [
+        "%@"
+      ],
+      "argument_meaning": "time display",
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 22
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.paused",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 15
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.pause-paste",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 16
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.color",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 126
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.image",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 127
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.link",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 128
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.text",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 129
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.unknown",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 130
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.enable-direct-paste",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [
+        "{icon:chevron.right}"
+      ],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 31
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.general.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/SettingsLocalization.swift",
+          "line": 16
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/SettingsLocalization.swift",
+          "line": 17
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.sound-effects.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/SettingsLocalization.swift",
+          "line": 18
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.open-at-login.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 445
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.run-in-background.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 448
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 467
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 470
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 47
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.active-app.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 471
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 48
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.clipboard.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 472
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 50
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.plain-text.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 485
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 52
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.history.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 490
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 53
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.history.forever",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.erase-history",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 502
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 54
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.screensharing.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 775
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.confidential-content.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 783
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 58
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.autogenerated-content.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 785
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 60
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.applications-history.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 790
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 55
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.activate-paste.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 842
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 31
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 43
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.activate-paste-stack.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 844
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 32
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 44
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.next-pinboard.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.previous-pinboard.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.quick-paste.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 860
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 864
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 37
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.plain-text.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 878
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 882
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 38
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.action.reset",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.shortcuts.action.reset.confirmation",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.reset",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutReset.swift",
+          "line": 12
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.accessibility-access-request",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.paste-to-other-apps.title",
+      "table": "Localizable.strings",
+      "argument_signature": [
+        "%@"
+      ],
+      "argument_meaning": "destination application name",
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 166
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.paste-to-other-apps.description",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 168
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.paste-to-other-apps.enable-accessibility-access",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 176
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.paste-to-other-apps.copy-to-clipboard",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 181
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.current-app",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 15
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.do-not-ask-again",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 188
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.enable-accessibility-access.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 260
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.enable-accessibility-access.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 262
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.enable-accessibility-access.open-system-settings",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 267
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "accessibility-access.enable-accessibility-access.allow-access",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AccessibilityModals.swift",
+          "line": 268
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.link-preview.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.link-preview.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "replica.settings.privacy.saved-link-preview.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 777
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "replica.settings.privacy.saved-link-preview.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 777
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "preview.unavailable.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/UnavailablePreviewLocalization.swift",
+          "line": 13
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "preview.unavailable.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/UnavailablePreviewLocalization.swift",
+          "line": 14
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.untitled",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 13
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "blinkclip.action.create-group",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/AppMain.swift",
+          "line": 246
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/ReplicaPreviewAdapter.swift",
+          "line": 636
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/ReplicaPreviewAdapter.swift",
+          "line": 671
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/ReplicaPreviewAdapter.swift",
+          "line": 694
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/PanelViews.swift",
+          "line": 202
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/PanelViews.swift",
+          "line": 203
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/PanelViews.swift",
+          "line": 671
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "blinkclip.search.filters.section.group",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/FilterBrowser.swift",
+          "line": 389
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "blinkclip.settings.shortcuts.next-group.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 851
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 33
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 45
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "blinkclip.settings.shortcuts.previous-group.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 853
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift",
+          "line": 34
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 46
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.action.ok",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorderView.swift",
+          "line": 36
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.action.remove",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorder.swift",
+          "line": 226
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.error.option-key",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutValidation.swift",
+          "line": 51
+        },
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorder.swift",
+          "line": 71
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.error.used-in-menu",
+      "table": "Localizable.strings",
+      "argument_signature": [
+        "%@"
+      ],
+      "argument_meaning": "menu item title",
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutMessages.swift",
+          "line": 13
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.error.used-in-system",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutValidation.swift",
+          "line": 18
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.none",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorder.swift",
+          "line": 220
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "shortcut-recorder.status.recording",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorder.swift",
+          "line": 210
+        },
+        {
+          "path": "replica/Sources/BlinkClipCore/ShortcutRecorder.swift",
+          "line": 216
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.active-app.info",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 471
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 49
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.paste-items.clipboard.info",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 472
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 51
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.screensharing.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 775
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.confidential-content.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 783
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 59
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.autogenerated-content.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 785
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 61
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.applications-history.subtitle",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 791
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 56
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.privacy.applications-history.empty",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 804
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 57
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.mcp.title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [],
+      "consumer_status": "no direct Swift literal found; preserved for compatibility; dynamic reachability unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.mcp.connect.action.connect-to",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 1053
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 62
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.mcp.copy",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 1072
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 63
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "settings.mcp.connection-sheet.done",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 1080
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/SettingsCopy.swift",
+          "line": 64
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "general.help-center",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/AuxiliaryViews.swift",
+          "line": 341
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.check",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 60
+        },
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 100
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.checking",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 101
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.up-to-date",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 102
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.available",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 104
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.current-version",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 46
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.download",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 65
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.invalid-version",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/BlinkClipUpdateChecker.swift",
+          "line": 123
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.invalid-release",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/BlinkClipUpdateChecker.swift",
+          "line": 124
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.missing-installer",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/BlinkClipUpdateChecker.swift",
+          "line": 125
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.http-error",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/BlinkClipUpdateChecker.swift",
+          "line": 127
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.about-title",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 19
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "updates.description",
+      "table": "Localizable.strings",
+      "argument_signature": [],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift",
+          "line": 50
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "editor.character-count",
+      "table": "Localizable.stringsdict",
+      "argument_signature": [
+        "Int32 -> value:d"
+      ],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 152
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "editor.line-count",
+      "table": "Localizable.stringsdict",
+      "argument_signature": [
+        "Int32 -> value:d"
+      ],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 160
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "editor.word-count",
+      "table": "Localizable.stringsdict",
+      "argument_signature": [
+        "Int32 -> value:d"
+      ],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 156
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    },
+    {
+      "key": "item-type.file-count",
+      "table": "Localizable.stringsdict",
+      "argument_signature": [
+        "Int32 -> value:d"
+      ],
+      "argument_meaning": null,
+      "inline_tokens": [],
+      "direct_swift_literals": [
+        {
+          "path": "replica/Sources/BlinkClipCore/PreviewLocalization.swift",
+          "line": 133
+        }
+      ],
+      "consumer_status": "direct literal found; runtime unverified",
+      "copy_source": "Independently authored in this task from function/context and format contract; standard terms may coincide."
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "name": "BlinkClipGenerated",
+  "canvas": 1024,
+  "radius": 224,
+  "target_platforms": [
+    "macOS"
+  ],
+  "deliverable_type": "source-package",
+  "source_reference": "New task-generated source, no upstream asset reference",
+  "brief": "BlinkClip crop frame and folded note with amber sparkle, generated foreground plus owned gradient. Traditional ICNS separately packaged; not an Icon Composer deliverable.",
+  "semantic_review": {
+    "status": "exact-enough",
+    "identity_risk": "low",
+    "basis": "New artwork from text-only brief; all glyphs are generic original composition. User approved image model raster source.",
+    "route": "png-fallback"
+  },
+  "layers": [
+    {
+      "name": "background",
+      "svg": "<rect width=\"1024\" height=\"1024\" fill=\"url(#brand-blue)\"/>",
+      "defs": "<linearGradient id=\"brand-blue\" x1=\"0\" y1=\"1\" x2=\"1\" y2=\"0\"><stop stop-color=\"#1634CE\"/><stop offset=\"1\" stop-color=\"#087CFA\"/></linearGradient>",
+      "composer": {
+        "include": false
+      }
+    },
+    {
+      "name": "top-left",
+      "png": "../../layers/02-top-left.png",
+      "composer": {
+        "format": "png",
+        "reason": "Newly generated raster-art component retains the image model texture and antialiasing after component cleanup.",
+        "png_fallback_evidence": {
+          "category": "raster-art",
+          "svg_route": "user-approved-png",
+          "evidence": "User specifically requested image-generated replacement; foreground has five separately isolated semantic components from the original generated alpha image.",
+          "cleanliness_check": "Largest alpha component in each named region removes disconnected noise; inspected on blue, white, gray and at 64px."
+        }
+      }
+    },
+    {
+      "name": "top-right",
+      "png": "../../layers/03-top-right.png",
+      "composer": {
+        "format": "png",
+        "reason": "Newly generated raster-art component retains the image model texture and antialiasing after component cleanup.",
+        "png_fallback_evidence": {
+          "category": "raster-art",
+          "svg_route": "user-approved-png",
+          "evidence": "User specifically requested image-generated replacement; foreground has five separately isolated semantic components from the original generated alpha image.",
+          "cleanliness_check": "Largest alpha component in each named region removes disconnected noise; inspected on blue, white, gray and at 64px."
+        }
+      }
+    },
+    {
+      "name": "bottom-left",
+      "png": "../../layers/04-bottom-left.png",
+      "composer": {
+        "format": "png",
+        "reason": "Newly generated raster-art component retains the image model texture and antialiasing after component cleanup.",
+        "png_fallback_evidence": {
+          "category": "raster-art",
+          "svg_route": "user-approved-png",
+          "evidence": "User specifically requested image-generated replacement; foreground has five separately isolated semantic components from the original generated alpha image.",
+          "cleanliness_check": "Largest alpha component in each named region removes disconnected noise; inspected on blue, white, gray and at 64px."
+        }
+      }
+    },
+    {
+      "name": "bottom-right",
+      "png": "../../layers/05-bottom-right.png",
+      "composer": {
+        "format": "png",
+        "reason": "Newly generated raster-art component retains the image model texture and antialiasing after component cleanup.",
+        "png_fallback_evidence": {
+          "category": "raster-art",
+          "svg_route": "user-approved-png",
+          "evidence": "User specifically requested image-generated replacement; foreground has five separately isolated semantic components from the original generated alpha image.",
+          "cleanliness_check": "Largest alpha component in each named region removes disconnected noise; inspected on blue, white, gray and at 64px."
+        }
+      }
+    },
+    {
+      "name": "card-and-sparkle",
+      "png": "../../layers/06-card-and-sparkle.png",
+      "composer": {
+        "format": "png",
+        "reason": "Newly generated raster-art component retains the image model texture and antialiasing after component cleanup.",
+        "png_fallback_evidence": {
+          "category": "raster-art",
+          "svg_route": "user-approved-png",
+          "evidence": "User specifically requested image-generated replacement; foreground has five separately isolated semantic components from the original generated alpha image.",
+          "cleanliness_check": "Largest alpha component in each named region removes disconnected noise; inspected on blue, white, gray and at 64px."
+        }
+      }
+    }
+  ]
+}

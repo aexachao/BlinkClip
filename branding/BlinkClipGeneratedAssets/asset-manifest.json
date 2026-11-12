@@ -1,0 +1,27 @@
+{
+  "source": "image_gen built-in, model id unexposed",
+  "files": {
+    "Icon/icon.origin.png": "645f88671f466c7cc22bc5e6b8ce1209d021bb4aa15f64653b2519e900f47322",
+    "Icon/icon.png": "e502ae17f1bc1d8635b500dfb2de8bb7b639eaebbd1b4c464a19da86d4e24292",
+    "Icon/icon.preview.png": "75e625fd0b42083df163a188d0ca9a8eac996057929b1cdb2ff7c3a4e78e1245",
+    "Icon/icon.preview.svg": "18e6f44958aacbecfeeb9ef89fcdbd3fb73bce9d37b90f31cdf4854c5d3cb2d8",
+    "Icon/icon.svg": "0bce3fe127824aed66c1735068976e81044b383f128972da12b19b7eb6fc8aa5",
+    "Icon/layers/01-background.svg": "2cac2cef0a1fe08fb60ff464af2b313a8bdd02dc1d8019c0372b94c7558f517c",
+    "Icon/layers/02-top-left.png": "524e4e10f2294f4c636fd0b996321db990b1793c618aabfb943f1398cac41eb5",
+    "Icon/layers/03-top-right.png": "d478fec655b0c56a662e15af020d9b2cda89bc57c8e7121f160111fb212ca910",
+    "Icon/layers/04-bottom-left.png": "ba644eef52b669c051841c0c689ddd2fe7bd38661e1e6f1833e0243d0488382e",
+    "Icon/layers/05-bottom-right.png": "55fbe00983e6abfacf604082a039c9c61a8590f096edf949221490f1d35a8b09",
+    "Icon/layers/06-card-and-sparkle.png": "3faf1385be1c4286fc0e14958997b977f4fbd0461546ce6b03d0b1fb5ae4822c",
+    "Icon/tmp/work/spec.json": "5dad5a854cd421499e083e4c50353bd910b93e086aec1dfd24142d5b56f73a92",
+    "PROVENANCE.md": "2608356ffa47ea1ad7ef02c7d49ac0c23d95ba7447c6f21b684af8f4a745ecbf",
+    "Resources/BlinkClipCopyToClipboard@2x.png": "6ac5189fe29c25f88f61e818b62a1a1f25c910d867ec11ab0b00fda7138ce123",
+    "Resources/BlinkClipDirectPaste@2x.png": "5bd0a030d4b583aa8425db95fd9feb587294d16b982935066eb1b2674b26d63c",
+    "Resources/BlinkClipPermissions@2x.png": "b6a8458943136f0c76cf4302c7e0f42705ef4eda9e2863254807db0413c0b28f",
+    "prompts.json": "9834f74ce4185bfacdb1fe29e4a51af63ab1596ac8b5eac35e6042fe226c912e",
+    "sources/copy-to-clipboard.origin.png": "2a99a232cad83601a951fa065461f3ab1ca4b38f22a1936c1498d48512c3f2cb",
+    "sources/direct-paste.origin.png": "80a91492f3e5e06d5251cfdcc1189eed0aeaf8db2cf5495eb9f7b33206803e61",
+    "sources/icon-foreground.origin.png": "da78cf148828cbe1e593b4df84f283259ec928a6cda206b8c3d5a9dee722111b",
+    "sources/icon.origin.png": "645f88671f466c7cc22bc5e6b8ce1209d021bb4aa15f64653b2519e900f47322",
+    "sources/permissions.origin.png": "091a691d034f953bb79013d64db084a8d90c7d166dbb5daab2ebd999a4190bea"
+  }
+}
