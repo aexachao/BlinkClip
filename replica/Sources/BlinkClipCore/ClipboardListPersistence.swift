@@ -289,7 +289,9 @@ final class ClipboardListPersistence {
         ordered.move(fromOffsets: IndexSet(integer: source), toOffset: offset)
         let background = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
         background.persistentStoreCoordinator = context.persistentStoreCoordinator
-        background.mergePolicy = NSMergeByPropertyStoreTrumpMergePolicy
+        // Same rule as the main context: a failed reorder save must be catchable instead of
+        // trapping in Core Data's optimistic-locking recovery.
+        background.mergePolicy = NSErrorMergePolicy
         for (index, object) in ordered.enumerated() {
             retainNativeList(object)
             let current = ((object.value(forKey: "metadata") as? NSManagedObject)?.value(forKey: "index") as? NSNumber)?.int64Value ?? 0
@@ -312,7 +314,7 @@ final class ClipboardListPersistence {
         background.performAndWait {
             guard background.hasChanges else { return }
             do {
-                try ObjCExceptionBridge.withResult { try background.save() }
+                try StoreSaveRecovery.save(background)
             } catch {
                 background.rollback()
                 Self.reorderDiagnostics.diagnosticSink().emitFault("Error saving managed object context: \(error)")

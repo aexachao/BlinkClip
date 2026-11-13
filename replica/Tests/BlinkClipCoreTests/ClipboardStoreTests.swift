@@ -1034,4 +1034,31 @@ final class ClipboardStoreTests {
             }
         }
     }
+
+    // No payload means no pasteboard representation to digest: the archived empty item set
+    // is one constant, so unrelated payload-less entries used to collapse into a single row.
+    func testPayloadLessItemsKeepDistinctIdentityWhileDuplicatesStillDedupe() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await MainActor.run {
+            let store = try ClipboardStore(directoryURL: directory)
+            let text = try store.add(ClipboardItem(plainText: "plain alpha"))
+            let link = try store.add(ClipboardItem(kind: .link, plainText: "https://example.invalid/alpha"))
+            let color = try store.add(ClipboardItem(kind: .color, plainText: "#5575D9"))
+            let note = try store.add(ClipboardItem(plainText: "plain delta"))
+            expectEqual(store.items.count, 4, "Different payload-less content must keep separate rows")
+            expectEqual(Set(store.items.map(\.id)), Set([text, link, color, note]))
+            // Same content, new identifier: still one row, per capture deduplication.
+            expectEqual(try store.add(ClipboardItem(plainText: "plain alpha")), text,
+                        "Identical payload-less content still deduplicates")
+            expectEqual(try store.add(ClipboardItem(kind: .color, plainText: "#5575D9")), color)
+            expectEqual(store.items.count, 4)
+            expectEqual(store.items.first { $0.id == note }?.plainText, "plain delta")
+            let reopened = try ClipboardStore(directoryURL: directory)
+            expectEqual(Set(reopened.items.map(\.id)), Set([text, link, color, note]))
+            expectEqual(reopened.items.filter { $0.plainText == "plain alpha" }.map(\.id), [text])
+            expectEqual(reopened.items.first { $0.id == link }?.kind, .link)
+            expectEqual(reopened.items.first { $0.id == color }?.kind, .color)
+        }
+    }
 }

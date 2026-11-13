@@ -96,6 +96,19 @@ extension ClipboardStore {
         return PasteboardChecksums.checksumForItems(items, kind: kind)
     }
 
+    /// Payloads without any pasteboard representation carry no content identity. The
+    /// archive checksum of that empty item set is one constant, so using it to identify
+    /// items merges unrelated entries. Callers fall back to kind/text/representation
+    /// equality for these items instead.
+    nonisolated static func hasPasteboardContent(_ payloads: [String: Data]) -> Bool {
+        PasteboardChecksums.hasContent((try? originalPasteboardItems(from: payloads)) ?? [])
+    }
+
+    nonisolated static func contentChecksum(from payloads: [String: Data]) -> String? {
+        guard hasPasteboardContent(payloads) else { return nil }
+        return try? knownPasteboardChecksum(from: payloads)
+    }
+
     nonisolated static func projectNativePasteboardItems(_ raw: Data, onto previous: [String: Data]) throws -> [String: Data] {
         let items = PasteboardDataCodec.decodeItems(raw)
         var payloads = previous.filter { analysisPayloadKeys.contains($0.key) }
@@ -582,12 +595,10 @@ extension ClipboardStore {
         }
         guard writeSucceeded else { throw PasteboardWriteError.writeFailed }
         // performAndWait + save, then undo cleanup and DidRestore, before deactivation.
-        do {
-            let restoration = try prepareRestoration()
-            try recordRestoredSelection(restoration)
-        } catch {
-            // Releases the transaction error and continues below.
-        }
+        // A failed commit must reach the caller: the pasteboard bytes are already written,
+        // but undo cleanup and DidRestore must not report a persisted restore.
+        let restoration = try prepareRestoration()
+        try recordRestoredSelection(restoration)
         Self.restoreUndoManager.resolveValue().removeAllActions()
         // 37a144 posts process-wide with the restoring manager as object.
         // Keep the legacy subject for the existing local sound subscriber.

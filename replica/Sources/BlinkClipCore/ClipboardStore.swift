@@ -733,7 +733,7 @@ public final class ClipboardStore: ObservableObject {
         }
         var checksum: String? = nil
         if !recordCapture {
-            checksum = try? Self.knownPasteboardChecksum(from: item.payloads)
+            checksum = Self.contentChecksum(from: item.payloads)
             if item.nativeIdentifier == nil { item.nativeIdentifier = item.id.uuidString }
             item.nativeChecksum = checksum
         }
@@ -772,7 +772,7 @@ public final class ClipboardStore: ObservableObject {
             } else {
                 existingIndex = state.items.firstIndex(where: { previous in
                 if let checksum {
-                    let previousChecksum = try? Self.knownPasteboardChecksum(from: previous.payloads)
+                    let previousChecksum = Self.contentChecksum(from: previous.payloads)
                     if let previousChecksum { return checksum == previousChecksum }
                 }
                 let explicitIdentity = Self.hasValidExplicitPasteboardRepresentations(previous.payloads)
@@ -914,7 +914,7 @@ public final class ClipboardStore: ObservableObject {
             }
             let existing = state.items.firstIndex { previous in
                 guard !previous.isDeleted else { return false }
-                if let previousChecksum = try? Self.knownPasteboardChecksum(from: previous.payloads) {
+                if let previousChecksum = Self.contentChecksum(from: previous.payloads) {
                     return checksum == previousChecksum
                 }
                 let explicitIdentity = Self.hasValidExplicitPasteboardRepresentations(previous.payloads)

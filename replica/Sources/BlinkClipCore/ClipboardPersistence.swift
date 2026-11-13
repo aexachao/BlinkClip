@@ -46,7 +46,14 @@ final class ClipboardPersistence {
         managedContext.persistentStoreCoordinator = coordinator
         managedContext.undoManager = nil
         managedContext.automaticallyMergesChangesFromParent = true
-        managedContext.mergePolicy = NSMergeByPropertyStoreTrumpMergePolicy
+        // A store-level conflict must surface as a throwable error. Core Data answers a save
+        // that exhausts its optimistic-locking retries by trapping the process whenever the
+        // merge policy has a non-error merge type (save:+2760 reads mergeType and calls
+        // -_thereIsNoSadnessLikeTheDeathOfOptimism), so a failing write (constraint, trigger or
+        // disk error) killed the app instead of reaching the caller. NSErrorMergePolicy keeps
+        // the error path; StoreSaveRecovery resolves genuine conflicts with store-trump
+        // semantics, and process-shared writes are serialized under the store's lock.
+        managedContext.mergePolicy = NSErrorMergePolicy
         context = managedContext
         snapshotReader = ClipboardSnapshotReader(coordinator: coordinator)
         searchHistory = SearchHistory(reader: snapshotReader)
@@ -970,9 +977,10 @@ final class ClipboardPersistence {
                     if !replacements.contains(item.id) && (old?.payloads != item.payloads || object.value(forKey: "data") == nil) {
                         let items = try ClipboardStore.originalPasteboardItems(from: item.payloads)
                         let kind = PasteboardClassification.classifyItems(items)
-                        let checksum = PasteboardChecksums.checksumForItems(items, kind: kind)
                         // Imported representations can have no canonical checksum. Their
                         // required data relationship must still preserve every representation.
+                        let checksum = PasteboardChecksums.hasContent(items)
+                            ? PasteboardChecksums.checksumForItems(items, kind: kind) : nil
                         transaction.repository.itemData.replace(on: object, items: items, kind: kind, checksum: checksum,
                             useBinaryPlist: state.preferences.useBinaryPlist,
                             rawPasteboardItems: item.payloads[originalItemDataPayloadKey]) { item.rawPreview }
@@ -1061,7 +1069,7 @@ final class ClipboardPersistence {
                     let savedItems = context.insertedObjects.union(context.updatedObjects)
                         .filter { $0.entity.name == "Item" && !$0.isDeleted }
                     do {
-                        try ObjCExceptionBridge.withResult { try context.save() }
+                        try StoreSaveRecovery.save(context)
                     } catch {
                         // snapshot before validation, then roll back and rethrow the save error.
                         let inserted = context.insertedObjects
@@ -1083,7 +1091,14 @@ final class ClipboardPersistence {
                                     "  Invalid updated: \(object.entity.name ?? "?") \(object.objectID) — \(error)")
                             }
                         }
+                        // Discard the failed transaction's pending changes. Core Data's rollback
+                        // clears the context's undo manager, which is the shared user undo
+                        // history, so detach it for the rollback: a failed write must not cost
+                        // the user the actions recorded by earlier successful saves.
+                        let undoManager = context.undoManager
+                        context.undoManager = nil
                         context.rollback()
+                        context.undoManager = undoManager
                         throw error
                     }
                     let updatedAtByID = Dictionary(savedItems.compactMap { object -> (UUID, Date)? in
@@ -1106,6 +1121,39 @@ final class ClipboardPersistence {
                 }
                 outcome.state.pinboards = transaction.repository.lists.projectNativePinboards(outcome.state.pinboards)
                 return outcome
+            }
+        }
+    }
+}
+
+/// Saves managed contexts so that a failed write reaches the caller as a Swift error.
+/// Core Data terminates the process when a save that cannot be recovered exhausts its
+/// optimistic-locking retries while the context's merge policy has a non-error merge type
+/// (`-[NSManagedObjectContext _thereIsNoSadnessLikeTheDeathOfOptimism]`, reached from
+/// `-[NSManagedObjectContext save:]`). Contexts therefore use NSErrorMergePolicy, and a
+/// genuine conflict between this context and a newer committed row is resolved here with
+/// the store-trump policy the store used before, so concurrent writers keep merging
+/// instead of losing the save.
+enum StoreSaveRecovery {
+    private static let conflictPolicy = NSMergeByPropertyStoreTrumpMergePolicy as! NSMergePolicy
+
+    static func save(_ context: NSManagedObjectContext) throws {
+        var attempt = 0
+        while true {
+            do {
+                try ObjCExceptionBridge.withResult { try context.save() }
+                return
+            } catch {
+                attempt += 1
+                let conflicts = (error as NSError).userInfo[NSPersistentStoreSaveConflictsErrorKey]
+                    as? [NSMergeConflict] ?? []
+                // A storage failure (trigger, constraint, disk) reports no conflicts and is
+                // rethrown unchanged; an unresolved conflict keeps its original error.
+                if attempt < 3, !conflicts.isEmpty,
+                   (try? Self.conflictPolicy.resolve(mergeConflicts: conflicts)) != nil {
+                    continue
+                }
+                throw error
             }
         }
     }

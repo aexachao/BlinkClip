@@ -27,6 +27,14 @@ public enum PasteboardChecksums {
         return checksum(data)
     }
 
+    /// An item set without data has no content identity: archiving it yields one constant
+    /// digest, so equal checksums would merge unrelated content.
+    public static func hasContent(_ items: [PasteboardItem]) -> Bool {
+        items.contains { item in
+            item.currentOrderedTypes().contains { item.dataForType(forType: $0) != nil }
+        }
+    }
+
     public static func checksumForItems(_ items: [PasteboardItem],
                                   kind: PasteboardContentKind) -> String? {
         switch kind {

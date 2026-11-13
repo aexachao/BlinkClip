@@ -115,6 +115,7 @@ struct ValidationMain {
             ,("address-stack-array-window-contracts", suite.testAddressStackArrayAndWindowContracts)
             ,("address-stack-table-contracts", suite.testAddressStackTableContracts)
             ,("address-ocr-preparation-word-geometry", suite.testAddressOCRPreparationAndWordGeometry)
+            ,("payload-less-item-identity", suite.testPayloadLessItemsKeepDistinctIdentityWhileDuplicatesStillDedupe)
         ]
         var selected: Set<String>?
         if let index = CommandLine.arguments.firstIndex(of: "--only") {
