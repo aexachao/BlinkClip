@@ -52,3 +52,11 @@ enum Localizer {
         return key
     }
 }
+
+/// Copy the app shell renders itself. `BlinkClip` is a separate target from this
+/// module, so shell-facing strings need one public entry point here while the
+/// translations stay in `Resources/<lang>.lproj/Localizable.strings`.
+public enum AppCopy {
+    /// 「闪贴设置」/「BlinkClip Settings」— the product name of the settings window.
+    public static var settingsTitle: String { L10n.settingsTitle }
+}

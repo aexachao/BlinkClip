@@ -337,13 +337,23 @@ struct ReplicaSettingsView: View {
             }
             .listStyle(.sidebar)
             .padding(.top, sidebarTopInset)
-            Link(destination: URL(string: "https://github.com/aexachao/BlinkClip#readme")!) {
-                Label(SettingsCopy.text("general.help-center"), systemImage: "questionmark.circle")
+            // 设置窗口按平台惯例隐藏标题栏（当前分区由工具栏标题显示），产品名放在
+            // 侧栏页脚：值取自 `Localizable.strings` 的 `settingsTitle`（「闪贴设置」），
+            // 改文案会真正生效，不再走不到。
+            VStack(alignment: .leading, spacing: 8) {
+                Link(destination: URL(string: "https://github.com/aexachao/BlinkClip#readme")!) {
+                    Label(SettingsCopy.text("general.help-center"), systemImage: "questionmark.circle")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Text(AppCopy.settingsTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("BlinkClipSettingsProductName")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .padding(16)
         }
     }

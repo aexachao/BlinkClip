@@ -63,9 +63,69 @@ import AppKit
             return true
         }
     }
+    /// Draws the flipped logical canvas into a real bitmap at `scale` device pixels per point.
+    private static func bitmapRepresentation(size: NSSize, scale: Int,
+                                             body: () -> Void) -> NSBitmapImageRep? {
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                            pixelsWide: Int(size.width) * scale,
+                                            pixelsHigh: Int(size.height) * scale,
+                                            bitsPerSample: 8, samplesPerPixel: 4,
+                                            hasAlpha: true, isPlanar: false,
+                                            colorSpaceName: .deviceRGB,
+                                            bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        // x → scale·x, y → scale·(height − y): keep the flipped logical points, scale to pixels.
+        context.cgContext.concatenate(CGAffineTransform(a: CGFloat(scale), b: 0, c: 0, d: -CGFloat(scale),
+                                                       tx: 0, ty: size.height * CGFloat(scale)))
+        body()
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap
+    }
+    /// Samples the 2× master once per logical pixel. A second antialiased pass at 1×
+    /// spends different sub-pixel coverage on the same thin strokes, so the two
+    /// scales would disagree; sampling keeps the 1× copy pixel-crisp and identical
+    /// in geometry to retina drawing.
+    private static func singleScaleSample(_ master: NSBitmapImageRep, size: NSSize) -> NSBitmapImageRep? {
+        guard let sample = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                            pixelsWide: Int(size.width),
+                                            pixelsHigh: Int(size.height),
+                                            bitsPerSample: 8, samplesPerPixel: 4,
+                                            hasAlpha: true, isPlanar: false,
+                                            colorSpaceName: .deviceRGB,
+                                            bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: sample) else { return nil }
+        sample.size = size
+        let masterImage = NSImage(size: size)
+        masterImage.addRepresentation(master)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .none
+        masterImage.draw(in: NSRect(origin: .zero, size: size))
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        return sample
+    }
+    /// Produces the 1×/2× bitmaps a template icon needs instead of the block-based
+    /// `NSImage` initialiser, which only records an `NSCustomImageRep` on macOS 15
+    /// — `representations` came back empty, so pixel consumers (packaging checks,
+    /// template tinting, renderers) had nothing to read. The 2× bitmap is drawn at
+    /// device scale from the same flipped logical geometry; the 1× bitmap samples
+    /// it so both scales share one rendering. Callers set `isTemplate` and
+    /// accessibility on the returned image.
+    private static func bitmapImage(size: NSSize, body: () -> Void) -> NSImage {
+        let image = NSImage(size: size)
+        guard let master = bitmapRepresentation(size: size, scale: 2, body: body) else { return image }
+        image.addRepresentation(master)
+        if let single = singleScaleSample(master, size: size) { image.addRepresentation(single) }
+        return image
+    }
     /// Monochrome 20pt templates. Caller tint follows appearance; no separate dark bitmap is required.
     public static func category(_ kind: Category) -> NSImage {
-        let image = NSImage(size:.init(width:20,height:20),flipped:true) { _ in
+        let image = bitmapImage(size: .init(width: 20, height: 20)) {
             let c = NSColor.black
             switch kind {
             case .file:
@@ -86,7 +146,6 @@ import AppKit
                 p.lineWidth=1.5;c.setStroke();p.stroke()
                 for x in [CGFloat(6),10,14] { box(.init(x:x-0.8,y:9.2,width:1.6,height:1.6),0.8,c) }
             }
-            return true
         }
         image.isTemplate=true; image.accessibilityDescription=kind.rawValue
         return image
