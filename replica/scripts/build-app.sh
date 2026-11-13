@@ -17,6 +17,8 @@ if (( ${build_sdk_version%%.*} < 26 )); then
 fi
 case "$configuration" in release|debug) ;; *) printf '%s\n' '配置必须为 release 或 debug。' >&2; exit 1 ;; esac
 case "$architecture" in native|arm64|x86_64|universal) ;; *) printf '%s\n' '架构必须为 native、arm64、x86_64 或 universal。' >&2; exit 1 ;; esac
+# Hardened Runtime 下发送 Apple Events（Finder 选区）所需的最小授权；文件头有取舍说明。
+base_entitlements="$replica_root/Assets/BlinkClip.entitlements"
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$replica_root/../package.json")"
 if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-dev\.([0-9]+))?$ ]]; then
   printf '%s\n' 'package.json version 必须为 major.minor.patch 或 major.minor.patch-dev.N。' >&2
@@ -138,6 +140,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSScreenCaptureUsageDescription</key><string>BlinkClip needs screen access to capture a region or display and save it to your history.</string>
+<key>NSAppleEventsUsageDescription</key><string>BlinkClip needs to control Finder to read the files you have selected, so it can pin or capture them.</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>UIDesignRequiresCompatibility</key><false/>
@@ -148,11 +151,13 @@ cat > "$bundle/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
 "CFBundleName" = "闪贴";
 "CFBundleDisplayName" = "闪贴";
 "NSScreenCaptureUsageDescription" = "闪贴需要读取屏幕内容，用于截取您选择的区域或整个屏幕并保存到历史。";
+"NSAppleEventsUsageDescription" = "闪贴需要控制 Finder 以读取您选中的文件，用于固定或截图。";
 STRINGS
 cat > "$bundle/Contents/Resources/en.lproj/InfoPlist.strings" <<'STRINGS'
 "CFBundleName" = "BlinkClip";
 "CFBundleDisplayName" = "BlinkClip";
 "NSScreenCaptureUsageDescription" = "BlinkClip needs screen access to capture a region or display and save it to your history.";
+"NSAppleEventsUsageDescription" = "BlinkClip needs to control Finder to read the files you have selected, so it can pin or capture them.";
 STRINGS
 mkdir -p "$bundle/Contents/Resources/zh-Hant.lproj"
 cp "$bundle/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" "$bundle/Contents/Resources/zh-Hant.lproj/InfoPlist.strings"
@@ -184,12 +189,35 @@ if [[ -n "${BLINKCLIP_CLOUDKIT_PROFILE:-}${BLINKCLIP_CLOUDKIT_CONTAINER:-}" ]]; 
   python3 "$replica_root/scripts/configure-cloudkit-signing.py" \
     --profile "$BLINKCLIP_CLOUDKIT_PROFILE" --bundle "$bundle" --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
     --environment "${BLINKCLIP_CLOUDKIT_ENVIRONMENT:-Development}" --output "$staging/cloudkit-entitlements.plist"
+  # 合并基础授权与 CloudKit 授权再签名：CloudKit 键来自描述文件，必须逐字保留，
+  # 因此冲突时描述文件优先，基础键（apple-events）作为底层叠加，两边键集不同不会互相覆盖。
+  python3 - "$base_entitlements" "$staging/cloudkit-entitlements.plist" "$staging/signed-entitlements.plist" <<'MERGE_ENTITLEMENTS'
+import plistlib, sys
+from pathlib import Path
+base_path, cloudkit_path, output_path = (Path(argument) for argument in sys.argv[1:4])
+base = plistlib.loads(base_path.read_bytes())
+cloudkit = plistlib.loads(cloudkit_path.read_bytes())
+overlap = sorted(set(base) & set(cloudkit))
+# 同一个键出现两套取值时不做猜测：先让人确认，避免静默丢掉 Apple Events 或 CloudKit 授权。
+if overlap:
+    raise SystemExit("基础与 CloudKit 授权存在重复键，需人工确认：" + ", ".join(overlap))
+merged = {**base, **cloudkit}
+for key in ("com.apple.security.automation.apple-events", "com.apple.developer.icloud-services"):
+    if key not in merged:
+        raise SystemExit("合并后的授权缺少 " + key)
+if "com.apple.security.app-sandbox" in merged:
+    raise SystemExit("合并后的授权不应包含 App Sandbox")
+output_path.write_bytes(plistlib.dumps(merged))
+MERGE_ENTITLEMENTS
   python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY" \
-    --entitlements "$staging/cloudkit-entitlements.plist"
+    --entitlements "$staging/signed-entitlements.plist"
 else
   if [[ -n "${BLINKCLIP_SIGNING_IDENTITY:-}" && "$BLINKCLIP_SIGNING_IDENTITY" != - ]]; then
-    python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY"
+    python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY" \
+      --entitlements "$base_entitlements"
   else
+    # ad-hoc 构建不开 Hardened Runtime，Finder 自动化不需要授权即可用；
+    # Info.plist 的用途说明仍然生效，因此本地构建照旧成功、照旧能弹 TCC 提示。
     codesign --force --sign - "$bundle"
   fi
 fi

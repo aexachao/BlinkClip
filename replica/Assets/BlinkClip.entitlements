@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Minimal Hardened Runtime entitlements for the Developer ID build.
+
+  Finder selection (replica/Vendor/capcap/Capture/FinderSelection.swift) drives
+  Finder through NSAppleScript, which sends Apple Events to another process.
+  Under the hardened runtime that requires this one automation entitlement, and
+  the matching NSAppleEventsUsageDescription purpose string in Info.plist.
+
+  Deliberately absent:
+  - com.apple.security.app-sandbox      (app is not sandboxed; not for the App Store)
+  - com.apple.security.get-task-allow   (debug-only; never in release)
+  - com.apple.security.cs.disable-library-validation, allow-unsigned-executable-memory,
+    disable-executable-page-protection  (no JIT, no unsigned plug-ins; keep the runtime on)
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>
