@@ -16,6 +16,14 @@ enum AccessibilityRequestAction {
         }, requestPostEvents: { _ = CGRequestPostEventAccess() }, openSettings: openSettings)
     }
 
+    /// "Send events to other apps" only. The settings page keeps this on its own
+    /// row, so it must not silently request Accessibility as a side effect.
+    static func performPostEvents() {
+        NSApp.deactivate()
+        _ = CGRequestPostEventAccess()
+        openSettings(settingsURL)
+    }
+
     static func perform(isAXTrusted: Bool, canPostEvents: Bool, requestAX: () -> Void,
                         requestPostEvents: () -> Void, openSettings: (URL) -> Void) {
         if !isAXTrusted { requestAX() }

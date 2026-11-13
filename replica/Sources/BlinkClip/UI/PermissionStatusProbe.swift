@@ -6,6 +6,9 @@ struct PermissionStatusReading: Equatable, Sendable {
     let currentProcess: PermissionStatusSnapshot
     let freshProcess: PermissionStatusSnapshot?
     let checkFailed: Bool
+    /// The system still holds the previous build's requirement: System Settings
+    /// shows a tick, this build is still denied. Set only by the real probe.
+    var requirementMismatch: Bool = false
 
     var authorization: PermissionStatusSnapshot { freshProcess ?? currentProcess }
     var needsRestart: Bool {
@@ -32,10 +35,29 @@ enum PermissionStatusProbe {
         }
         do {
             let fresh = try await run(executable: URL(fileURLWithPath: identity.executablePath), expected: identity)
-            return PermissionStatusReading(currentProcess: local, freshProcess: fresh, checkFailed: false)
+            return recorded(PermissionStatusReading(currentProcess: local, freshProcess: fresh, checkFailed: false),
+                            identity: identity)
         } catch {
-            return PermissionStatusReading(currentProcess: local, freshProcess: nil, checkFailed: true)
+            return recorded(PermissionStatusReading(currentProcess: local, freshProcess: nil, checkFailed: true),
+                            identity: identity)
         }
+    }
+
+    /// Keeps the grant ledger current and turns "was granted to another build"
+    /// into a UI signal. Both are read-only for TCC: they only touch
+    /// UserDefaults, so an observation never requests access.
+    static func recorded(_ reading: PermissionStatusReading,
+                         identity: PermissionProbeIdentity,
+                         defaults: UserDefaults = .standard,
+                         version: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
+        -> PermissionStatusReading {
+        var reading = reading
+        if !reading.checkFailed, reading.authorization.accessibility {
+            PermissionGrantLedger.recordGrant(identity: identity, shortVersion: version, defaults: defaults)
+        }
+        reading.requirementMismatch = PermissionGrantLedger.requirementMismatch(
+            isTrusted: reading.authorization.accessibility, identity: identity, defaults: defaults)
+        return reading
     }
 
     static func isAppExecutable(bundleIdentifier: String?, executableName: String?) -> Bool {

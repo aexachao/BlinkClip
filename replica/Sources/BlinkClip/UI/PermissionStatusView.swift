@@ -20,6 +20,13 @@ final class PermissionStatusModel: ObservableObject {
     @Published private(set) var needsRestart = false
     @Published private(set) var checkFailed = false
     @Published private(set) var hasChecked = false
+    /// System Settings shows a tick but this build is still denied: the grant on
+    /// record belongs to another build (ad-hoc / another certificate).
+    @Published private(set) var requirementMismatch = false
+    /// The user already pressed a 「前往授权」 button in this process, so a still
+    /// denied status afterwards needs the remove-and-re-add steps spelled out
+    /// instead of hidden behind a disclosure.
+    @Published private(set) var requestedSystemSettings = false
     private(set) var isRefreshing = false
     private(set) var isRequestingScreen = false
     private var observations: [AnyCancellable] = []
@@ -34,6 +41,8 @@ final class PermissionStatusModel: ObservableObject {
     private let requestScreenAccess: () -> Void
     private let openScreenSettings: () -> Void
     private let requestAccessibilityAccess: () -> Void
+    private let requestPostEventAccess: () -> Void
+    private let willOpenSystemSettings: () -> Void
 
     init(readAccessibility: (() -> Bool)? = nil,
          readPostEvents: (() -> Bool)? = nil,
@@ -41,6 +50,8 @@ final class PermissionStatusModel: ObservableObject {
          requestScreenAccess: @escaping () -> Void = { _ = CGRequestScreenCaptureAccess() },
          openScreenSettings: (() -> Void)? = nil,
          requestAccessibilityAccess: (() -> Void)? = nil,
+         requestPostEventAccess: (() -> Void)? = nil,
+         willOpenSystemSettings: (() -> Void)? = nil,
          readStatus: (() async -> PermissionStatusReading)? = nil) {
         if let readStatus { reader = readStatus }
         else if readAccessibility != nil || readPostEvents != nil || readScreenRecording != nil {
@@ -53,6 +64,10 @@ final class PermissionStatusModel: ObservableObject {
         } else { reader = { await PermissionStatusProbe.read() } }
         self.requestScreenAccess = requestScreenAccess
         self.requestAccessibilityAccess = requestAccessibilityAccess ?? { AccessibilityRequestAction.perform() }
+        self.requestPostEventAccess = requestPostEventAccess ?? { AccessibilityRequestAction.performPostEvents() }
+        self.willOpenSystemSettings = willOpenSystemSettings ?? {
+            SettingsWindowFocusRestore.shared.expectReturnFromSystemSettings()
+        }
         self.openScreenSettings = openScreenSettings ?? {
             AccessibilityRequestAction.openSettings(
                 URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
@@ -69,15 +84,28 @@ final class PermissionStatusModel: ObservableObject {
     /// is a separate operational capability and must not turn this grant red.
     var accessibilityReady: Bool { accessibility }
     var statusUnknown: Bool { !hasChecked || checkFailed }
+    /// Each row names the capability it reports: a bare "未授权" left users unable
+    /// to tell Accessibility from "send events to other apps" from Screen Recording.
     var accessibilityStatus: String {
         if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
         if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
-        return accessibility ? PermissionCopy.text("已授权", "Granted") : PermissionCopy.text("未生效", "Not active")
+        return accessibility
+            ? PermissionCopy.text("已授权：辅助功能", "Granted: Accessibility")
+            : PermissionCopy.text("未生效：辅助功能未授权", "Not active: Accessibility is not granted")
+    }
+    var postEventsStatus: String {
+        if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
+        if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
+        return postEvents
+            ? PermissionCopy.text("已授权：跨应用发送事件", "Granted: sending events to other apps")
+            : PermissionCopy.text("未生效：跨应用发送事件未授权", "Not active: sending events to other apps is not granted")
     }
     var screenRecordingStatus: String {
         if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
         if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
-        return screenRecording ? PermissionCopy.text("已授权", "Granted") : PermissionCopy.text("未生效", "Not active")
+        return screenRecording
+            ? PermissionCopy.text("已授权：屏幕录制", "Granted: Screen Recording")
+            : PermissionCopy.text("未生效：屏幕录制未授权", "Not active: Screen Recording is not granted")
     }
 
     func refresh() {
@@ -94,14 +122,18 @@ final class PermissionStatusModel: ObservableObject {
                 let status = reading.authorization
                 let changed = !self.hasChecked || self.accessibility != status.accessibility
                     || self.postEvents != status.postEvents || self.screenRecording != status.screenRecording
+                    || self.requirementMismatch != reading.requirementMismatch
                     || self.needsRestart != reading.needsRestart || self.checkFailed
                 if self.accessibility != status.accessibility { self.accessibility = status.accessibility }
                 if self.postEvents != status.postEvents { self.postEvents = status.postEvents }
                 if self.screenRecording != status.screenRecording { self.screenRecording = status.screenRecording }
+                if self.requirementMismatch != reading.requirementMismatch {
+                    self.requirementMismatch = reading.requirementMismatch
+                }
                 if self.needsRestart != reading.needsRestart { self.needsRestart = reading.needsRestart }
                 if !self.hasChecked { self.hasChecked = true }
                 if changed {
-                    self.logger.notice("status ax=\(status.accessibility, privacy: .public) post=\(status.postEvents, privacy: .public) screen=\(status.screenRecording, privacy: .public) fresh=\(reading.freshProcess != nil, privacy: .public) restart_required=\(reading.needsRestart, privacy: .public)")
+                    self.logger.notice("status ax=\(status.accessibility, privacy: .public) post=\(status.postEvents, privacy: .public) screen=\(status.screenRecording, privacy: .public) fresh=\(reading.freshProcess != nil, privacy: .public) restart_required=\(reading.needsRestart, privacy: .public) requirement_mismatch=\(reading.requirementMismatch, privacy: .public)")
                 }
             }
             if reading.checkFailed && !self.checkFailed { self.logger.notice("status_check_failed=true") }
@@ -160,12 +192,26 @@ final class PermissionStatusModel: ObservableObject {
     }
 
     func requestAccessibility() {
+        requestedSystemSettings = true
+        willOpenSystemSettings()
         requestAccessibilityAccess()
+        refresh()
+    }
+
+    /// "Send events to other apps" (direct paste) is its own TCC capability on
+    /// macOS 14+: a green Accessibility row does not imply it, so it gets its own
+    /// request path instead of reusing the Accessibility branch.
+    func requestPostEvents() {
+        requestedSystemSettings = true
+        willOpenSystemSettings()
+        requestPostEventAccess()
         refresh()
     }
 
     func requestScreenRecording() {
         guard screenRequestTask == nil else { return }
+        requestedSystemSettings = true
+        willOpenSystemSettings()
         refresh()
         let check = refreshTask
         isRequestingScreen = true
@@ -191,10 +237,19 @@ struct PermissionStatusView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Three separate capabilities, three rows: macOS grants Accessibility,
+            // "send events to other apps" and Screen Recording independently, and a
+            // single aggregated "未授权" made users unable to tell which one was missing.
             row(title: PermissionCopy.text("辅助功能", "Accessibility"),
-                subtitle: PermissionCopy.text("直接粘贴到其他应用，以及滚动截图。", "Paste into other apps and capture scrolling content."),
+                subtitle: PermissionCopy.text("读取其他应用的界面，用于滚动截图与粘贴。", "Read other apps' interface for scrolling capture and pasting."),
                 granted: model.accessibilityReady, identifier: "permission-accessibility", status: model.accessibilityStatus) {
                 model.requestAccessibility()
+            }
+            Divider()
+            row(title: PermissionCopy.text("跨应用发送事件", "Send Events to Other Apps"),
+                subtitle: PermissionCopy.text("直接把内容粘贴到其他应用（直接粘贴）。", "Paste straight into other apps (direct paste)."),
+                granted: model.postEvents, identifier: "permission-post-events", status: model.postEventsStatus) {
+                model.requestPostEvents()
             }
             Divider()
             row(title: PermissionCopy.text("屏幕录制", "Screen Recording"),
@@ -216,18 +271,16 @@ struct PermissionStatusView: View {
                 Text(PermissionCopy.text("权限已开启，请退出并重新打开应用。", "Access is enabled. Quit and reopen this app to apply it."))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if model.hasChecked && !model.statusUnknown && (!model.accessibility || !model.screenRecording) {
+            } else if showsRemediation {
+                staleRequirementCard
+            } else if model.hasChecked && !model.statusUnknown
+                        && (!model.accessibility || !model.postEvents || !model.screenRecording) {
                 DisclosureGroup(PermissionCopy.text("授权后仍不可用？", "Still unavailable after allowing access?")) {
-                    Text(PermissionCopy.text("先退出并重新打开应用。若仍不可用，请在系统设置中移除旧的闪贴条目，再添加“应用程序”中的当前版本。", "Quit and reopen the app first. If access is still unavailable, remove the old BlinkClip entry in System Settings and add the current version from Applications."))
+                    Text(remediationSteps)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-            }
-            if model.accessibility && !model.postEvents && !model.statusUnknown {
-                Text(PermissionCopy.text("辅助功能已授权，但直接粘贴暂不可用。请退出并重新打开应用。", "Accessibility is granted, but direct paste is temporarily unavailable. Quit and reopen this app."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .background(PermissionWindowBinding(changed: { model.bind(to: $0) }, visibilityChanged: { visible in
@@ -235,6 +288,50 @@ struct PermissionStatusView: View {
         }).frame(width: 0, height: 0))
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+    }
+
+    /// A denied status is worth spelling out instead of hiding behind a
+    /// disclosure once the app can either prove the grant belongs to another
+    /// build, or the user already went to System Settings for it.
+    private var showsRemediation: Bool {
+        guard model.hasChecked, !model.statusUnknown else { return false }
+        let denied = !model.accessibility || !model.postEvents || !model.screenRecording
+        return denied && (model.requirementMismatch || model.requestedSystemSettings)
+    }
+
+    private var remediationSteps: String {
+        PermissionCopy.text("若系统设置里已勾选闪贴但仍显示未生效，列表里那条授权很可能属于旧版本：先在该列表中用“−”移除闪贴，再用“+”添加 \(Bundle.main.bundlePath)，然后勾选新增的条目。退出并重新打开应用后仍不生效时按同样步骤处理。", "If BlinkClip is already ticked in System Settings but this page still shows it inactive, that entry most likely belongs to an older build: remove it with “−”, add \(Bundle.main.bundlePath) again with “+”, then tick the new entry. Do the same if quitting and reopening the app does not help.")
+    }
+
+    /// Shown when the app can prove the grant on record was issued to a different
+    /// build (or the user has just come back from System Settings without a
+    /// grant). The only fix is to remove the old list entry and add this bundle.
+    private var staleRequirementCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(model.requirementMismatch
+                 ? PermissionCopy.text("系统设置里已勾选，但当前版本仍被拒绝", "Ticked in System Settings, still refused")
+                 : PermissionCopy.text("授权后仍不可用？", "Still unavailable after allowing access?"))
+                .font(.system(size: 12, weight: .semibold))
+            Text(model.requirementMismatch
+                 ? PermissionCopy.text("系统里那条授权属于旧版本（旧签名），当前版本对不上。请按顺序操作：1）在“辅助功能”列表中选中闪贴，点“−”移除；2）点“+”重新添加 \(Bundle.main.bundlePath)；3）勾选新增的条目。完成一次后，之后用同一 Developer ID 身份更新不再需要重做。", "That grant belongs to an older build (a different signature) and cannot match this one. In order: 1) select BlinkClip in the Accessibility list and remove it with “−”; 2) add \(Bundle.main.bundlePath) again with “+”; 3) tick the new entry. After doing this once, updates signed with the same Developer ID identity keep the grant.")
+                 : remediationSteps)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button(PermissionCopy.text("打开辅助功能设置…", "Open Accessibility Settings…")) {
+                    model.requestAccessibility()
+                }
+                .accessibilityIdentifier("permission-requirement-mismatch-settings")
+                Button(PermissionCopy.text("在访达中显示应用", "Show App in Finder")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                }
+                .accessibilityIdentifier("permission-requirement-mismatch-reveal")
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("permission-requirement-mismatch")
     }
 
     private func row(title: String, subtitle: String, granted: Bool, identifier: String,
@@ -319,6 +416,9 @@ final class PermissionGuideWindowController: NSWindowController, NSWindowDelegat
     required init?(coder: NSCoder) { nil }
 
     func present() {
+        // The guide's buttons use the same permission flow, so it can be the
+        // window that has to come back after the user visits System Settings.
+        SettingsWindowFocusRestore.shared.attach(to: window)
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

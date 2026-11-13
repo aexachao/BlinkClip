@@ -51,6 +51,40 @@ BLINKCLIP_NOTARY_PROFILE='BlinkClip-notary' \
 
 更新包的 Ed25519 签名用于证明下载来源。macOS 通过应用的代码签名身份判断辅助功能权限归属。历史临时签名更新实测需要重新授权；2026-11-13 本机已完成 1.0.10 Universal 应用的 Developer ID 签名，主应用及嵌套代码的团队、Hardened Runtime 和可信时间戳检查通过。应用与最终 DMG 均获得 Apple 公证 `Accepted`（无警告或问题），已装订并验证票据，Gatekeeper 均通过。尚未证明真实跨版本更新后授权连续；授权连续性需保持相容的 Developer ID 签名身份和 Bundle ID，并经过真实跨版本更新验证。
 
+### 为什么重建后可能还要再授权一次
+
+TCC 不记录“哪个路径被勾选”，而是记录被勾选那一刻那个构建的 **designated requirement**。两种构建写进 TCC 的要求完全不同：
+
+| 构建方式 | `codesign -d -r-` 的 designated requirement | 重建后是否仍然匹配 |
+| --- | --- | --- |
+| Developer ID（`sign-app.py`，`--options runtime --timestamp`） | `identifier "com.chrisli.blinkclip" and anchor apple generic and certificate … and certificate leaf[subject.OU] = "4NJM425J3B"` | 是。只绑定 Bundle ID + 团队，与 cdhash 无关 |
+| 临时签名 `codesign --sign -`（`build-app.sh` 未设置 `BLINKCLIP_SIGNING_IDENTITY` 时的回退） | `cdhash H"…" or cdhash H"…"` | 否。每次构建二进制的 cdhash 都变，要求随之失效 |
+| `Apple Development` / `Apple Distribution` | 绑定该证书与团队 | 否。证书与 Developer ID 的团队身份不同，TCC 里新旧要求对不上 |
+
+本机 2026-11-13 的实例就是这样：`/Applications/BlinkClip.app` 已是 Developer ID 签名（Team `4NJM425J3B`），但 TCC 里那条授权存的仍是旧临时签名构建的两个 cdhash，系统设置里的勾选一直保留，API 却一直返回 false，`log show` 里每次检查都打印：
+
+```
+tccd  Failed to match existing code requirement for subject com.chrisli.blinkclip and service kTCCServiceAccessibility
+      cdhash H"811ea047…" or cdhash H"59fde0e4…"                                     ← TCC 里存的要求（旧临时签名）
+      identifier "com.chrisli.blinkclip" and anchor apple generic and … OU="4NJM425J3B"  ← 当前二进制的要求（Developer ID）
+```
+
+### 一次性修好，之后不再需要重新授权
+
+1. 只做一次目录清理：系统设置 → 隐私与安全性 → 辅助功能（跨应用发送事件、屏幕录制同理），选中闪贴/BlinkClip 点“−”移除；或执行 `tccutil reset Accessibility com.chrisli.blinkclip`（同时会清掉该 Bundle ID 的上述三条授权记录）。
+2. 用当前 Developer ID 构建的 `/Applications/BlinkClip.app` 重新点“+”，勾选新增的条目。设置窗口的“系统权限”分区检测到“已勾选但仍被拒绝”时会直接给出这两步。
+3. 以后每次构建都带上 Developer ID 身份，保持同一个 Bundle ID 与同一个 Team 证书：
+
+```bash
+BLINKCLIP_SIGNING_IDENTITY='Developer ID Application: Chao Li (4NJM425J3B)' \
+  bash replica/scripts/build-app.sh release universal
+```
+
+不要用临时签名或 Apple Development 构建覆盖安装正式版：那样 TCC 里的要求又被换成 cdhash，下一次勾选白做。`build-app.sh` 在没有 Developer ID 身份时会打印提示，说明这次构建的授权不会随重建保留；签名脚本的安全语义（必须真实身份、Hardened Runtime、可信时间戳、逐层签名）不变。
+
+比较自维护时，可用 `codesign -d -r- /Applications/BlinkClip.app` 确认仍是 `identifier … OU = "4NJM425J3B"` 形式，而不是 `cdhash H"…"`。
+
+
 参考 [Sparkle 更新发布文档](https://sparkle-project.org/documentation/publishing/) 和 [Apple 代码签名身份说明](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)。
 
 ## 本机实测

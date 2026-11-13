@@ -53,6 +53,7 @@ struct PermissionStatusHarness {
         model.requestAccessibility()
         await settle(model)
         check(requestedAccessibility == 1, "Explicit accessibility action must request once")
+        check(model.requestedSystemSettings, "A 「前往授权…」 press must surface the remove-and-re-add steps while denied")
         check(!model.accessibilityReady && !model.screenRecording, "Missing permissions state")
         post = true
         model.refresh()
@@ -183,6 +184,65 @@ struct PermissionStatusHarness {
             do { _ = try await cancelled.value; check(false, "Cancelled probe accepted") }
             catch { checks += 1 }
         } else { check(false, "Signed test process identity unavailable") }
+        // --- Stale TCC requirement: ticked in System Settings, this build denied ---
+        let ledgerSuite = "blinkclip.permission-ledger.\(UUID().uuidString)"
+        let ledger = UserDefaults(suiteName: ledgerSuite)!
+        defer { ledger.removePersistentDomain(forName: ledgerSuite) }
+        let zh = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+        let newBuild = PermissionProbeIdentity(executablePath: "/Applications/BlinkClip.app/Contents/MacOS/BlinkClip",
+                                               bundleIdentifier: "com.chrisli.blinkclip", codeHash: "cdhash-new",
+                                               teamIdentifier: "4NJM425J3B")
+        let oldBuild = PermissionProbeIdentity(executablePath: "/Applications/BlinkClip.app/Contents/MacOS/BlinkClip",
+                                               bundleIdentifier: "com.chrisli.blinkclip", codeHash: "cdhash-old",
+                                               teamIdentifier: nil)
+        check(!PermissionGrantLedger.requirementMismatch(isTrusted: false, identity: newBuild, defaults: ledger),
+              "Without a recorded grant a denial cannot be called a requirement mismatch")
+        check(PermissionGrantLedger.memory(defaults: ledger) == nil, "Grant ledger starts empty")
+        PermissionGrantLedger.recordGrant(identity: oldBuild, shortVersion: "1.0.9", defaults: ledger)
+        check(PermissionGrantLedger.memory(defaults: ledger)?.shortVersion == "1.0.9",
+              "Grant record keeps the build that owned the grant")
+        check(!PermissionGrantLedger.requirementMismatch(isTrusted: true, identity: oldBuild, defaults: ledger),
+              "A live grant is never a mismatch")
+        check(PermissionGrantLedger.requirementMismatch(isTrusted: false, identity: newBuild, defaults: ledger),
+              "Denied after the signing identity changed must be reported as a stale requirement")
+        check(!PermissionGrantLedger.requirementMismatch(isTrusted: false, identity: oldBuild, defaults: ledger),
+              "Denied with the same identity is a revocation, not a stale requirement")
+        let deniedReading = PermissionStatusProbe.recorded(
+            PermissionStatusReading(currentProcess: denied, freshProcess: nil, checkFailed: false),
+            identity: newBuild, defaults: ledger, version: "1.0.10")
+        check(deniedReading.requirementMismatch, "The probe must surface the stale requirement")
+        _ = PermissionStatusProbe.recorded(
+            PermissionStatusReading(currentProcess: denied, freshProcess: nil, checkFailed: true),
+            identity: newBuild, defaults: ledger, version: "1.0.11")
+        check(PermissionGrantLedger.memory(defaults: ledger)?.codeHash == "cdhash-old",
+              "A failed check must not overwrite the recorded grant")
+        let grantedReading = PermissionStatusProbe.recorded(
+            PermissionStatusReading(currentProcess: granted, freshProcess: nil, checkFailed: false),
+            identity: newBuild, defaults: ledger, version: "1.0.10")
+        check(!grantedReading.requirementMismatch, "A new grant clears the mismatch")
+        check(PermissionGrantLedger.memory(defaults: ledger)?.teamIdentifier == "4NJM425J3B",
+              "Grant ledger records the Developer ID team")
+        var liveMismatch = false
+        let mismatchModel = PermissionStatusModel(readStatus: {
+            PermissionStatusReading(currentProcess: denied, freshProcess: nil, checkFailed: false,
+                                    requirementMismatch: liveMismatch)
+        })
+        await settle(mismatchModel)
+        check(!mismatchModel.requirementMismatch, "No stale requirement before the flag is set")
+        mismatchModel.start()
+        liveMismatch = true
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: app)
+        await settle(mismatchModel)
+        check(mismatchModel.requirementMismatch, "Returning to the app must refresh the stale-requirement hint")
+        check(mismatchModel.accessibilityStatus.contains(zh ? "辅助功能" : "Accessibility"),
+              "Accessibility row names its own capability")
+        check(!mismatchModel.accessibilityStatus.contains(zh ? "跨应用发送事件" : "other apps"),
+              "Accessibility status must not report the event-posting capability")
+        check(mismatchModel.postEventsStatus.contains(zh ? "跨应用发送事件" : "other apps"),
+              "Event-posting row names its own capability")
+        check(mismatchModel.screenRecordingStatus.contains(zh ? "屏幕录制" : "Screen Recording"),
+              "Screen Recording row names its own capability")
+        mismatchModel.stop()
         let controllerDirectory = out.appendingPathComponent("guide-controller-close")
         let completionKey = PermissionGuidePersistence.key(for: controllerDirectory)
         UserDefaults.standard.removeObject(forKey: completionKey)

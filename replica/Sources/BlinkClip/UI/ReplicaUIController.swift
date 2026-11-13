@@ -1352,6 +1352,9 @@ final class ReplicaUIController {
             // 每次明确深链都刷新目标；普通「设置…」调用保持用户上次停留的分区。
             installSettingsContent(initialTab: initialTab)
         }
+        // 「去授权」把用户送到系统设置后，本应用是 LSUIElement，系统设置关掉时没有任何东西
+        // 会把我们重新激活，设置窗口就留在别的窗口后面。这里登记窗口，回来时只前置这一个窗口。
+        SettingsWindowFocusRestore.shared.attach(to: settingsWindow)
         show(settingsWindow!)
     }
 

@@ -17,11 +17,13 @@ xcrun swiftc -parse-as-library -swift-version 5 -target "$target" -module-cache-
   "$replica_root/Sources/BlinkClip/UI/AccessibilityRequestAction.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" \
+  "$replica_root/Sources/BlinkClip/UI/SettingsWindowFocusRestore.swift" \
   "$replica_root/Tests/Native/PermissionStatusHarness.swift" \
   -o "$test_build/permission-status" >> "$test_out/compile.log" 2>&1
 shasum -a 256 "${sources[@]}" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" \
   "$replica_root/Sources/BlinkClip/UI/AccessibilityRequestAction.swift" \
-  "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" "$replica_root/Sources/BlinkClip/AppMain.swift" > "$test_out/production-inputs.sha256"
+  "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" \
+  "$replica_root/Sources/BlinkClip/UI/SettingsWindowFocusRestore.swift" "$replica_root/Sources/BlinkClip/AppMain.swift" > "$test_out/production-inputs.sha256"
 for language in en zh-Hans; do
   "$test_build/permission-status" "$test_out" -AppleLanguages "($language)" > "$test_out/$language.log" 2>&1
   cat "$test_out/$language.log"

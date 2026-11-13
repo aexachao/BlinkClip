@@ -213,11 +213,17 @@ MERGE_ENTITLEMENTS
     --entitlements "$staging/signed-entitlements.plist"
 else
   if [[ -n "${BLINKCLIP_SIGNING_IDENTITY:-}" && "$BLINKCLIP_SIGNING_IDENTITY" != - ]]; then
+    case "$BLINKCLIP_SIGNING_IDENTITY" in
+      *"Developer ID Application"*) ;;
+      *) printf '%s\n' "提示：${BLINKCLIP_SIGNING_IDENTITY} 不是 Developer ID Application 身份。系统权限（辅助功能、跨应用发送事件、屏幕录制）按代码签名要求判定，换证书或重建后可能又要授权一次；正式分发请使用 Developer ID Application 身份。详见 docs/APP_UPDATES.md。" >&2 ;;
+    esac
     python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY" \
       --entitlements "$base_entitlements"
   else
     # ad-hoc 构建不开 Hardened Runtime，Finder 自动化不需要授权即可用；
     # Info.plist 的用途说明仍然生效，因此本地构建照旧成功、照旧能弹 TCC 提示。
+    # ad-hoc 的 designated requirement 是 cdhash，每次重建都会变，TCC 里的旧授权永远对不上。
+    printf '%s\n' "提示：未提供 BLINKCLIP_SIGNING_IDENTITY，本次为 ad-hoc 签名。ad-hoc 的代码要求绑定 cdhash，重建后系统权限需重新授权；如需授权可跨更新保留，请设置稳定且固定的 Developer ID Application 身份。详见 docs/APP_UPDATES.md。" >&2
     codesign --force --sign - "$bundle"
   fi
 fi
