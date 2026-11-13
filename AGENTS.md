@@ -20,7 +20,7 @@ npm run test:core     # swift run --package-path replica blinkclip-core-tests
 npm run test:mcp      # python3 replica/scripts/test-mcp.py
 ```
 
-原生测试脚本在 `replica/scripts/test-*.sh`，测试桩在 `replica/Tests/Native/`，核心测试在 `replica/Tests/BlinkClipCoreTests/`，Python 静态检查在 `scripts/tests/`。详见 `replica/TESTING.md`。构建与测试直接在仓库内运行，不经过 storage-guard，也不使用 `~/dev-artifacts`。
+原生测试脚本在 `replica/scripts/test-*.sh`，测试桩在 `replica/Tests/Native/`，核心测试在 `replica/Tests/BlinkClipCoreTests/`，Python 静态检查在 `scripts/tests/`。详见 `replica/TESTING.md`。本机构建、测试与打包必须通过 `~/dev-artifacts/bin/storage-guard run` 启动，显式将中间文件放入 `$ARTIFACT_TASK_DIR/build`，交付和证据放入 `out`；不要在仓库产生构建缓存或安装包。Developer ID 签名、公证入口是 `replica/scripts/build-notarized.sh`，凭据配置和命令见 `docs/APP_UPDATES.md`。
 
 ## 不要做的事
 

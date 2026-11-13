@@ -184,10 +184,14 @@ if [[ -n "${BLINKCLIP_CLOUDKIT_PROFILE:-}${BLINKCLIP_CLOUDKIT_CONTAINER:-}" ]]; 
   python3 "$replica_root/scripts/configure-cloudkit-signing.py" \
     --profile "$BLINKCLIP_CLOUDKIT_PROFILE" --bundle "$bundle" --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
     --environment "${BLINKCLIP_CLOUDKIT_ENVIRONMENT:-Development}" --output "$staging/cloudkit-entitlements.plist"
-  codesign --force --sign "$BLINKCLIP_SIGNING_IDENTITY" --entitlements "$staging/cloudkit-entitlements.plist" "$bundle"
+  python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY" \
+    --entitlements "$staging/cloudkit-entitlements.plist"
 else
-  # 有身份则用身份签，TCC 授权可跨重建保持；无身份退回 ad-hoc。
-  codesign --force --sign "${BLINKCLIP_SIGNING_IDENTITY:--}" "$bundle"
+  if [[ -n "${BLINKCLIP_SIGNING_IDENTITY:-}" && "$BLINKCLIP_SIGNING_IDENTITY" != - ]]; then
+    python3 "$replica_root/scripts/sign-app.py" "$bundle" --identity "$BLINKCLIP_SIGNING_IDENTITY"
+  else
+    codesign --force --sign - "$bundle"
+  fi
 fi
 codesign --verify --deep --strict "$bundle"
 if [[ -e "$output_root/BlinkClip.app" ]]; then

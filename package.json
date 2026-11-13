@@ -8,6 +8,7 @@
     "test:core": "swift run --package-path replica blinkclip-core-tests",
     "test:mcp": "python3 replica/scripts/test-mcp.py",
     "build:icon": "swift replica/scripts/build-icon.swift",
-    "build:dmg": "python3 replica/scripts/release-ci.py package"
+    "build:dmg": "python3 replica/scripts/release-ci.py package",
+    "build:notarized": "bash replica/scripts/build-notarized.sh"
   }
 }
