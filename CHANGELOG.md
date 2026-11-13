@@ -1,5 +1,35 @@
 # 更新日志
 
+## 1.0.10 · 2026-11-13（首个公开版，GitHub Releases）
+
+首个公开版本，从 [GitHub Releases](https://github.com/aexachao/BlinkClip/releases) 免费下载，不在 Mac App Store 上架，也不需要 App Store 账号或内购。
+
+### 分发属性
+
+- 使用 `Developer ID Application: Chao Li (4NJM425J3B)` 签名，已启用 Hardened Runtime 与可信时间戳；应用与 DMG 均通过 Apple 公证（`notarytool` 状态 `Accepted`），票据已 staple，`stapler validate` 通过，Gatekeeper 评估为 `accepted / Notarized Developer ID`。
+- 单一 Universal 二进制，包含 `x86_64` 与 `arm64`；最低要求 macOS 14.0。
+
+### 相对上一内部版本的修复
+
+- 核心持久化写失败不再崩溃：Core Data 保存失败改为返回可重试的错误并走 `StoreSaveRecovery`，不再 `fatalError` 终止应用。
+- 无 payload 的剪贴板条目不再被错误合并到无关条目上，仅在实际存在 payload 身份时合并；补了对应回归测试。
+- 设置页页脚显示产品名（「闪贴设置 / BlinkClip Settings」），不再回落为其他名称。
+- 资源渲染在 macOS 15 上正确：改为显式绘制 2× 位图再采样到 1×，绕开 `NSImage` 块式初始化在 macOS 15 只记录 `NSCustomImageRep`、`representations` 为空的问题。
+- 修复验证脚本与原生测试 harness：`validate.sh` 去掉已删除脚本调用并修正 Universal 布局检查，六个原生 harness 恢复可编译，打包与 CloudKit/Sparkle/helper 相关测试脚本修复。
+- 补 Apple Events 权限（`com.apple.security.automation.apple-events`），使 Finder 选区在 Hardened Runtime 下可用；entitlements 仅此一项，不含 App Sandbox、`get-task-allow` 或 JIT 例外。
+
+### 已知限制
+
+- CloudKit 跨设备同步未启用：本构建未带 CloudKit entitlements，也没有可用的自有容器，设置里会直接提示「此构建未配置 … CloudKit 容器和开发者签名，暂不能连接 iCloud」。
+- 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
+- Sparkle 更新私钥已轮换，公钥随之更换；用旧公钥构建的版本无法自动升级到本版，只能手动下载安装，之后可走应用内更新。
+- 繁体中文（zh-Hant）缺本地化表：包内只有 `zh-Hant.lproj/InfoPlist.strings`，没有 `Localizable.strings`，未覆盖的界面文案回落英文或简体。
+- 应用二进制内仍保留 capcap 命名空间的技术标识（如通知名、默认值键）与 `capcap-LICENSE.txt` 许可证文件名，属技术标识保留，不代表与上游存在关联或背书。
+
+### 兼容性
+
+Bundle ID 仍为 `com.chrisli.blinkclip`，数据目录仍为 `~/Library/Application Support/BlinkClip`，从内部构建升级不需要迁移数据。
+
 ## 未发布 · BlinkClip 清理（2026-11-12）
 
 - 产品改名 Snapclip → BlinkClip（中文名仍为「闪贴」），Bundle ID 改为 `com.chrisli.blinkclip`；数据目录改为 `~/Library/Application Support/BlinkClip`，iCloud Drive 同步目录改为 `BlinkClip`；登录项改为 `BlinkClip Helper.app`；MCP 服务改为 `blinkclip-mcp`。
@@ -10,7 +40,9 @@
 
 ## 1.0.10 · 2026-11-11（源码更新，安装包尚未发布）
 
-- 仓库改为 aexachao/Snapclip；帮助、README、官网源码与应用更新源使用本项目地址。
+（历史段落，仓库名后已定为 aexachao/BlinkClip；安装包已于 2026-11-13 发布，见上。以下为当时记录。）
+
+- 仓库定为 aexachao/BlinkClip（当时短名写作 Snapclip，后统一为 BlinkClip）；帮助、README、官网源码与应用更新源使用本项目地址。
 - 精简设置说明，移除截图编辑器“上传到图床”入口及遗留工具配置中的入口。
 - 六条快捷键均可清空，截图热键真正注销；保留单项与全部恢复、Purr 系统提示音及截图浮层排除修复。
 - 自有生成图标与插图、中英文原创表不包含上游提取图像；Bundle ID、数据、归档、云和 helper 服务身份保持兼容。
