@@ -8,8 +8,8 @@
 
 - 新主启动图标、直接粘贴 / 复制到剪贴板 / 权限三张插图按用户确认使用当前内置图像工具生成。工具未公开模型 ID，不称为 gpt-image-2.5。源图、提示词、分层 source-package、转换和 SHA 记录见 `branding/BlinkClipGeneratedAssets/`；独立 20pt 类别模板继续保留，中英独立文案与其他语言回退英文保持。
 - 新 Core bundle 只允许中英表及指定三张生成 PNG（加 Info.plist 共 8 文件）。
-- 1.0.10 清理已从公开仓库移除：反编译产物、研究报告、逆向研究说明，以及旧提取资源（17 套旧本地化、`OriginalSettingsCopyTo*` 四张图、`BlinkClipOtherApps@2x.png`、`OriginalStackIcons.bundle`）。仅从当前分支删除文件并不能清除 git 历史中的旧内容；本仓库将以单一初始提交重建为独立仓库，不再共享上游 fork 的历史。
-- 仍保留一份内部函数对照台账（`replica/function-map.json`）与源码中的地址注释，作为实现记录，将在后续重命名工作中清理。
+- 1.0.10 清理已从公开仓库移除旧提取资源（17 套旧本地化、`OriginalSettingsCopyTo*` 四张图、`BlinkClipOtherApps@2x.png`、`OriginalStackIcons.bundle`）。仅从当前分支删除文件并不能清除 git 历史中的旧内容；本仓库将以单一初始提交重建为独立仓库，不再共享上游 fork 的历史。
+- 内部函数对照台账（`replica/function-map.json`）已不在仓库中；现源码中的函数名均为按实际行为命名的描述性名称。
 
 ## A · 原研究素材与独立替代
 
@@ -39,8 +39,8 @@
 
 - **capcap**：保留 `replica/Vendor/capcap/LICENSE` 完整 MIT / Copyright (c) 2026 realskyrin；包内完整告知已接入，不能改成 BlinkClip 作者。
 - **Sparkle**：保留框架、Sparkle 及其依赖许可告知；不因品牌迁移改变更新验证公钥或提交私钥。
-- **项目 MIT**：`LICENSE` 中 Copyright (c) 2026 BlinkClip contributors 保留完整。新品牌与新创作范围由 NOTICE/来源记录说明，本轮不重写既有版权行。
-- **研究材料**：反编译产物、研究报告、原符号、恢复代码和旧提取素材已从公开仓库移除（见上文“当前状态”）；内部函数对照台账与源码地址注释已在 BlinkClip 清理中删除（见下文 §D）。
+- **项目 AGPL-3.0**：本项目以 GNU AGPL-3.0 发布，`LICENSE` 为 GNU 官方全文、未改写；`Copyright (c) 2026 BlinkClip contributors` 保留在 `NOTICE.md` 的「版权」段。新品牌与新创作范围由 NOTICE/来源记录说明。
+- **原版素材**：原版提取素材已从公开仓库移除（见上文「当前状态」）；其版权仍归原权利人所有，本项目不就此主张任何权利。
 - **系统与其他 App 图标**：历史卡片运行时显示来源标志用于识别，不因此取得将它们用作自身商标或宣传图的权利；相关使用条件仍需复核。
 
 ## D · 标识与工程迁移

@@ -118,7 +118,7 @@ npm run build:dmg
 
 ## 许可
 
-独立编写的实现源码、工具、文档与自制图形按 [MIT License](LICENSE) 开源。第三方组件（capcap 截图与编辑器模块、Sparkle 更新框架）保留各自的许可与版权声明，范围见 [NOTICE.md](NOTICE.md)。
+独立编写的实现源码、工具、文档与自制图形按 [GNU AGPL-3.0](LICENSE) 开源（含第 13 条网络使用条款）。第三方组件（capcap 截图与编辑器模块、Sparkle 更新框架）保留各自的许可与版权声明，范围见 [NOTICE.md](NOTICE.md)。
 
 ## 已知限制
 

@@ -118,7 +118,7 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Wh
 
 ## License
 
-The independently written implementation, tools, documentation, and self-made graphics are open source under the [MIT License](LICENSE). Third-party components (the capcap screenshot and editor module, the Sparkle update framework) keep their own licenses and copyright notices; see [NOTICE.md](NOTICE.md) for the scope of each part.
+The independently written implementation, tools, documentation, and self-made graphics are open source under the [GNU AGPL-3.0](LICENSE), including its section 13 network-use clause. Third-party components (the capcap screenshot and editor module, the Sparkle update framework) keep their own licenses and copyright notices; see [NOTICE.md](NOTICE.md) for the scope of each part.
 
 ## Known limitations
 

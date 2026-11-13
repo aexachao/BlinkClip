@@ -2,6 +2,7 @@
   "name": "blinkclip",
   "version": "1.0.10",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "闪贴 / BlinkClip：免费、离线的原生 macOS 剪贴板与截图工具",
   "scripts": {
     "build:app": "bash replica/scripts/build-app.sh",
