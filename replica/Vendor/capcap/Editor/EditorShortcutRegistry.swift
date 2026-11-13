@@ -112,8 +112,13 @@ enum EditorShortcutAction: Hashable {
             keyCode = kVK_ANSI_Z
             modifiers = UInt32(cmdKey)
         case .toolbar(.redo):
+            // ⇧⌘Z, the platform-standard redo. The editor's local key monitor
+            // claims it before the responder chain, so the app's Undo menu item
+            // (⌘Z only) and any system redo handler never see it. Redo no
+            // longer has a button (see ToolbarView.keyboardOnlyItems); the
+            // shortcut is the only way in.
             keyCode = kVK_ANSI_Z
-            modifiers = 0
+            modifiers = UInt32(cmdKey) | UInt32(shiftKey)
         case .toolbar(.pin):
             keyCode = kVK_ANSI_P
             modifiers = 0

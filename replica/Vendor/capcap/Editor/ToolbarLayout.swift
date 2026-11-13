@@ -219,10 +219,15 @@ struct ToolbarGroup: Equatable {
 
     /// Shapes: rectangle (default) and ellipse.
     static let shapes = ToolbarGroup(id: "shapes", members: [.rectangle, .ellipse], defaultMember: .rectangle)
-    /// Lines: line (default) and arrow.
-    static let lines = ToolbarGroup(id: "lines", members: [.line, .arrow], defaultMember: .line)
+    /// Lines: line and arrow. Arrow is the default because it is the tool the
+    /// user reaches for first; an already-persisted choice still wins (see
+    /// `ToolbarGroupSelection.member(for:)`).
+    static let lines = ToolbarGroup(id: "lines", members: [.line, .arrow], defaultMember: .arrow)
+    /// Brush: pen (default), highlighter and spotlight. One button with a
+    /// dropdown instead of three separate buttons.
+    static let brush = ToolbarGroup(id: "brush", members: [.pen, .marker, .spotlight], defaultMember: .pen)
 
-    static let all: [ToolbarGroup] = [.shapes, .lines]
+    static let all: [ToolbarGroup] = [.shapes, .lines, .brush]
 
     static func group(containing item: ToolbarItemID) -> ToolbarGroup? {
         all.first { $0.members.contains(item) }
@@ -384,6 +389,19 @@ struct ToolbarLayout: Equatable {
         if primarySlots.isEmpty { return sideSlots }
         if sideSlots.isEmpty { return primarySlots }
         return primarySlots + [.divider] + sideSlots
+    }
+
+    /// The layout with `items` treated as unavailable, keeping every other
+    /// tool exactly where it was. Used for items hidden for the current
+    /// scenario and for keyboard-only actions (redo), so hiding never rewrites
+    /// the persisted layout — the item simply stops contributing a slot.
+    func excluding(_ items: Set<ToolbarItemID>) -> ToolbarLayout {
+        guard !items.isEmpty else { return self }
+        return ToolbarLayout(
+            primary: primary.filter { !items.contains($0) },
+            side: side.filter { !items.contains($0) },
+            hidden: hidden.filter { !items.contains($0) }
+        )
     }
 
     /// Drops duplicate / unknown ids and slots any tool missing from all

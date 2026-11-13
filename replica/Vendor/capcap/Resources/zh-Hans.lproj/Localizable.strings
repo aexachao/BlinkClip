@@ -284,7 +284,7 @@
 "tipPin" = "钉在屏幕";
 "tipRecord" = "录制";
 "tipCancel" = "取消";
-"tipConfirm" = "复制到剪贴板";
+"tipConfirm" = "完成";
 "tipScrollCropConfirm" = "保存并编辑";
 "copyQRCodeContent" = "复制二维码内容";
 

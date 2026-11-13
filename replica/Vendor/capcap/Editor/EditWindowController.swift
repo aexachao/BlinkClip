@@ -620,16 +620,27 @@ class EditWindowController {
         return true
     }
 
+    /// Keys that must be claimed before the editor's own shortcuts run.
+    ///
+    /// The capture overlay's key monitor calls this first, so a transient
+    /// surface can take ↑/↓/Return/Esc before the overlay turns Esc into
+    /// "cancel the whole capture" or the canvas nudges the selected
+    /// annotation. The grouped-tool dropdown is such a surface: while it is
+    /// open it owns those four keys (its own monitor handles the stand-alone
+    /// editor case where no overlay monitor is installed).
     func handleWindowCaptureWaitKeyDown(_ event: NSEvent) -> Bool {
+        if ToolbarGroupMenuPanel.presentedPanel?.handleKeyDown(event) == true { return true }
         guard isWaitingForWindowCaptureOutput else { return false }
         if event.keyCode == 53 { cancelWindowCaptureOutput() }
         return true
     }
 
-    /// Undo/redo stay visible but greyed out when their stacks are empty:
-    /// their availability flips with every edit, so hiding them would make
-    /// the bar constantly resize and jump. This is also the standard macOS
-    /// convention.
+    /// Undo stays visible but greyed out when its stack is empty: its
+    /// availability flips with every edit, so hiding it would make the bar
+    /// constantly resize and jump. This is also the standard macOS convention.
+    /// Redo keeps the same enable/disable bookkeeping, but its button is not
+    /// on the bar at all (see `ToolbarView.keyboardOnlyItems`) — its state is
+    /// tracked so ⇧⌘Z and any future surface agree with the canvas.
     private func updateHistoryButtons(canUndo: Bool, canRedo: Bool) {
         toolbarView?.setUndoEnabled(canUndo)
         toolbarView?.setRedoEnabled(canRedo)
@@ -3159,8 +3170,6 @@ class EditWindowController {
 
 // MARK: - Main Toolbar View
 
-let accentGreen = NSColor(red: 0, green: 212.0/255.0, blue: 106.0/255.0, alpha: 1.0)
-
 private final class ClosureMenuItem: NSMenuItem {
     private let handler: () -> Void
 
@@ -3239,8 +3248,8 @@ final class EditorScrollView: NSScrollView {
 class ToolbarView: NSView {
     /// Button run geometry. `preferredSize` derives the capsule size from
     /// these so the dark background always wraps the buttons exactly.
-    static let buttonSize: CGFloat = 40
-    static let symbolPointSize: CGFloat = 18
+    static let buttonSize: CGFloat = ToolbarChrome.rowHeight
+    static let symbolPointSize: CGFloat = ToolbarChrome.symbolPointSize
     static let buttonSpacing: CGFloat = 6
     /// Inset along the main axis at both ends of the run.
     static let endPadding: CGFloat = 15
@@ -3252,6 +3261,13 @@ class ToolbarView: NSView {
     /// Width of the divider slot: a 1pt separator with a button's spacing
     /// on each side so the gap reads evenly.
     static let dividerSlotWidth: CGFloat = 13
+
+    /// Items whose action still exists but which are no longer offered on the
+    /// bar. Redo lives here: it is keyboard-only now (⇧⌘Z), so it must not take
+    /// a slot or width. Hiding is runtime-only — the same mechanism scroll
+    /// capture and record use — which keeps the user's persisted layout order
+    /// intact, so the item can come back untouched if it is ever offered again.
+    private static let keyboardOnlyItems: Set<ToolbarItemID> = [.redo]
 
     private let layout: ToolbarLayout
     private var groupSelection: ToolbarGroupSelection
@@ -3310,10 +3326,13 @@ class ToolbarView: NSView {
     private var buttons: [ToolbarItemID: NSView] = [:]
     private var groupButtons: [String: ToolbarGroupButton] = [:]
 
+    private var windowObservers: [NSObjectProtocol] = []
+
     init(layout: ToolbarLayout, groupSelection: ToolbarGroupSelection) {
         self.layout = layout
         self.groupSelection = groupSelection
         super.init(frame: NSRect(origin: .zero, size: .zero))
+        scenarioHidden.formUnion(Self.keyboardOnlyItems)
         rebuild()
     }
 
@@ -3321,7 +3340,70 @@ class ToolbarView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: - Hover plumbing
+    //
+    // Each control tracks its own pointer state, but the bar can move, resize
+    // or reflow under a stationary pointer (a hidden tool reappearing, the bar
+    // being kept inside the screen). AppKit does not deliver the matching
+    // `mouseExited` then, which used to leave a highlight lit. The bar
+    // re-derives every control's state whenever that happens, and clears it
+    // when the window stops being key.
+
+    private var hoverableControls: [ToolbarHoverable] {
+        subviews.compactMap { $0 as? ToolbarHoverable }
+    }
+
+    private func resyncHoverHighlights() {
+        for control in hoverableControls { control.resyncHoverWithPointer() }
+    }
+
+    private func clearHoverHighlights() {
+        for control in hoverableControls { control.setHovered(false) }
+    }
+
+    /// The bar is repositioned inside the screen frame by the controller, so
+    /// catch its own frame changes rather than relying on mouse events.
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        resyncHoverHighlights()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        resyncHoverHighlights()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+        windowObservers.removeAll()
+        guard let window else {
+            clearHoverHighlights()
+            return
+        }
+        let center = NotificationCenter.default
+        windowObservers.append(center.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.clearHoverHighlights()
+        })
+        windowObservers.append(center.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resyncHoverHighlights()
+        })
+        resyncHoverHighlights()
+    }
 
     func updateSelection(tool: EditTool) {
         currentTool = tool
@@ -3339,8 +3421,9 @@ class ToolbarView: NSView {
     }
 
     /// Enables/disables a button and dims it when disabled. The button stays
-    /// visible: use this for undo/redo, whose availability flips with every
-    /// edit — hiding them would make the bar constantly resize and jump.
+    /// visible: use this for undo, whose availability flips with every edit —
+    /// hiding it would make the bar constantly resize and jump. Redo is
+    /// keyboard-only and absent from the bar, so this only records its state.
     func setEnabled(_ enabled: Bool, for id: ToolbarItemID) {
         if enabled { disabledItems.remove(id) } else { disabledItems.insert(id) }
         guard let btn = buttons[id] as? ToolButton else { return }
@@ -3358,6 +3441,9 @@ class ToolbarView: NSView {
     /// visible member, and the group disappears entirely when no member
     /// is left visible.
     func setVisible(_ visible: Bool, for id: ToolbarItemID) {
+        // Keyboard-only items are hidden for good; a scenario asking for them
+        // back must not put them on the bar.
+        guard !Self.keyboardOnlyItems.contains(id) else { return }
         let isHidden = scenarioHidden.contains(id)
         guard isHidden == visible else { return }
         if visible { scenarioHidden.remove(id) } else { scenarioHidden.insert(id) }
@@ -3405,6 +3491,8 @@ class ToolbarView: NSView {
     func setScrollCaptureVisible(_ visible: Bool) { setVisible(visible, for: .scrollCapture) }
     func setBeautifyActive(_ active: Bool) { setActive(active, for: .beautify) }
     func setUndoEnabled(_ enabled: Bool) { setEnabled(enabled, for: .undo) }
+    /// Redo has no button (keyboard-only, ⇧⌘Z); recorded so the state is
+    /// available if it is ever shown again.
     func setRedoEnabled(_ enabled: Bool) { setEnabled(enabled, for: .redo) }
     /// Hides the record button when recording is unavailable in this mode;
     /// shows it again when a live screen session starts.
@@ -3427,21 +3515,22 @@ class ToolbarView: NSView {
     /// state onto the new buttons, resizes to the new `preferredSize`,
     /// and notifies the controller so it can reposition the bar.
     private func rebuild() {
+        // The buttons are about to be replaced; an open dropdown would keep a
+        // stale anchor.
+        ToolbarGroupMenuPanel.dismissPresented()
         for subview in subviews { subview.removeFromSuperview() }
         buttons.removeAll()
         groupButtons.removeAll()
         currentSlots = slotsForCurrentState()
         setupButtons()
         setFrameSize(preferredSize)
+        resyncHoverHighlights()
         needsDisplay = true
         onPreferredSizeChanged?()
     }
 
     private func slotsForCurrentState() -> [ToolbarLayout.Slot] {
-        var effective = layout
-        effective.primary = layout.primary.filter { !scenarioHidden.contains($0) }
-        effective.side = layout.side.filter { !scenarioHidden.contains($0) }
-        return ToolbarLayout.slots(for: effective)
+        ToolbarLayout.slots(for: layout.excluding(scenarioHidden))
     }
 
     private func setupButtons() {
@@ -3542,9 +3631,8 @@ class ToolbarView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8)
-        AdaptiveChrome.toolbarBackground.setFill()
-        path.fill()
+        // Same helper the grouped-tool dropdown uses for its own panel.
+        ToolbarChrome.drawSurface(in: bounds)
     }
 
     @objc private func buttonTapped(_ sender: ToolButton) {
@@ -3554,13 +3642,14 @@ class ToolbarView: NSView {
 }
 
 /// One grouped dropdown button: a 40pt tool button showing the selected
-/// member's icon, plus a 16pt chevron zone that opens the group's menu.
+/// member's icon, plus a 16pt chevron zone that opens the group's dropdown.
 /// Clicking the tool area triggers the selected tool; clicking the chevron
-/// opens the menu to switch members.
-final class ToolbarGroupButton: NSView {
+/// opens the self-drawn panel (see `ToolbarGroupMenuPanel`) to switch members.
+/// Both halves paint the same hover highlight as a plain toolbar button.
+final class ToolbarGroupButton: NSView, ToolbarHoverable {
     let group: ToolbarGroup
     private(set) var button: ToolButton
-    private let chevronButton: NSButton
+    private let chevronButton: ToolbarChevronButton
     private var selectedMember: ToolbarItemID
     private var visibleMembers: [ToolbarItemID]
 
@@ -3588,15 +3677,13 @@ final class ToolbarGroupButton: NSView {
         )
         button.itemID = selectedMember
         self.button = button
-        let chevron = NSButton(frame: NSRect(
-            x: buttonSize, y: 0,
-            width: max(0, frame.width - buttonSize), height: buttonSize
-        ))
-        chevron.bezelStyle = .regularSquare
-        chevron.isBordered = false
-        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
-        chevron.contentTintColor = .secondaryLabelColor
+        let chevron = ToolbarChevronButton(
+            frame: NSRect(
+                x: buttonSize, y: 0,
+                width: max(0, frame.width - buttonSize), height: buttonSize
+            ),
+            symbolPointSize: 9
+        )
         self.chevronButton = chevron
         super.init(frame: frame)
         button.target = self
@@ -3612,10 +3699,24 @@ final class ToolbarGroupButton: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // The bar drives both halves when the bar itself moves.
+    func setHovered(_ hovered: Bool) {
+        button.setHovered(hovered)
+        chevronButton.setHovered(hovered)
+    }
+
+    func resyncHoverWithPointer() {
+        button.resyncHoverWithPointer()
+        chevronButton.resyncHoverWithPointer()
+    }
+
     /// Switches the button to show another member of the group (icon,
-    /// tooltip, and accessibility label). The menu's checkmark follows on
+    /// tooltip, and accessibility label). The panel's checkmark follows on
     /// the next open.
     func setSelectedMember(_ member: ToolbarItemID) {
+        // A shortcut pick (D/H/…) while the dropdown is open must not leave a
+        // stale checkmark behind.
+        ToolbarGroupMenuPanel.dismissPresented()
         selectedMember = member
         button.image = member.iconImage(pointSize: ToolbarView.symbolPointSize)
         button.itemID = member
@@ -3626,155 +3727,32 @@ final class ToolbarGroupButton: NSView {
         button.hoverTip = selectedMember.tooltip
         button.setAccessibilityLabel(selectedMember.tooltip)
         // The chevron belongs to this tool's button; it carries the same
-        // label. Group members can also be switched with their keyboard
-        // shortcuts (R/O for shapes, L/A for lines).
+        // label and opens the member list. Group members can also be switched
+        // with their own keyboard shortcuts (R/O shapes, L/A lines, D/H brush).
         chevronButton.setAccessibilityLabel(selectedMember.tooltip)
+        chevronButton.setAccessibilityRole(.menuButton)
     }
 
     @objc private func toolButtonTapped(_ sender: ToolButton) {
+        // Using the tool half is an answer too: close the member list so the
+        // click has a single, visible result.
+        ToolbarGroupMenuPanel.dismissPresented()
         onTrigger?(selectedMember)
     }
 
     @objc private func chevronTapped(_ sender: NSButton) {
-        let menu = NSMenu()
-        for member in visibleMembers {
-            let item = NSMenuItem(
-                title: member.localizedTitle,
-                action: #selector(menuItemChosen(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = member.rawValue
-            item.state = member == selectedMember ? .on : .off
-            if let icon = member.iconImage(pointSize: 14) { item.image = icon }
-            menu.addItem(item)
+        // A nonactivating panel, not `NSMenu`: the system menu's material,
+        // row height and radius read as a foreign surface next to the bar.
+        // `present` toggles itself closed when the same chevron is clicked.
+        ToolbarGroupMenuPanel.present(
+            group: group,
+            members: visibleMembers,
+            selected: selectedMember,
+            anchor: self,
+            owner: self
+        ) { [weak self] member in
+            self?.onSelectMember?(member)
         }
-        // Pop up below the button: a negative y is below the view in
-        // AppKit coordinates.
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: self)
-    }
-
-    @objc private func menuItemChosen(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let member = ToolbarItemID(rawValue: raw) else { return }
-        onSelectMember?(member)
-    }
-}
-
-// MARK: - Tool Button
-
-class ToolButton: NSButton {
-    var isSelected = false {
-        didSet { needsDisplay = true }
-    }
-
-    /// Text shown by the dark hover tooltip. nil = no tip.
-    var hoverTip: String?
-
-    /// The toolbar item this button triggers. Set at creation; a grouped
-    /// button's inner button follows the group's selected member.
-    var itemID: ToolbarItemID?
-
-    private let normalColor: NSColor
-    private let selectedColor: NSColor
-    private var hoverTrackingArea: NSTrackingArea?
-
-    init(frame: NSRect, symbolName: String, normalColor: NSColor, selectedColor: NSColor, symbolPointSize: CGFloat = 14, iconImage: NSImage? = nil) {
-        self.normalColor = normalColor
-        self.selectedColor = selectedColor
-        super.init(frame: frame)
-
-        bezelStyle = .regularSquare
-        isBordered = false
-        setButtonType(.momentaryPushIn)
-
-        if let iconImage {
-            image = iconImage
-        } else if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .medium)
-            // Keep the text tool's Aa glyph independent of the system language.
-            let localizedImage = symbolName == "textformat" ? img.withLocale(Locale(identifier: "en")) : img
-            image = localizedImage.withSymbolConfiguration(config)
-        }
-
-        contentTintColor = normalColor
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let area = hoverTrackingArea {
-            removeTrackingArea(area)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        guard let tip = hoverTip, let window else { return }
-        let frameInWindow = convert(bounds, to: nil)
-        let frameOnScreen = window.convertToScreen(frameInWindow)
-        ToolTipWindow.show(text: tip, anchor: frameOnScreen)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        ToolTipWindow.hide()
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        ToolTipWindow.hide()
-        super.mouseDown(with: event)
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window == nil { ToolTipWindow.hide() }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if isSelected {
-            contentTintColor = selectedColor
-            let bgPath = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
-            AdaptiveChrome.selectedFill.setFill()
-            bgPath.fill()
-        } else {
-            contentTintColor = normalColor
-        }
-        // NSButtonCell lays out SF Symbols using their text alignment rect,
-        // which excludes some ascenders/descenders. Its rendering can clip
-        // those parts on a different backing scale. Draw the full symbol in
-        // points and let NSImage rasterize for the current graphics context.
-        guard let image else { return }
-        let color = isSelected ? selectedColor : normalColor
-        let tinted = NSImage(size: image.size, flipped: false) { rect in
-            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
-            color.setFill()
-            rect.fill(using: .sourceAtop)
-            return true
-        }
-        let imageRect = NSRect(
-            x: bounds.midX - image.size.width / 2,
-            y: bounds.midY - image.size.height / 2,
-            width: image.size.width,
-            height: image.size.height
-        )
-        tinted.draw(in: imageRect, from: .zero, operation: .sourceOver,
-                    fraction: !isEnabled ? 0.5 : (isHighlighted ? 0.65 : 1),
-                    respectFlipped: true, hints: nil)
     }
 }
 
@@ -3785,7 +3763,7 @@ class ToolButton: NSButton {
 /// row consistently, but it acts as a drag handle rather than a tap target
 /// — `mouseDown` starts a drag, `mouseDragged` reports cumulative deltas in
 /// window coordinates, and `mouseUp` finalizes.
-final class MoveSelectionDragHandle: NSView {
+final class MoveSelectionDragHandle: NSView, ToolbarHoverable {
     var onDragStart: (() -> Void)?
     var onDrag: ((CGSize) -> Void)?
     var onDragEnd: (() -> Void)?
@@ -3794,6 +3772,9 @@ final class MoveSelectionDragHandle: NSView {
     private var pressStartLocation: NSPoint?
     private var isPressed: Bool = false {
         didSet { needsDisplay = true }
+    }
+    private var isHovered: Bool = false {
+        didSet { if oldValue != isHovered { needsDisplay = true } }
     }
     private var hoverTrackingArea: NSTrackingArea?
 
@@ -3816,21 +3797,18 @@ final class MoveSelectionDragHandle: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let area = hoverTrackingArea {
-            removeTrackingArea(area)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
+        refreshHoverTrackingArea(&hoverTrackingArea)
+    }
+
+    func setHovered(_ hovered: Bool) {
+        let allowed = hovered && (window?.isKeyWindow ?? true)
+        guard allowed != isHovered else { return }
+        isHovered = allowed
     }
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        setHovered(true)
         guard let tip = hoverTip, let window else { return }
         let frameInWindow = convert(bounds, to: nil)
         let frameOnScreen = window.convertToScreen(frameInWindow)
@@ -3839,12 +3817,21 @@ final class MoveSelectionDragHandle: NSView {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        setHovered(false)
         ToolTipWindow.hide()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { ToolTipWindow.hide() }
+        if window == nil {
+            ToolTipWindow.hide()
+            setHovered(false)
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -3873,9 +3860,9 @@ final class MoveSelectionDragHandle: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         if isPressed {
-            let bg = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
-            AdaptiveChrome.selectedFill.setFill()
-            bg.fill()
+            ToolbarChrome.drawSelectedBackground(in: bounds)
+        } else {
+            ToolbarChrome.drawHoverBackground(in: bounds, hovered: isHovered)
         }
 
         let symbolName = "arrow.up.and.down.and.arrow.left.and.right"
