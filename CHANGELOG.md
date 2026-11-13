@@ -17,6 +17,12 @@
 - 资源渲染在 macOS 15 上正确：改为显式绘制 2× 位图再采样到 1×，绕开 `NSImage` 块式初始化在 macOS 15 只记录 `NSCustomImageRep`、`representations` 为空的问题。
 - 修复验证脚本与原生测试 harness：`validate.sh` 去掉已删除脚本调用并修正 Universal 布局检查，六个原生 harness 恢复可编译，打包与 CloudKit/Sparkle/helper 相关测试脚本修复。
 - 补 Apple Events 权限（`com.apple.security.automation.apple-events`），使 Finder 选区在 Hardened Runtime 下可用；entitlements 仅此一项，不含 App Sandbox、`get-task-allow` 或 JIT 例外。
+- 截图编辑器工具栏按钮新增鼠标悬停高亮（禁用态不高亮）。
+- 线条工具默认改为箭头。
+- 画笔 / 高亮笔 / 聚光灯合并为一个下拉分组（主区一键使用当前工具）。
+- 撤销/重做：只保留撤销按钮，重做仍可用且快捷键改为 ⇧⌘Z。
+- 确认按钮提示由「复制到剪贴板」改为「完成」。
+- 分组下拉改为与工具栏同风格的自绘面板（支持 ↑↓/Return/Esc、点外部关闭、贴边自动内移）。
 
 ### 已知限制
 
