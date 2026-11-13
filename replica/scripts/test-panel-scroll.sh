@@ -5,7 +5,8 @@ test_root="$(mktemp -d "${TMPDIR:-/tmp}/blinkclip-panel-scroll.XXXXXX")"
 trap 'rm -rf "$test_root"' EXIT
 export BLINKCLIP_TEST_CONFIGURATION=release
 source "$replica_root/Tests/Native/build-support.sh"
-prepare_native_test_core
+# UI/*.swift 会 import BlinkClipCapture；必须走 prepare_native_test_ui 才会构建该模块。
+prepare_native_test_ui
 compile_native_test_harness panel-scroll \
   "$replica_root/Sources/BlinkClip/UI/"*.swift \
   "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" \

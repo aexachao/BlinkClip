@@ -16,6 +16,23 @@ struct UIInteractionHarness {
     static func require(_ condition: @autoclosure () -> Bool, line: UInt = #line) throws {
         if !condition() { throw Failure(description: "UI assertion failed at line \(line)") }
     }
+    /// 2026-11 API 变更：`ReplicaUIController.removePinboard` 的参数从 `Pinboard` 改为
+    /// `ClipboardListTarget`（面板菜单原本就持有 target）。这里按公开入口
+    /// `ClipboardStore.tabListTarget(identifier:)` 把 fixture 分组解析成同样的 target。
+    @MainActor static func listTarget(_ board: Pinboard, store: ClipboardStore) throws -> ClipboardListTarget {
+        guard let target = store.tabListTarget(identifier: board.id.uuidString) else {
+            throw Failure(description: "Missing list target for fixture group \(board.name)")
+        }
+        return target
+    }
+    /// 2026-11 API 变更：`ReplicaUIState.visibleItems` 现在返回 `ClipboardCollectionEntry`
+    /// （原生集合条目），`select`/`addToStack` 仍接收实体内容；这里按公开入口 `item()` 解包。
+    @MainActor static func entryItem(_ entry: ClipboardCollectionEntry) throws -> ClipboardItem {
+        guard let item = entry.item() else {
+            throw Failure(description: "Missing collection entry content for \(entry.id)")
+        }
+        return item
+    }
     @MainActor static func run() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -67,8 +84,8 @@ struct UIInteractionHarness {
         state.normalizeSelection()
         try require(state.selection.isEmpty && state.primaryID == nil)
         let visible = state.visibleItems
-        state.select(visible[0])
-        state.select(visible[1], modifiers: .shift)
+        state.select(try entryItem(visible[0]))
+        state.select(try entryItem(visible[1]), modifiers: .shift)
         try require(state.selection.count == 2)
         ui.pasteSelection(plainTextOnly: false)
         try require(delivered.last?.0 == visible.map(\.id) && delivered.last?.1 == false)
@@ -80,7 +97,7 @@ struct UIInteractionHarness {
         key(124, "", .option)
         try require(state.pinboardID == pin.id && state.visibleItems.map(\.id) == [first])
         state.chooseBoard(nil)
-        state.addToStack(visible[0]); state.addToStack(visible[1]); state.addToStack(visible[0])
+        state.addToStack(try entryItem(visible[0])); state.addToStack(try entryItem(visible[1])); state.addToStack(try entryItem(visible[0]))
         let insertedStack = [visible[1].id, visible[0].id]
         try require(state.stackIDs == insertedStack)
         state.reverseStack()
@@ -136,7 +153,7 @@ struct UIInteractionHarness {
         let filePaths = try await load(fileProvider, "NSFilenamesPboardType")
         let restoredPaths = try PropertyListSerialization.propertyList(from: filePaths, format: nil) as? [String]
         try require(restoredPaths == [fileA.path, fileB.path])
-        state.addToStack(visible[1])
+        state.addToStack(try entryItem(visible[1]))
         let stackWindow = NSPanel(contentRect: .init(x: 0, y: 0, width: 264, height: 120),
                                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let stackContent = NSHostingView(rootView: ReplicaStackView(state: state))
@@ -386,18 +403,18 @@ struct UIInteractionHarness {
         let windowsBeforeDeletion = Set(NSApp.windows.map(ObjectIdentifier.init))
         let emptyGroup = try store.createPinboard(name: "Empty deletion fixture")
         state.chooseBoard(emptyGroup.id)
-        ui.removePinboard(emptyGroup)
+        ui.removePinboard(try listTarget(emptyGroup, store: store))
         try require(!store.pinboards.contains { $0.id == emptyGroup.id })
-        try require(state.pinboardID == nil && state.pendingPinboardDeletionID == nil && ui.panel.isVisible)
+        try require(state.pinboardID == nil && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
         let deleteGroup = try store.createPinboard(name: "Delete fixture")
         let retainedGroup = try store.createPinboard(name: "Retained fixture")
         let historyID = try store.add(ClipboardItem(plainText: "delete history fixture", pinboardIDs: [deleteGroup.id]))
         let onlyGroupID = try store.add(ClipboardItem(plainText: "delete only fixture", pinboardIDs: [deleteGroup.id], isInHistory: false))
         let sharedID = try store.add(ClipboardItem(plainText: "delete shared fixture", pinboardIDs: [deleteGroup.id, retainedGroup.id], isInHistory: false))
         state.chooseBoard(deleteGroup.id)
-        ui.removePinboard(deleteGroup)
+        ui.removePinboard(try listTarget(deleteGroup, store: store))
         try await Task.sleep(for: .milliseconds(100))
-        try require(state.pendingPinboardDeletionID == deleteGroup.id && state.pinboardID == deleteGroup.id)
+        try require(state.pendingPinboardDeletion?.pinboardValue?.id == deleteGroup.id && state.pinboardID == deleteGroup.id)
         try require(ui.panel.isVisible && NSApp.modalWindow == nil && ui.panel.sheets.isEmpty)
         try require(Set(NSApp.windows.map(ObjectIdentifier.init)) == windowsBeforeDeletion)
         try require(store.items.contains { $0.id == onlyGroupID })
@@ -407,14 +424,14 @@ struct UIInteractionHarness {
         key(51, "", [])
         try require(ui.panel.isVisible && store.items.contains { $0.id == onlyGroupID })
         key(53, "", [])
-        try require(state.pendingPinboardDeletionID == nil && ui.panel.isVisible)
+        try require(state.pendingPinboardDeletion == nil && ui.panel.isVisible)
         try require(store.pinboards.contains { $0.id == deleteGroup.id })
-        ui.removePinboard(deleteGroup)
+        ui.removePinboard(try listTarget(deleteGroup, store: store))
         ui.cancelPinboardRemoval()
-        try require(state.pendingPinboardDeletionID == nil && ui.panel.isVisible)
-        ui.removePinboard(deleteGroup)
+        try require(state.pendingPinboardDeletion == nil && ui.panel.isVisible)
+        ui.removePinboard(try listTarget(deleteGroup, store: store))
         state.chooseBoard(retainedGroup.id)
-        try require(state.pendingPinboardDeletionID == nil)
+        try require(state.pendingPinboardDeletion == nil)
         func deletionSQL(_ sql: String) throws {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -424,18 +441,18 @@ struct UIInteractionHarness {
             try require(process.terminationStatus == 0)
         }
         state.chooseBoard(deleteGroup.id)
-        ui.removePinboard(deleteGroup)
+        ui.removePinboard(try listTarget(deleteGroup, store: store))
         try deletionSQL("CREATE TRIGGER reject_group_deletion BEFORE DELETE ON ZPINBOARD BEGIN SELECT RAISE(ABORT,'synthetic group deletion failure'); END;")
         ui.confirmPinboardRemoval()
-        try require(state.pendingPinboardDeletionID == deleteGroup.id && state.pinboardDeletionError != nil)
+        try require(state.pendingPinboardDeletion?.pinboardValue?.id == deleteGroup.id && state.pinboardDeletionError != nil)
         try require(state.pinboardID == deleteGroup.id && ui.panel.isVisible && NSApp.modalWindow == nil)
         try require(store.pinboards.contains { $0.id == deleteGroup.id } && store.items.contains { $0.id == onlyGroupID })
         try deletionSQL("DROP TRIGGER reject_group_deletion;")
         ui.cancelPinboardRemoval()
         state.chooseBoard(retainedGroup.id)
-        ui.removePinboard(deleteGroup)
+        ui.removePinboard(try listTarget(deleteGroup, store: store))
         key(36, "\r", [])
-        try require(ui.panel.isVisible && state.pendingPinboardDeletionID == nil && state.pinboardID == retainedGroup.id)
+        try require(ui.panel.isVisible && state.pendingPinboardDeletion == nil && state.pinboardID == retainedGroup.id)
         try require(!store.pinboards.contains { $0.id == deleteGroup.id })
         try require(store.items.contains { $0.id == historyID && $0.isInHistory && $0.pinboardIDs.isEmpty })
         try require(!store.items.contains { $0.id == onlyGroupID })
@@ -443,16 +460,16 @@ struct UIInteractionHarness {
         let afterDeletion = try ClipboardStore(directoryURL: directory)
         try require(!afterDeletion.pinboards.contains { $0.id == deleteGroup.id })
         try require(afterDeletion.items.contains { $0.id == historyID } && !afterDeletion.items.contains { $0.id == onlyGroupID })
-        ui.removePinboard(retainedGroup)
+        ui.removePinboard(try listTarget(retainedGroup, store: store))
         ui.confirmPinboardRemoval()
-        try require(state.pinboardID == nil && state.pendingPinboardDeletionID == nil && ui.panel.isVisible)
+        try require(state.pinboardID == nil && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
         try require(!store.items.contains { $0.id == sharedID })
-        ui.removePinboard(pin)
+        ui.removePinboard(try listTarget(pin, store: store))
         ui.hidePanel()
-        try require(state.pendingPinboardDeletionID == nil)
+        try require(state.pendingPinboardDeletion == nil)
         try await waitForVisibility(false)
         try await presentOffscreen()
-        try require(state.pendingPinboardDeletionID == nil && store.pinboards.contains { $0.id == pin.id })
+        try require(state.pendingPinboardDeletion == nil && store.pinboards.contains { $0.id == pin.id })
 
         state.chooseBoard(nil)
         state.select(store.items.first { $0.id == first }!)
@@ -540,7 +557,7 @@ struct UIInteractionHarness {
         }
         var focusTransitions: [String] = []
         var closeWasVisible = false
-        ui.panelWillShow = { focusTransitions.append("remember") }
+        ui.panelDidShow = { focusTransitions.append("remember") }
         ui.panelWillClose = { restore in
             focusTransitions.append(restore ? "restore" : "keep-preview")
             closeWasVisible = ui.panel.isVisible

@@ -41,7 +41,9 @@ def verify_application_resolution(source_root, root):
     cases = []
 
     def application(path, bundle_id=identity):
-        (path / "Contents/MacOS").mkdir(parents=True)
+        # “both-installed” 用例里 current/legacy 指向同一个 bundle 路径（见下方注释），
+        # 第二次创建会因目录已存在而抛 FileExistsError，整条生命周期测试在跑任何断言之前就崩掉。
+        (path / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
         (path / "Contents/Info.plist").write_bytes(plistlib.dumps({
             "CFBundleIdentifier": bundle_id, "CFBundleExecutable": "Fixture",
             "CFBundleName": path.stem, "CFBundlePackageType": "APPL"}))
@@ -70,6 +72,9 @@ def verify_application_resolution(source_root, root):
         registered = (application(folder / "Registered.app", registered_id)
                       if registered_id not in (None, "missing-path") else folder / "Missing.app")
         applications = folder / "Applications"
+        # 2026-11 说明：清理后 HelperApplicationLocator 只识别 BlinkClip.app，
+        # 历史 "legacy 安装路径" 分支已不存在，这里两个变量因此指向同一 bundle（覆盖度退化，
+        # 见 b3-report.md §5）；保留原断言，只修复重复创建导致的崩溃。
         current_app, legacy_app = applications / "BlinkClip.app", applications / "BlinkClip.app"
         if current:
             application(current_app)
@@ -201,9 +206,11 @@ import Foundation
             literal = json.dumps(original)
             assert source.count(literal) == 1, "Helper identity isolation needs review"
             source = source.replace(literal, json.dumps(isolated))
+        # 2026-11 说明：以下锚点文案随产品改名（Paste → BlinkClip）同步更新；
+        # 只同步字符串，不改任何时序断言。
         # OSLog is not guaranteed to write stderr. Diagnostic-only taps in this
         # disposable copy distinguish KVO attempts from scheduled retry callbacks.
-        failure_log = 'logger.error("Failed to launch Paste: \\(error.localizedDescription)")'
+        failure_log = 'logger.error("Failed to launch BlinkClip: \\(error.localizedDescription)")'
         assert source.count(failure_log) == 1, "Helper launch error observer needs review"
         source = source.replace(failure_log, failure_log + '\n' +
             '            regressionRecord("error")\n' +
@@ -214,10 +221,10 @@ import Foundation
                 '_ = Task { @MainActor [weak self] in regressionRecord("workspace-check"); self?.checkRunning() }',
             '        isLaunching = true':
                 '        regressionRecord("attempt-start")\n        isLaunching = true',
-            '        logger.info("Launching Paste at \\(url.path)")':
-                '        regressionRecord("launch-call")\n        logger.info("Launching Paste at \\(url.path)")',
-            '            logger.info("Paste launched successfully.")':
-                '            regressionRecord("success")\n            logger.info("Paste launched successfully.")',
+            '        logger.info("Launching BlinkClip at \\(url.path)")':
+                '        regressionRecord("launch-call")\n        logger.info("Launching BlinkClip at \\(url.path)")',
+            '            logger.info("BlinkClip launched successfully.")':
+                '            regressionRecord("success")\n            logger.info("BlinkClip launched successfully.")',
             '                try? await ContinuousClock().sleep(for: .seconds(retryDelay))':
                 '                regressionRecord("retry-sleep-start")\n' +
                 '                try? await ContinuousClock().sleep(for: .seconds(retryDelay))\n' +

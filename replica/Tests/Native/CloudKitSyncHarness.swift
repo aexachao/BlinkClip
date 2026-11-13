@@ -131,8 +131,12 @@ struct CloudKitSyncHarness {
         var entitlements: [String: Any] = ["com.apple.developer.icloud-container-identifiers": [container], "com.apple.developer.icloud-services": ["CloudKit"],
             "com.apple.developer.team-identifier": "TESTTEAM01", "com.apple.application-identifier": "TESTTEAM01.\(bundle)", "com.apple.developer.icloud-container-environment": "Development"]
         try check(try BlinkClipCloudKitConfiguration.validate(container: container, bundleIdentifier: bundle, entitlements: entitlements).containerIdentifier == container, "合法自有配置校验")
-        entitlements["com.apple.developer.icloud-container-identifiers"] = ["iCloud.com.chrisli.blinkclip"]
-        try rejects("原版厂商容器不可复用") { _ = try BlinkClipCloudKitConfiguration.validate(container: "iCloud.com.chrisli.blinkclip", bundleIdentifier: bundle, entitlements: entitlements) }
+        // 2026-11 清理说明：这里的负向样本原本是原版厂商容器 iCloud.com.wiheads.paste，
+        // 但清理时的全局改名把它一并替换成了 BlinkClip 自己的容器（iCloud.com.chrisli.blinkclip），
+        // 而产品规则 BlinkClipCloudKitConfiguration.validate 明确拒绝含 "wiheads" 的容器、
+        // 并接受自有容器，于是断言必然失败。恢复为真正的"原版厂商容器"负向样本。
+        entitlements["com.apple.developer.icloud-container-identifiers"] = ["iCloud.com.wiheads.paste"]
+        try rejects("原版厂商容器不可复用") { _ = try BlinkClipCloudKitConfiguration.validate(container: "iCloud.com.wiheads.paste", bundleIdentifier: bundle, entitlements: entitlements) }
 
         let a = try ClipboardStore(directoryURL: root.appendingPathComponent("a"))
         let b = try ClipboardStore(directoryURL: root.appendingPathComponent("b"))

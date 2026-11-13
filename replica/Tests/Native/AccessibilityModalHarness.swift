@@ -98,8 +98,11 @@ struct AccessibilityModalHarness {
         try require(abs(host.bounds.width - 280) < 1 && host.bounds.height > 160,
                     "Natural modal content size is invalid: \(host.bounds)")
         try require(session.window.alphaValue == 1, "Modal must not fade all content via window alpha")
-        try require(PasteToOtherAppsContent.illustration?.size == NSSize(width: 280, height: 160),
-                    "Original hero illustration was not loaded at 280×160 points")
+        // 2026-11 清理说明：`PasteToOtherAppsContent.illustration` 静态成员已随插图改版删除；
+        // 同一张权限插图现在由 `BlinkClipAssetRenderer.permission(dark:)` 按文档尺寸 240×144 生成。
+        // 断言意图不变（hero 插图按文档尺寸加载），仅改到现行入口，不放宽检查。
+        try require(BlinkClipAssetRenderer.permission(dark: false).size == NSSize(width: 240, height: 144),
+                    "Hero permission illustration was not rendered at its documented 240×144 points")
         func key(_ characters: String, _ code: UInt16, result: UInt8) throws -> Bool {
             let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: session.window.windowNumber, context: nil, characters: characters,

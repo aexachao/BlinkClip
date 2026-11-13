@@ -20,7 +20,10 @@ PLIST
 cp -R "$replica_root/Vendor/capcap/Resources/en.lproj" "$app/Contents/Resources/"
 cp -R "$replica_root/Vendor/capcap/Resources/zh-Hans.lproj" "$app/Contents/Resources/"
 sources=()
-while IFS= read -r path; do sources+=("$path"); done < <(rg --files "$replica_root/Vendor/capcap" -g '*.swift' | sort)
+# 2026-11 清理说明：原用 `rg --files` 枚举源码，但 ripgrep 不是本仓库声明的依赖（CI/本机均可能未安装），
+# 脚本因此在枚举阶段就 127 失败。改用 POSIX find：仓库内 Vendor/capcap 无 .gitignore、无隐藏 .swift 文件，
+# `find -type f -name '*.swift' | sort` 与之枚举出的集合相同（87 个文件，见 b3-report.md）。
+while IFS= read -r path; do sources+=("$path"); done < <(find "$replica_root/Vendor/capcap" -type f -name '*.swift' | sort)
 shasum -a 256 "${sources[@]}" > "$test_out/production-inputs-before.sha256"
 printf '%s\n' "bundle_id=$bundle_id" "architecture=$(uname -m)" "sdk=$(xcrun --sdk macosx --show-sdk-version)" > "$test_out/environment.txt"
 xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx15.0" \

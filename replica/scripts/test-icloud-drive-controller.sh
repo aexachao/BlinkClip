@@ -7,5 +7,6 @@ source "$replica_root/Tests/Native/build-support.sh"
 prepare_native_test_core
 compile_native_test_harness drive-controller \
   "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" \
+  "$replica_root/Sources/BlinkClip/UI/ReplicaBrand.swift" \
   "$replica_root/Tests/Native/ICloudDriveControllerHarness.swift"
 run_native_test_harness "$@"

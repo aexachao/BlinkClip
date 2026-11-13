@@ -19,6 +19,16 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 
+def _resolved(directory):
+    """返回与 release-ci 相同形态的规范化路径。
+
+    macOS 上 tempfile 给出的根是 /var/folders/…，而 `Path.resolve()`（release-ci 用它规范化
+    ARTIFACT_TASK_DIR / BLINKCLIP_*_OUTPUT_DIR 等环境变量）会解析成 /private/var/folders/…。
+    两边字符串不同只是符号链接前缀差异；断言前统一成解析后的形态，才能在不放宽任何逻辑的前提下比较。
+    """
+    return Path(directory).resolve()
+
+
 class UniversalReleaseTests(unittest.TestCase):
     def setUp(self):
         # Path-selection tests control their own roots even when this suite is run by storage-guard.
@@ -30,7 +40,7 @@ class UniversalReleaseTests(unittest.TestCase):
 
     def test_canonical_environment_wins_with_legacy_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = _resolved(directory)
             with patch.dict(os.environ, {"BLINKCLIP_APP_OUTPUT_DIR": str(root / "old"),
                                          "BLINKCLIP_BUILD_ROOT": str(root / "old-build")}, clear=True):
                 self.assertEqual(release.app_output_directory(), root / "old")
@@ -81,8 +91,8 @@ class UniversalReleaseTests(unittest.TestCase):
 
     def test_managed_package_uses_task_paths_and_passes_them_to_build(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "checkout"
-            task = Path(directory) / "managed-task"
+            root = _resolved(directory) / "checkout"
+            task = _resolved(directory) / "managed-task"
             output = task / "out/release"
             commands = []
 
@@ -109,7 +119,7 @@ class UniversalReleaseTests(unittest.TestCase):
 
     def test_explicit_app_release_and_scratch_roots_take_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = _resolved(directory)
             app_output = root / "custom-apps"
             release_output = root / "custom-assets"
             scratch = root / "custom-build"
@@ -144,11 +154,11 @@ class UniversalReleaseTests(unittest.TestCase):
                 patch.object(release.platform, "machine", return_value="x86_64"), \
                 patch.object(release, "verify_app") as app_check:
             release.verify_intel("1.0.0")
-            app_check.assert_called_once_with(Path(directory) / "out/BlinkClip.app", "1.0.0", ["x86_64"])
+            app_check.assert_called_once_with(_resolved(directory) / "out/BlinkClip.app", "1.0.0", ["x86_64"])
 
     def test_publish_reads_selected_release_root_and_only_uploads_verified_assets(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = _resolved(directory)
             output = root / "verified-assets"
             output.mkdir()
             names = release.asset_names("1.0.0")
