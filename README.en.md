@@ -9,7 +9,9 @@ It runs on **macOS 14+, Intel (x86_64) and Apple silicon (arm64)**, built with S
 [Download the latest release](https://github.com/aexachao/BlinkClip/releases) · [Build from source](#build-from-source) · [Contribute](CONTRIBUTING.md) · [License scope](NOTICE.md)
 
 <!-- blinkclip-download:start -->
-This repository has no published installer yet. Build from source below; future installers will appear in [Releases](https://github.com/aexachao/BlinkClip/releases).
+Current stable version: **1.0.10**. One installer supports Intel and Apple silicon:
+
+[Download BlinkClip-1.0.10-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.10/BlinkClip-1.0.10-macos-universal.dmg)
 <!-- blinkclip-download:end -->
 
 ## Features
@@ -46,9 +48,11 @@ This repository has no published installer yet. Build from source below; future 
 
 ## Download and install
 
-1. Download the latest `BlinkClip-<version>-macos-universal.dmg` from [GitHub Releases](https://github.com/aexachao/BlinkClip/releases).
+1. Download `BlinkClip-1.0.10-macos-universal.dmg` from [GitHub Releases](https://github.com/aexachao/BlinkClip/releases/latest).
 2. Open the DMG, drag `BlinkClip.app` into `Applications`, and launch it from there.
 3. Grant the system permissions it asks for on first use; direct paste into other apps requires macOS Accessibility access.
+
+1.0.10 is publicly available on GitHub Releases: the installer is Developer ID signed and notarized by Apple, and the `macos-universal` package supports both Intel and Apple silicon. See the [latest release](https://github.com/aexachao/BlinkClip/releases/latest) for the download and checksums.
 
 In-app updates are provided by Sparkle: check for updates in **About BlinkClip** and install the signed Universal DMG when prompted. See [Automatic updates](#automatic-updates).
 

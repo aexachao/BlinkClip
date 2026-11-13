@@ -9,7 +9,9 @@
 [下载最新版本](https://github.com/aexachao/BlinkClip/releases) · [从源码构建](#从源码构建) · [参与贡献](CONTRIBUTING.md) · [许可范围](NOTICE.md)
 
 <!-- blinkclip-download:start -->
-本仓库尚未发布安装包。请先按下方说明从源码构建；未来正式包见 [Releases](https://github.com/aexachao/BlinkClip/releases)。
+当前正式版 **1.0.10**，一个安装包兼容 Intel 与 Apple 芯片：
+
+[下载 BlinkClip-1.0.10-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.10/BlinkClip-1.0.10-macos-universal.dmg)
 <!-- blinkclip-download:end -->
 
 ## 功能
@@ -46,9 +48,11 @@
 
 ## 下载与安装
 
-1. 从 [GitHub Releases](https://github.com/aexachao/BlinkClip/releases) 下载最新版 `BlinkClip-<版本号>-macos-universal.dmg`。
+1. 从 [GitHub Releases](https://github.com/aexachao/BlinkClip/releases/latest) 下载 `BlinkClip-1.0.10-macos-universal.dmg`。
 2. 打开 DMG，把 `BlinkClip.app` 拖入 `Applications`，再从应用程序启动。
 3. 首次使用时按引导授予必要的系统权限；跨应用直接粘贴需要 macOS 辅助功能权限。
+
+1.0.10 已通过 GitHub Releases 公开发布：安装包经 Developer ID 签名并通过 Apple 公证，`macos-universal` 包同时支持 Intel 与 Apple 芯片。下载与校验信息见[最新发布页](https://github.com/aexachao/BlinkClip/releases/latest)。
 
 应用内更新由 Sparkle 提供：在「关于 BlinkClip」中检查更新，确认后下载并安装已签名的完整 DMG。详见[自动更新](#自动更新)。
 
