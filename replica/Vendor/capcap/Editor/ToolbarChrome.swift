@@ -96,20 +96,34 @@ enum ToolbarChrome {
 protocol ToolbarHoverable: AnyObject {
     func setHovered(_ hovered: Bool)
     func resyncHoverWithPointer()
+    /// Whether the highlight is limited to the key window. Bar controls live
+    /// in the editor's key window, so they are; the group dropdown is a
+    /// deliberately non-activating panel (`canBecomeKey == false`), where
+    /// `.activeInKeyWindow` tracking never fires and rows would never
+    /// highlight.
+    var hoverRequiresKeyWindow: Bool { get }
 }
 
 extension ToolbarHoverable where Self: NSView {
+    /// Toolbar controls only light up in the key window: a floating bar over
+    /// another app's window must not look interactive.
+    var hoverRequiresKeyWindow: Bool { true }
+
     /// Installs (or reinstalls) the hover tracking area. `updateTrackingAreas`
     /// runs whenever the view's geometry changes; `.inVisibleRect` keeps the
     /// rect tied to the visible portion, and reinstalling re-derives the state
-    /// from the pointer instead of trusting the last event.
+    /// from the pointer instead of trusting the last event. Controls that live
+    /// in a never-key panel (the dropdown rows) track with `.activeAlways`, so
+    /// `mouseEntered`/`mouseExited` arrive even though their window is not key.
     func refreshHoverTrackingArea(_ storage: inout NSTrackingArea?) {
         if let existing = storage {
             removeTrackingArea(existing)
         }
+        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .inVisibleRect]
+        options.insert(hoverRequiresKeyWindow ? .activeInKeyWindow : .activeAlways)
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            options: options,
             owner: self,
             userInfo: nil
         )
@@ -120,7 +134,11 @@ extension ToolbarHoverable where Self: NSView {
 
     /// Derives the hover state from where the pointer actually is now.
     func resyncHoverWithPointer() {
-        guard let window, window.isKeyWindow else {
+        guard let window else {
+            setHovered(false)
+            return
+        }
+        if hoverRequiresKeyWindow, !window.isKeyWindow {
             setHovered(false)
             return
         }

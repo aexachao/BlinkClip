@@ -77,8 +77,14 @@ final class ToolbarGroupMenuRow: NSView, ToolbarHoverable {
     private let title: String
     private let checkmark: NSImage?
 
+    /// Rows live in a panel that is deliberately never key, so a
+    /// key-window-scoped tracking area would never deliver `mouseEntered`
+    /// here. Rows follow the pointer regardless of key status; the bar's own
+    /// controls keep their `.activeInKeyWindow` rule.
+    var hoverRequiresKeyWindow: Bool { false }
+
     /// Pointer is over the row.
-    private var isHovered = false {
+    private(set) var isHovered = false {
         didSet { if oldValue != isHovered { needsDisplay = true } }
     }
     /// Keyboard highlight (↑/↓).
@@ -117,6 +123,24 @@ final class ToolbarGroupMenuRow: NSView, ToolbarHoverable {
         refreshHoverTrackingArea(&hoverTrackingArea)
     }
 
+    /// Reinstalls the tracking area and re-derives the hover state from the
+    /// pointer. The panel can move under a stationary pointer (it is placed
+    /// by `ToolbarGroupMenuPanel.placement`), where AppKit does not deliver
+    /// the matching enter/exit, so the highlight is re-derived instead of
+    /// trusting the last event. Called by the content view on window moves.
+    func refreshHoverTracking() {
+        guard window != nil else {
+            setHovered(false)
+            return
+        }
+        refreshHoverTrackingArea(&hoverTrackingArea)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { setHovered(false) }
+    }
+
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
         setHovered(true)
@@ -128,7 +152,7 @@ final class ToolbarGroupMenuRow: NSView, ToolbarHoverable {
     }
 
     func setHovered(_ hovered: Bool) {
-        let allowed = hovered && (window?.isKeyWindow ?? true)
+        let allowed = hovered && (!hoverRequiresKeyWindow || (window?.isKeyWindow ?? true))
         guard allowed != isHovered else { return }
         isHovered = allowed
     }
@@ -217,6 +241,18 @@ final class ToolbarGroupMenuRow: NSView, ToolbarHoverable {
 /// member.
 final class ToolbarGroupMenuContentView: NSView {
     private(set) var rows: [ToolbarGroupMenuRow] = []
+    /// How many times the rows re-derived their hover state. Lets the native
+    /// harness prove that a panel move rebuilds the tracking areas instead of
+    /// leaving a stale highlight behind.
+    private(set) var hoverRefreshCount = 0
+
+    private var windowMoveObserver: NSObjectProtocol?
+
+    deinit {
+        if let windowMoveObserver {
+            NotificationCenter.default.removeObserver(windowMoveObserver)
+        }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         ToolbarChrome.drawSurface(in: bounds, bordered: true)
@@ -225,6 +261,42 @@ final class ToolbarGroupMenuContentView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let windowMoveObserver {
+            NotificationCenter.default.removeObserver(windowMoveObserver)
+            self.windowMoveObserver = nil
+        }
+        guard let window else {
+            rows.forEach { $0.setHovered(false) }
+            return
+        }
+        // The panel is positioned with `setFrameOrigin` and can be moved under
+        // a stationary pointer; AppKit then delivers no enter/exit, so the
+        // rows' hover is re-derived here.
+        windowMoveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshRowHover()
+        }
+        refreshRowHover()
+    }
+
+    /// Reinstalls every row's tracking area and re-derives its hover state
+    /// from where the pointer actually is. A row the pointer has left clears
+    /// its highlight; the row now under the pointer lights up. Never touches
+    /// the selected member, so a hover cannot change the group's choice.
+    func refreshRowHover() {
+        hoverRefreshCount += 1
+        guard window != nil else {
+            rows.forEach { $0.setHovered(false) }
+            return
+        }
+        rows.forEach { $0.refreshHoverTracking() }
     }
 
     func configure(members: [ToolbarItemID], selected: ToolbarItemID, selection: ToolbarGroupMenuSelection) {
@@ -452,6 +524,11 @@ final class ToolbarGroupMenuPanel: NSPanel {
             visibleFrame: visibleFrame
         ))
         orderFront(nil)
+        // The panel is placed under the pointer's anchor, not under the
+        // pointer itself, but a click that lands on a row must not leave the
+        // previous position's row looking hovered. Re-derive from the pointer
+        // once the panel is actually on screen.
+        content.refreshRowHover()
         installMonitors(for: anchorWindow)
     }
 

@@ -28,6 +28,10 @@ class ToolButton: NSButton, ToolbarHoverable {
         didSet { if oldValue != isHovered { needsDisplay = true } }
     }
 
+    /// Whether the hover fill is currently painted. Exposed so the native
+    /// harness can assert the key-window rule without reading pixels.
+    var isHoverHighlighted: Bool { isHovered }
+
     var hoverTrackingArea: NSTrackingArea?
 
     init(frame: NSRect, symbolName: String, normalColor: NSColor, selectedColor: NSColor, symbolPointSize: CGFloat = 14, iconImage: NSImage? = nil) {

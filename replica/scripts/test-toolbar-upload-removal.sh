@@ -104,6 +104,7 @@ chrome=(r/'Vendor/capcap/Editor/ToolbarChrome.swift').read_text()
 buttons=(r/'Vendor/capcap/Editor/ToolbarButtons.swift').read_text()
 assert 'NSTrackingArea(' in chrome and '.mouseEnteredAndExited' in chrome, 'hover uses a tracking area with enter/exit'
 assert '.activeInKeyWindow' in chrome, 'hover tracking is scoped to the key window'
+assert 'hoverRequiresKeyWindow' in chrome and '.activeAlways' in chrome, 'never-key controls (dropdown rows) can opt into always-on tracking'
 assert 'resyncHoverWithPointer' in chrome and 'refreshHoverTrackingArea' in chrome, 'hover state is re-derived instead of trusting the last event'
 assert 'AdaptiveChrome.subtleFill' in chrome, 'hover fill uses the adaptive chrome token, not a literal RGB'
 assert 'guard hovered, enabled else { return }' in chrome, 'disabled controls draw no hover fill'
@@ -120,6 +121,13 @@ panel=(r/'Vendor/capcap/Editor/ToolbarGroupMenu.swift').read_text()
 assert 'ToolbarChrome.drawSurface(in: bounds, bordered: true)' in panel, 'the panel reuses the bar surface helper'
 assert 'NSColor(red:' not in panel, 'panel colours come from the shared chrome tokens, not literals'
 assert 'ToolbarChrome.drawHoverBackground(' in panel, 'row hover uses the same fill helper as a toolbar button'
+# 1b. Dropdown rows live in a never-key panel: their tracking must not be
+# scoped to the key window, and a panel move must rebuild it.
+assert 'var hoverRequiresKeyWindow: Bool { false }' in panel, 'dropdown rows opt out of the key-window hover rule'
+assert 'NSWindow.didMoveNotification' in panel and 'refreshRowHover()' in panel, 'moving the panel re-derives row hover'
+assert 'func refreshHoverTracking()' in panel, 'rows can reinstall their tracking area on demand'
+assert 'isSelected' in panel and 'drawSelectedBackground' in panel, 'the selected row keeps its own stronger fill'
+assert 'canBecomeKey: Bool { false }' in panel, 'the panel still never becomes key (the editor keeps focus)'
 assert 'setAccessibilityRole(.menuItem)' in panel and 'setAccessibilityLabel(title)' in panel and 'setAccessibilitySelected(isSelected)' in panel, 'each row exposes its name and selected state to VoiceOver'
 assert 'ToolbarGroupMenuKeyCommand' in panel and 'addLocalMonitorForEvents' in panel, 'the panel handles its own keys'
 assert 'didResignKeyNotification' in panel and 'willCloseNotification' in panel, 'the panel closes when the editor window resigns key or is torn down'
@@ -128,6 +136,15 @@ assert 'ToolbarGroupMenuPanel.presentedPanel?.handleKeyDown(event)' in controlle
 assert 'defaultMember: .arrow' in layout_text, 'lines default to the arrow tool'
 assert 'ToolbarGroup(id: "brush", members: [.pen, .marker, .spotlight], defaultMember: .pen)' in layout_text, 'pen/highlighter/spotlight are one brush group'
 assert 'static let all: [ToolbarGroup] = [.shapes, .lines, .brush]' in layout_text, 'all three groups are registered'
+# 6. One-time group-selection migration: its own schema marker, `lines=line`
+# rewritten once, and a later explicit pick written with the current schema.
+assert 'static let schemaDefaultsKey = "editor.toolbarGroupSelection.schema"' in layout_text, 'the schema marker uses its own key'
+assert 'static let schemaVersion = 2' in layout_text, 'the migration is versioned'
+assert 'static func migrating(dictionary: [String: String], storedSchema: Int?) -> Migration' in layout_text, 'the migration is a pure, testable function'
+assert 'if persisted[ToolbarGroup.lines.id] == ToolbarItemID.line.rawValue' in layout_text, 'only the stale lines default is rewritten'
+assert 'if migration.needsSchemaWrite' in layout_text, 'the schema is stamped once'
+assert 'ToolbarGroupSelection.schemaDefaultsKey' in layout_text and 'ToolbarGroupSelection.defaultsKey' in layout_text, 'read and write go through the shared keys'
+assert 'defaults.set(ToolbarGroupSelection.schemaVersion, forKey: ToolbarGroupSelection.schemaDefaultsKey)' in layout_text, 'an explicit pick marks the state as migrated'
 # 4. Redo shortcut is ⇧⌘Z.
 redo_block=registry.split('case .toolbar(.redo):',1)[1].split('case .toolbar(.pin):',1)[0]
 assert 'UInt32(cmdKey) | UInt32(shiftKey)' in redo_block, 'redo keeps its registration with the ⇧⌘Z chord'
@@ -144,11 +161,13 @@ for lang,value in [('zh-Hans','完成'),('en','Done')]:
   'single horizontal toolbar filters unsupported upload before geometry',
   'shortcut action inventory uses the filtered canonical order',
   'hover: tracking area, key-window scoping, adaptive fill, disabled suppressed, chevron included',
+  'dropdown row hover: always-on tracking in the never-key panel, refresh on panel move, same fill as the bar, selected fill intact',
   'grouping: lines default arrow, brush group registered, document order preserved',
+  'group selection: one-time schema-2 migration of a stale lines=line default, later line picks preserved',
   'redo: runtime-hidden from the bar, ⇧⌘Z binding kept in the registry',
   'dropdown: self-drawn panel reuses the bar surface, no NSMenu, keyboard + VoiceOver + resign-key dismissal',
   'confirm tooltip: 完成 / Done in both localizations',
-],'boundary':'Source entrypoint review plus the native harness render/sampling below; not a click-driven editor session'},indent=2))
+],'boundary':'Source entrypoint review plus the native harness render/sampling below; the harness drives persisted group selection through a scratch UserDefaults suite and row hover through synthetic mouse events inside a real non-key NSPanel, not a click-driven editor session'},indent=2))
 paths=[layout,r/'Vendor/capcap/Editor/EditWindowController.swift',r/'Vendor/capcap/Editor/EditorShortcutRegistry.swift',
        r/'Vendor/capcap/Editor/ToolbarChrome.swift',r/'Vendor/capcap/Editor/ToolbarButtons.swift',
        r/'Vendor/capcap/Editor/ToolbarGroupMenu.swift',

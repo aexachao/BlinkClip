@@ -7,6 +7,8 @@ import AppKit
 /// production source.
 @main struct ToolbarUploadRemovalHarness {
     static var checks = 0
+    /// `before` → `after` of the v1 defaults map, quoted in the report.
+    static var migrationSnapshot: [String: String] = [:]
 
     static func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         precondition(condition(), message)
@@ -15,8 +17,10 @@ import AppKit
 
     static func main() {
         inventoryChecks()
+        migrationChecks()
         groupingChecks()
         hoverChecks()
+        dropdownHoverChecks()
         dropdownChecks()
         localizationChecks()
         barChecks()
@@ -26,7 +30,11 @@ import AppKit
             .sorted { $0.key < $1.key }
             .map { "\"\($0.key)\":\"\($0.value)\"" }
             .joined(separator: ",")
-        print("{\"passed\":true,\"checks\":\(checks),\"renders\":\(renders),\"samples\":{\(json)},\"boundary\":\"Actual production ToolbarLayout, ToolbarChrome, ToolbarButtons and ToolbarGroupMenu sources with presentation dependency stubs; persisted layout migration, group inventory, hover fills, dropdown metrics/keyboard/placement, the app's real Localizable.strings for the renders, the whole-bar geometry, and offscreen renders of the real drawing code. No windows, user defaults, event monitors, or editor UI interaction.\"}")
+        let migration = migrationSnapshot
+            .sorted { $0.key < $1.key }
+            .map { "\"\($0.key)\":\"\($0.value)\"" }
+            .joined(separator: ",")
+        print("{\"passed\":true,\"checks\":\(checks),\"renders\":\(renders),\"samples\":{\(json)},\"migration\":{\(migration)},\"boundary\":\"Actual production ToolbarLayout, ToolbarChrome, ToolbarButtons and ToolbarGroupMenu sources with presentation dependency stubs; group-selection schema migration against a scratch UserDefaults suite, group inventory, hover fills, dropdown row hover driven by synthetic mouse events inside a real never-key NSPanel, dropdown metrics/keyboard/placement, the app's real Localizable.strings for the renders, the whole-bar geometry, and offscreen renders of the real drawing code. No editor UI session or event monitors.\"}")
     }
 
     // MARK: - Persisted inventory
@@ -72,6 +80,121 @@ import AppKit
         check(migrated == customized, "migration preserves user placement and strips stale upload/unknown/duplicate values")
         verify(ToolbarLayout(primary: [.upload], side: [.upload], hidden: [.upload]).normalized())
         verify(ToolbarLayout(primary: [], side: [], hidden: []).normalized())
+    }
+
+    // MARK: - Group-selection schema migration
+
+    /// The shipped v1 build persisted `lines = line` as if the user had picked
+    /// it, and the bar "respected the stored preference", so the new arrow
+    /// default never showed. The fix is a one-time, schema-marked rewrite:
+    /// v1 state migrates once, and a `line` pick made afterwards is the user's
+    /// own choice and survives every restart.
+    static func migrationChecks() {
+        let suiteName = "capcap.harness.toolbar-group-selection"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("could not open the harness defaults suite")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let key = ToolbarGroupSelection.defaultsKey
+        let schemaKey = ToolbarGroupSelection.schemaDefaultsKey
+
+        func storedMap(_ defaults: UserDefaults) -> [String: String] {
+            (defaults.dictionary(forKey: key) as? [String: String]) ?? [:]
+        }
+        func storedSchema(_ defaults: UserDefaults) -> Int? {
+            (defaults.object(forKey: schemaKey) as? NSNumber)?.intValue
+        }
+
+        check(ToolbarGroupSelection.defaultsKey == "editor.toolbarGroupSelection",
+              "the persisted map keeps its existing key")
+        check(ToolbarGroupSelection.schemaDefaultsKey == "editor.toolbarGroupSelection.schema",
+              "the schema marker lives in its own key")
+        check(ToolbarGroupSelection.schemaVersion == 2, "the migration is schema 2")
+
+        // ① Shipped v1 state: the old default was stored without a marker.
+        defaults.set(["lines": "line"], forKey: key)
+        migrationSnapshot["before"] = "lines=line schema=(none)"
+        let migrated = Defaults.toolbarGroupSelection(in: defaults)
+        check(migrated.member(for: .lines) == .arrow,
+              "a v1 lines=line default resolves to the arrow tool")
+        check(storedMap(defaults) == ["lines": "arrow"],
+              "migration rewrites the stored lines member to arrow")
+        check(storedSchema(defaults) == ToolbarGroupSelection.schemaVersion,
+              "migration stamps the schema marker")
+        migrationSnapshot["after"] = "lines=\(storedMap(defaults)["lines"] ?? "?") schema=\(storedSchema(defaults).map(String.init) ?? "none")"
+
+        // Idempotent: a second read (i.e. the next launch) changes nothing.
+        let again = Defaults.toolbarGroupSelection(in: defaults)
+        check(again == migrated, "the migration is idempotent across reads")
+        check(storedMap(defaults) == ["lines": "arrow"], "the migrated map is not rewritten twice")
+
+        // ② A line pick made after the migration is the user's own choice and
+        // survives a restart (a fresh defaults handle on the same suite).
+        let picked = migrated.selecting(.line, in: .lines)
+        check(picked.member(for: .lines) == .line, "the user can pick line after the migration")
+        Defaults.setToolbarGroupSelection(picked, in: defaults)
+        check(storedMap(defaults) == ["lines": "line"], "an explicit line pick is persisted")
+        check(storedSchema(defaults) == ToolbarGroupSelection.schemaVersion, "saving stamps the schema")
+        defaults.synchronize()
+        guard let restarted = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("could not reopen the harness defaults suite")
+        }
+        let afterRestart = Defaults.toolbarGroupSelection(in: restarted)
+        check(afterRestart.member(for: .lines) == .line,
+              "a line pick made after the migration survives a restart")
+        check(storedMap(restarted)["lines"] == "line", "the restart does not rewrite the user's line pick")
+        migrationSnapshot["afterUserPickedLine"] = "lines=line schema=\(storedSchema(restarted).map(String.init) ?? "none")"
+
+        // ③ A map that already carries schema 2 is never rewritten, whatever
+        // it holds: the migration already ran on this device.
+        defaults.set(["lines": "line"], forKey: key)
+        defaults.set(ToolbarGroupSelection.schemaVersion, forKey: schemaKey)
+        let stable = Defaults.toolbarGroupSelection(in: defaults)
+        check(stable.member(for: .lines) == .line, "a schema-2 map keeps an explicit line pick")
+        check(storedMap(defaults) == ["lines": "line"], "schema-2 state is not rewritten")
+
+        // ④ Only the lines group is migrated; shapes and brush keep whatever
+        // the user chose, and unknown groups are preserved rather than dropped.
+        defaults.set(["shapes": "ellipse", "brush": "marker", "lines": "line"], forKey: key)
+        defaults.removeObject(forKey: schemaKey)
+        let mixed = Defaults.toolbarGroupSelection(in: defaults)
+        check(mixed.member(for: .lines) == .arrow, "only the lines group migrates")
+        check(mixed.member(for: .shapes) == .ellipse, "an explicit shape pick is untouched")
+        check(mixed.member(for: .brush) == .marker, "an explicit brush pick is untouched")
+        check(storedMap(defaults) == ["shapes": "ellipse", "brush": "marker", "lines": "arrow"],
+              "migration rewrites only the lines entry")
+        let extra = ToolbarGroupSelection.migrating(
+            dictionary: ["lines": "line", "futureGroup": "x"],
+            storedSchema: nil
+        )
+        check(extra.dictionary["futureGroup"] == "x",
+              "migration preserves entries for groups it does not know")
+
+        // ⑤ A fresh install is marked migrated before any pick, so the very
+        // first `line` choice is never mistaken for the old default later.
+        defaults.removePersistentDomain(forName: suiteName)
+        let fresh = Defaults.toolbarGroupSelection(in: defaults)
+        check(fresh == .empty, "a fresh install starts with no stored group choices")
+        check(fresh.member(for: .lines) == .arrow, "a fresh install shows the arrow default")
+        check(storedSchema(defaults) == ToolbarGroupSelection.schemaVersion,
+              "a fresh install is marked migrated before any pick")
+        Defaults.setToolbarGroupSelection(fresh.selecting(.line, in: .lines), in: defaults)
+        defaults.synchronize()
+        guard let restartedFresh = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("could not reopen the harness defaults suite")
+        }
+        check(Defaults.toolbarGroupSelection(in: restartedFresh).member(for: .lines) == .line,
+              "the first line pick on a fresh install is never mistaken for the old default")
+
+        // ⑥ The pure rule: running the migration on its own output is a no-op.
+        let once = ToolbarGroupSelection.migrating(dictionary: ["lines": "line"], storedSchema: nil)
+        check(once.didMigrate && once.dictionary["lines"] == "arrow",
+              "the pure migration rewrites the v1 default once")
+        let twice = ToolbarGroupSelection.migrating(dictionary: once.dictionary, storedSchema: once.storedSchema)
+        check(!twice.didMigrate && twice.dictionary == once.dictionary,
+              "running the migration on its own output changes nothing")
+
+        defaults.removePersistentDomain(forName: suiteName)
     }
 
     // MARK: - Grouping
@@ -190,6 +313,183 @@ import AppKit
         chevron.setHovered(true)
         let chevronHovered = RenderEvidence.sample(patch: RenderEvidence.chevronPatch, in: chevron, appearance: .aqua)
         check(chevronRest != chevronHovered, "the group chevron shows a hover background")
+    }
+
+    // MARK: - Dropdown hover inside the never-key panel
+
+    /// The group dropdown is a non-activating `NSPanel`
+    /// (`canBecomeKey == false`) so the editor keeps focus and text editing
+    /// keeps working. That is exactly why its rows cannot use the bar's
+    /// `.activeInKeyWindow` rule: for a never-key window AppKit never delivers
+    /// `mouseEntered`, which is the reported bug ("dropdown rows do not
+    /// hover"). This drives the real rows inside a real non-key panel with
+    /// synthetic mouse events and samples the same hover fill as the bar.
+    static func dropdownHoverChecks() {
+        let members: [ToolbarItemID] = [.pen, .marker, .spotlight]
+        let owner = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        let panel = ToolbarGroupMenuPanel(
+            group: .brush,
+            members: members,
+            selected: .marker,
+            owner: owner,
+            onPick: { _ in }
+        )
+        // Park the panel far away from the harness cursor: the assertions
+        // below derive hover from the pointer, so a pointer that happened to
+        // sit over a row would make them ambiguous.
+        panel.setFrameOrigin(NSPoint(x: 40_000, y: 40_000))
+        check(panel.canBecomeKey == false, "the dropdown panel is never key")
+        check(panel.isKeyWindow == false, "the dropdown panel is not the key window")
+        guard let content = panel.contentView as? ToolbarGroupMenuContentView else {
+            preconditionFailure("the panel must host the production dropdown content view")
+        }
+        check(content.rows.count == 3, "the panel builds one row per group member")
+        let row = content.rows[0]
+        let selectedRow = content.rows[1]
+
+        /// AppKit's `NSEvent` factory only builds real button/move events; a
+        /// `.mouseEntered`/`.mouseExited` type is rejected. The row's enter and
+        /// exit handlers only switch hover state and ignore the event body, so
+        /// a button event at the same location is delivered to those production
+        /// entry points.
+        func mouseEvent(_ type: NSEvent.EventType = .leftMouseDown, at point: NSPoint) -> NSEvent {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else {
+                preconditionFailure("could not synthesize a \(type) event")
+            }
+            return event
+        }
+
+        // Rows attach to the real panel, and their tracking area is the one
+        // this window needs: always active, tied to the visible rect.
+        row.updateTrackingAreas()
+        guard let area = row.hoverTrackingArea else {
+            preconditionFailure("the row installed no tracking area")
+        }
+        check(area.options.contains(.activeAlways), "a dropdown row tracks the pointer even though its window is not key")
+        check(area.options.contains(.inVisibleRect), "the row's tracking area follows its visible rect")
+        check(!area.options.contains(.activeInKeyWindow), "rows no longer depend on the panel being key")
+        check(row.hoverRequiresKeyWindow == false, "rows opt out of the key-window hover rule")
+        // The bar keeps its own policy: a toolbar button still only hovers in
+        // the key window.
+        let buttonInPanel = ToolButton(
+            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            symbolName: "pencil.tip",
+            normalColor: .labelColor,
+            selectedColor: accentGreen,
+            symbolPointSize: ToolbarChrome.symbolPointSize
+        )
+        content.addSubview(buttonInPanel)
+        buttonInPanel.updateTrackingAreas()
+        check(buttonInPanel.hoverRequiresKeyWindow, "toolbar buttons keep the key-window hover rule")
+        check(buttonInPanel.hoverTrackingArea?.options.contains(.activeInKeyWindow) == true,
+              "a toolbar button tracking area stays scoped to the key window")
+        // Negative control, documented on purpose: in this never-key window the
+        // OLD rule refuses to highlight (and its `.activeInKeyWindow` tracking
+        // area never fires), which is precisely the reported bug — while the
+        // fixed row does highlight in the same window.
+        buttonInPanel.setHovered(true)
+        check(!buttonInPanel.isHoverHighlighted, "negative control: the old key-window rule cannot highlight in a never-key panel")
+        buttonInPanel.setHovered(false)
+        buttonInPanel.removeFromSuperview()
+
+        let rowCentre = NSPoint(x: row.frame.midX, y: row.frame.midY)
+        let rowRestBeforeEnter = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content),
+                                                       in: content,
+                                                       appearance: .aqua)
+        row.mouseEntered(with: mouseEvent(at: rowCentre))
+        check(row.isHovered, "a synthetic mouseEntered highlights a row in a never-key panel")
+        check(RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content),
+                                    in: content,
+                                    appearance: .aqua) != rowRestBeforeEnter,
+              "the entered state is observable in the drawn pixels")
+        row.mouseExited(with: mouseEvent(at: rowCentre))
+        check(!row.isHovered, "mouseExited clears the row highlight when the pointer leaves")
+
+        // Fast passage / panel move: the row re-derives from the pointer, so a
+        // stale highlight cannot stick after the row moved out from under it.
+        let pointerInContent = content.convert(panel.mouseLocationOutsideOfEventStream, from: nil)
+        check(!content.rows.contains { $0.frame.contains(pointerInContent) },
+              "the harness pointer is parked away from the panel's rows")
+        row.setHovered(true)
+        check(row.isHovered, "the stale highlight is forced on for the refresh check")
+        let refreshes = content.hoverRefreshCount
+        content.refreshRowHover()
+        check(content.hoverRefreshCount == refreshes + 1, "refreshing the rows re-derives their hover")
+        check(!row.isHovered, "re-deriving hover from the pointer clears a stale row highlight")
+        NotificationCenter.default.post(name: NSWindow.didMoveNotification, object: panel)
+        check(content.hoverRefreshCount == refreshes + 2,
+              "moving the panel rebuilds the rows' tracking areas and clears stale hover")
+        check(!row.isHovered, "a panel move leaves no row highlighted")
+
+        // A click still reports its pick and never changes the group's choice.
+        var picked: ToolbarItemID?
+        row.onClick = { picked = row.member }
+        row.mouseDown(with: mouseEvent(.leftMouseDown, at: rowCentre))
+        row.mouseUp(with: mouseEvent(.leftMouseUp, at: rowCentre))
+        check(picked == .pen, "clicking a row reports that member")
+        check(!row.isSelected && selectedRow.isSelected,
+              "clicking a row does not change which member is selected")
+        row.onClick = nil
+
+        // Same hover colour as a toolbar button, in both appearances: both
+        // composite `AdaptiveChrome.subtleFill` over the same bar surface.
+        let button = ToolButton(
+            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            symbolName: "line.diagonal",
+            normalColor: .labelColor,
+            selectedColor: accentGreen,
+            symbolPointSize: ToolbarChrome.symbolPointSize
+        )
+        for (label, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            row.setHovered(false)
+            let rowRest = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content),
+                                                in: content,
+                                                appearance: appearanceName)
+            row.setHovered(true)
+            let rowHover = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content),
+                                                 in: content,
+                                                 appearance: appearanceName)
+            button.setHovered(false)
+            let buttonRest = RenderEvidence.sample(patch: RenderEvidence.buttonHoverPatch,
+                                                   in: button,
+                                                   appearance: appearanceName)
+            button.setHovered(true)
+            let buttonHover = RenderEvidence.sample(patch: RenderEvidence.buttonHoverPatch,
+                                                    in: button,
+                                                    appearance: appearanceName)
+            row.setHovered(false)
+            button.setHovered(false)
+            check(rowRest != rowHover, "a dropdown row shows a hover fill (\(label))")
+            check(buttonRest != buttonHover, "a toolbar button shows a hover fill (\(label))")
+            check(rowHover.maximumChannelDelta(buttonHover) <= RenderEvidence.hoverColourTolerance,
+                  "row hover \(rowHover) matches button hover \(buttonHover) in \(label) appearance")
+            let rowDelta = rowHover.mean - rowRest.mean
+            let buttonDelta = buttonHover.mean - buttonRest.mean
+            check(abs(rowDelta - buttonDelta) <= RenderEvidence.hoverColourTolerance,
+                  "row and button hover move the background by the same amount in \(label) appearance")
+        }
+
+        // The selected row keeps its stronger fill; hover must not replace it.
+        selectedRow.setHovered(false)
+        let selectedRest = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content, rowIndex: 1),
+                                                 in: content,
+                                                 appearance: .aqua)
+        selectedRow.setHovered(true)
+        let selectedHovered = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content, rowIndex: 1),
+                                                    in: content,
+                                                    appearance: .aqua)
+        selectedRow.setHovered(false)
+        check(selectedRest == selectedHovered, "hovering the selected row leaves its selected fill in place")
     }
 
     // MARK: - Localization
@@ -365,6 +665,12 @@ enum RenderEvidence {
         let a: Double
         var mean: Double { (r + g + b) / 3 }
         var description: String { String(format: "rgba(%.1f, %.1f, %.1f, %.1f)", r, g, b, a) }
+
+        /// Largest per-channel difference, so "same colour scale" can be
+        /// asserted instead of eye-balled.
+        func maximumChannelDelta(_ other: Sample) -> Double {
+            max(abs(r - other.r), abs(g - other.g), abs(b - other.b), abs(a - other.a))
+        }
     }
 
     static let scale: CGFloat = 2
@@ -372,10 +678,17 @@ enum RenderEvidence {
     static let buttonPatch = NSRect(x: 4, y: 4, width: 8, height: 8)
     /// Patch of the 16pt chevron zone.
     static let chevronPatch = NSRect(x: 3, y: 4, width: 6, height: 8)
+    /// Interior of a 40pt button: inside the hover/selected highlight, clear
+    /// of the centred symbol and of the rounded highlight corners, so a hover
+    /// fill can be compared with a dropdown row's pixel for pixel.
+    static let buttonHoverPatch = NSRect(x: 32, y: 15, width: 5, height: 10)
+    /// A row and a button composite the same fill over the same surface; the
+    /// tolerance only absorbs rounding between two rasterisations.
+    static let hoverColourTolerance: Double = 1.5
 
-    static func rowPatch(in content: ToolbarGroupMenuContentView) -> NSRect {
-        // Right-hand side of the first row: past the icon and the name.
-        let frame = content.rowFrame(at: 0, count: content.rows.count)
+    static func rowPatch(in content: ToolbarGroupMenuContentView, rowIndex: Int = 0) -> NSRect {
+        // Right-hand side of the row: past the icon and the name.
+        let frame = content.rowFrame(at: rowIndex, count: content.rows.count)
         return NSRect(x: frame.maxX - 26, y: frame.minY + 8, width: 14, height: 10)
     }
 
@@ -744,6 +1057,42 @@ enum RenderEvidence {
             out["row.\(language).title2"] = content.rows[2].member.localizedTitle
         }
         HarnessStrings.language = previousLanguage
+
+        // Row hover vs toolbar-button hover: same fill, same surface, so the
+        // sampled colours must agree. Quoted in the report.
+        do {
+            let size = ToolbarGroupMenuPanel.preferredSize(members: [.pen, .marker, .spotlight])
+            let content = ToolbarGroupMenuContentView(frame: NSRect(origin: .zero, size: size))
+            content.configure(
+                members: [.pen, .marker, .spotlight],
+                selected: .marker,
+                selection: ToolbarGroupMenuSelection(members: [.pen, .marker, .spotlight], selected: .marker)
+            )
+            let reference = ToolButton(
+                frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+                symbolName: "line.diagonal",
+                normalColor: .labelColor,
+                selectedColor: accentGreen,
+                symbolPointSize: ToolbarChrome.symbolPointSize
+            )
+            for (label, name) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+                content.rows[0].setHovered(false)
+                let rowRest = sample(patch: rowPatch(in: content), in: content, appearance: name)
+                content.rows[0].setHovered(true)
+                let rowHover = sample(patch: rowPatch(in: content), in: content, appearance: name)
+                content.rows[0].setHovered(false)
+                reference.setHovered(false)
+                let buttonRest = sample(patch: buttonHoverPatch, in: reference, appearance: name)
+                reference.setHovered(true)
+                let buttonHover = sample(patch: buttonHoverPatch, in: reference, appearance: name)
+                reference.setHovered(false)
+                out["hover.\(label).rowRest"] = "\(rowRest)"
+                out["hover.\(label).rowHover"] = "\(rowHover)"
+                out["hover.\(label).buttonRest"] = "\(buttonRest)"
+                out["hover.\(label).buttonHover"] = "\(buttonHover)"
+                out["hover.\(label).rowVsButtonDelta"] = String(format: "%.2f", rowHover.maximumChannelDelta(buttonHover))
+            }
+        }
 
         out["panel.rowHeight"] = "\(ToolbarChrome.rowHeight)"
         out["panel.surfaceRadius"] = "\(ToolbarChrome.surfaceCornerRadius)"

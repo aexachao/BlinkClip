@@ -220,8 +220,10 @@ struct ToolbarGroup: Equatable {
     /// Shapes: rectangle (default) and ellipse.
     static let shapes = ToolbarGroup(id: "shapes", members: [.rectangle, .ellipse], defaultMember: .rectangle)
     /// Lines: line and arrow. Arrow is the default because it is the tool the
-    /// user reaches for first; an already-persisted choice still wins (see
-    /// `ToolbarGroupSelection.member(for:)`).
+    /// user reaches for first. A persisted choice still wins
+    /// (`ToolbarGroupSelection.member(for:)`), except for the one v1 map where
+    /// `line` was the shipped default rather than a pick — that is rewritten
+    /// once by `ToolbarGroupSelection.migrating(dictionary:storedSchema:)`.
     static let lines = ToolbarGroup(id: "lines", members: [.line, .arrow], defaultMember: .arrow)
     /// Brush: pen (default), highlighter and spotlight. One button with a
     /// dropdown instead of three separate buttons.
@@ -282,25 +284,106 @@ struct ToolbarGroupSelection: Equatable {
     }
 }
 
-extension Defaults {
-    /// Persisted last-used tool per toolbar group. Always returned resolved
-    /// against the current groups, so a stale or unknown value can never
-    /// surface a tool that is not in its group.
-    static var toolbarGroupSelection: ToolbarGroupSelection {
-        get {
-            guard let dict = UserDefaults.standard
-                .dictionary(forKey: "editor.toolbarGroupSelection") as? [String: String]
-            else {
-                return .empty
-            }
-            return ToolbarGroupSelection(dictionary: dict)
+// MARK: - Schema migration
+
+extension ToolbarGroupSelection {
+    /// `UserDefaults` key holding the persisted `[groupID: memberRawValue]`
+    /// map. Its shape never changed when grouping shipped, so it stays exactly
+    /// as it was: no version, no wrapper object.
+    static let defaultsKey = "editor.toolbarGroupSelection"
+    /// Meaning-version of `defaultsKey`, in its own key so the persisted map
+    /// keeps its existing structure.
+    static let schemaDefaultsKey = "editor.toolbarGroupSelection.schema"
+    /// Current meaning. Version 1 shipped with `line` as the lines group's
+    /// default, and the bar persisted that default as if it were a user pick;
+    /// version 2 made `arrow` the default, so v1 state needs a one-time fix.
+    static let schemaVersion = 2
+
+    /// Outcome of reading a persisted map through the schema migration.
+    struct Migration: Equatable {
+        /// Selection to resolve against the current groups.
+        let selection: ToolbarGroupSelection
+        /// Map to write back. Equal to the input when nothing needs
+        /// rewriting; unknown groups/values are preserved so the migration
+        /// never drops data it does not understand.
+        let dictionary: [String: String]
+        let storedSchema: Int?
+        /// The stored `lines` member was the old default, not a real choice.
+        let didMigrate: Bool
+
+        /// Schema the caller should persist (never lowers a newer one).
+        var schema: Int { max(storedSchema ?? 0, ToolbarGroupSelection.schemaVersion) }
+
+        /// A missing marker is `nil`, which counts as version 1.
+        var needsSchemaWrite: Bool {
+            (storedSchema ?? 0) < ToolbarGroupSelection.schemaVersion
         }
-        set {
-            UserDefaults.standard.set(
-                newValue.dictionary,
-                forKey: "editor.toolbarGroupSelection"
+    }
+
+    /// One-time fix-up of a v1 map: `lines = line` was the old default that
+    /// v1 persisted without the user ever choosing it, so it is rewritten to
+    /// `arrow`. The rewrite only happens while the stored schema predates
+    /// `schemaVersion`; once the marker is stamped, a stored `line` is a real
+    /// user choice and is left alone forever. Purely functional and
+    /// idempotent: running it on its own output changes nothing. Only the
+    /// `lines` group is ever touched — shapes and brush keep their members.
+    static func migrating(dictionary: [String: String], storedSchema: Int?) -> Migration {
+        guard (storedSchema ?? 0) < schemaVersion else {
+            return Migration(
+                selection: ToolbarGroupSelection(dictionary: dictionary),
+                dictionary: dictionary,
+                storedSchema: storedSchema,
+                didMigrate: false
             )
         }
+        var persisted = dictionary
+        var didMigrate = false
+        if persisted[ToolbarGroup.lines.id] == ToolbarItemID.line.rawValue {
+            persisted[ToolbarGroup.lines.id] = ToolbarItemID.arrow.rawValue
+            didMigrate = true
+        }
+        return Migration(
+            selection: ToolbarGroupSelection(dictionary: persisted),
+            dictionary: persisted,
+            storedSchema: storedSchema,
+            didMigrate: didMigrate
+        )
+    }
+}
+
+extension Defaults {
+    /// Persisted last-used tool per toolbar group. Reads run the one-time
+    /// schema migration, so a v1 `lines = line` left over from the old default
+    /// resolves to the arrow tool; writes always stamp the current schema,
+    /// which is what lets a later explicit `line` pick survive every launch.
+    /// Always returned resolved against the current groups, so a stale or
+    /// unknown value can never surface a tool that is not in its group.
+    static var toolbarGroupSelection: ToolbarGroupSelection {
+        get { toolbarGroupSelection(in: .standard) }
+        set { setToolbarGroupSelection(newValue, in: .standard) }
+    }
+
+    /// `UserDefaults`-injected form of the accessor above, so the native
+    /// harness can run the migration against a scratch suite instead of the
+    /// user's real preferences.
+    static func toolbarGroupSelection(in defaults: UserDefaults) -> ToolbarGroupSelection {
+        let stored = (defaults.dictionary(forKey: ToolbarGroupSelection.defaultsKey) as? [String: String]) ?? [:]
+        let storedSchema = (defaults.object(forKey: ToolbarGroupSelection.schemaDefaultsKey) as? NSNumber)?.intValue
+        let migration = ToolbarGroupSelection.migrating(dictionary: stored, storedSchema: storedSchema)
+        // Persist the migration outcome once. Subsequent launches read the
+        // stamped schema and never rewrite the value again.
+        if migration.dictionary != stored {
+            defaults.set(migration.dictionary, forKey: ToolbarGroupSelection.defaultsKey)
+        }
+        if migration.needsSchemaWrite {
+            defaults.set(migration.schema, forKey: ToolbarGroupSelection.schemaDefaultsKey)
+        }
+        return migration.selection
+    }
+
+    static func setToolbarGroupSelection(_ selection: ToolbarGroupSelection, in defaults: UserDefaults) {
+        defaults.set(selection.dictionary, forKey: ToolbarGroupSelection.defaultsKey)
+        defaults.set(ToolbarGroupSelection.schemaVersion, forKey: ToolbarGroupSelection.schemaDefaultsKey)
     }
 }
 
