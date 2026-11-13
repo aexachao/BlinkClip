@@ -134,10 +134,13 @@ assert 'didResignKeyNotification' in panel and 'willCloseNotification' in panel,
 assert 'ToolbarGroupMenuPanel.presentedPanel?.handleKeyDown(event)' in controller, 'the dropdown claims arrow/Return/Esc before the capture overlay treats Esc as cancel'
 # 2/3. Group inventory: arrow default, brush group.
 assert 'defaultMember: .arrow' in layout_text, 'lines default to the arrow tool'
+assert 'ToolbarGroup(id: "lines", members: [.arrow, .line], defaultMember: .arrow)' in layout_text, 'the lines dropdown lists the arrow first'
 assert 'ToolbarGroup(id: "brush", members: [.pen, .marker, .spotlight], defaultMember: .pen)' in layout_text, 'pen/highlighter/spotlight are one brush group'
 assert 'static let all: [ToolbarGroup] = [.shapes, .lines, .brush]' in layout_text, 'all three groups are registered'
 # 6. One-time group-selection migration: its own schema marker, `lines=line`
 # rewritten once, and a later explicit pick written with the current schema.
+# The migration stays for old maps, but a new editor never reads the stored
+# map: session start overwrites it with the defaults (J1-f).
 assert 'static let schemaDefaultsKey = "editor.toolbarGroupSelection.schema"' in layout_text, 'the schema marker uses its own key'
 assert 'static let schemaVersion = 2' in layout_text, 'the migration is versioned'
 assert 'static func migrating(dictionary: [String: String], storedSchema: Int?) -> Migration' in layout_text, 'the migration is a pure, testable function'
@@ -145,6 +148,22 @@ assert 'if persisted[ToolbarGroup.lines.id] == ToolbarItemID.line.rawValue' in l
 assert 'if migration.needsSchemaWrite' in layout_text, 'the schema is stamped once'
 assert 'ToolbarGroupSelection.schemaDefaultsKey' in layout_text and 'ToolbarGroupSelection.defaultsKey' in layout_text, 'read and write go through the shared keys'
 assert 'defaults.set(ToolbarGroupSelection.schemaVersion, forKey: ToolbarGroupSelection.schemaDefaultsKey)' in layout_text, 'an explicit pick marks the state as migrated'
+# 7. Per-session group reset (J1-f): every new editor starts on rectangle /
+# arrow / pen and writes those defaults back, so storage cannot resurface the
+# previous session's pick.
+assert 'static var sessionDefaults: ToolbarGroupSelection' in layout_text, 'the session default selection is an explicit value'
+assert 'static func resetToolbarGroupSelectionForNewSession(in defaults: UserDefaults = .standard)' in layout_text, 'session start has an explicit reset-and-persist entry point'
+assert 'setToolbarGroupSelection(selection, in: defaults)' in layout_text, 'the reset writes the defaults back'
+assert 'Defaults.resetToolbarGroupSelectionForNewSession()' in controller, 'the editor builds its bar from the session defaults'
+show_toolbar=controller.split('private func showToolbar()',1)[1].split('private func resetActiveToolForNewSession',1)[0]
+assert 'Defaults.toolbarGroupSelection' not in show_toolbar, 'a new session never reads the stored group selection'
+# 8. A new editor session has no active annotation tool (J1-d).
+assert 'private var activeTool: EditTool = .none' in controller, 'the editor field starts with no active tool'
+assert 'resetActiveToolForNewSession()' in controller, 'the session start resets the active tool explicitly'
+reset_block=controller.split('private func resetActiveToolForNewSession()',1)[1].split('/// Injects the controller',1)[0]
+assert 'activeTool = .none' in reset_block and 'canvasView?.activeTool = .none' in reset_block, 'both the controller and the canvas start with no tool'
+assert 'toolbarView?.updateSelection(tool: .none)' in reset_block, 'the reset clears any toolbar highlight'
+assert 'subToolbarView?.removeFromSuperview()' in reset_block, 'the reset drops a stale sub-toolbar'
 # 4. Redo shortcut is ⇧⌘Z.
 redo_block=registry.split('case .toolbar(.redo):',1)[1].split('case .toolbar(.pin):',1)[0]
 assert 'UInt32(cmdKey) | UInt32(shiftKey)' in redo_block, 'redo keeps its registration with the ⇧⌘Z chord'
@@ -163,11 +182,13 @@ for lang,value in [('zh-Hans','完成'),('en','Done')]:
   'hover: tracking area, key-window scoping, adaptive fill, disabled suppressed, chevron included',
   'dropdown row hover: always-on tracking in the never-key panel, refresh on panel move, same fill as the bar, selected fill intact',
   'grouping: lines default arrow, brush group registered, document order preserved',
-  'group selection: one-time schema-2 migration of a stale lines=line default, later line picks preserved',
+  'lines dropdown: arrow is the first menu row, then line',
+  'group selection: one-time schema-2 migration kept for old maps; every editor session resets shapes/lines/brush to rectangle/arrow/pen and writes the defaults back',
+  'editor session: no annotation tool is active when a new editor opens (no highlight, no sub-toolbar)',
   'redo: runtime-hidden from the bar, ⇧⌘Z binding kept in the registry',
   'dropdown: self-drawn panel reuses the bar surface, no NSMenu, keyboard + VoiceOver + resign-key dismissal',
   'confirm tooltip: 完成 / Done in both localizations',
-],'boundary':'Source entrypoint review plus the native harness render/sampling below; the harness drives persisted group selection through a scratch UserDefaults suite and row hover through synthetic mouse events inside a real non-key NSPanel, not a click-driven editor session'},indent=2))
+],'boundary':'Source entrypoint review plus the native harness render/sampling below; the harness drives the per-session group reset through a scratch UserDefaults suite, the lines dropdown order through the real menu content view, and row hover through synthetic mouse events inside a real non-key NSPanel, not a click-driven editor session'},indent=2))
 paths=[layout,r/'Vendor/capcap/Editor/EditWindowController.swift',r/'Vendor/capcap/Editor/EditorShortcutRegistry.swift',
        r/'Vendor/capcap/Editor/ToolbarChrome.swift',r/'Vendor/capcap/Editor/ToolbarButtons.swift',
        r/'Vendor/capcap/Editor/ToolbarGroupMenu.swift',

@@ -207,10 +207,11 @@ extension ToolbarItemID {
 let toolbarDangerRed = NSColor(red: 1.0, green: 0.35, blue: 0.35, alpha: 1.0)
 
 /// A set of related annotation tools collapsed into one toolbar button with
-/// a dropdown menu. The button shows the currently selected member's icon
-/// plus a chevron; the last-used member per group is persisted (see
-/// `ToolbarGroupSelection`) and restored on launch. Raw `ToolbarItemID`
-/// values are never renamed, so grouping never changes persistence.
+/// a dropdown menu. The button shows the group's current member's icon plus a
+/// chevron. Each editor session starts from the defaults (see
+/// `ToolbarGroupSelection.sessionDefaults`); picks made inside a session are
+/// persisted so the stored map never goes stale. Raw `ToolbarItemID` values are
+/// never renamed, so grouping never changes persistence.
 struct ToolbarGroup: Equatable {
     /// Stable key used in the persisted group-selection dictionary.
     let id: String
@@ -219,12 +220,10 @@ struct ToolbarGroup: Equatable {
 
     /// Shapes: rectangle (default) and ellipse.
     static let shapes = ToolbarGroup(id: "shapes", members: [.rectangle, .ellipse], defaultMember: .rectangle)
-    /// Lines: line and arrow. Arrow is the default because it is the tool the
-    /// user reaches for first. A persisted choice still wins
-    /// (`ToolbarGroupSelection.member(for:)`), except for the one v1 map where
-    /// `line` was the shipped default rather than a pick — that is rewritten
-    /// once by `ToolbarGroupSelection.migrating(dictionary:storedSchema:)`.
-    static let lines = ToolbarGroup(id: "lines", members: [.line, .arrow], defaultMember: .arrow)
+    /// Lines: arrow first in the dropdown, then line. Arrow is also the
+    /// default; `members` is the order the menu shows, so the first row is
+    /// the tool the user reaches for first.
+    static let lines = ToolbarGroup(id: "lines", members: [.arrow, .line], defaultMember: .arrow)
     /// Brush: pen (default), highlighter and spotlight. One button with a
     /// dropdown instead of three separate buttons.
     static let brush = ToolbarGroup(id: "brush", members: [.pen, .marker, .spotlight], defaultMember: .pen)
@@ -236,13 +235,25 @@ struct ToolbarGroup: Equatable {
     }
 }
 
-/// Last-used tool per toolbar group, persisted in UserDefaults under
-/// `editor.toolbarGroupSelection` as `[groupID: memberRawValue]`. Pure value
-/// type so the resolution rules are unit-testable without UserDefaults.
+/// The group members the editor's dropdown buttons show. Picks inside a
+/// session are persisted under `editor.toolbarGroupSelection` as
+/// `[groupID: memberRawValue]`; a new editor session starts from
+/// `sessionDefaults` (see `EditWindowController.showToolbar`). Pure value type
+/// so the resolution rules are unit-testable without UserDefaults.
 struct ToolbarGroupSelection: Equatable {
     var selected: [String: ToolbarItemID]
 
     static let empty = ToolbarGroupSelection(dictionary: [:])
+
+    /// The selection every new editor session starts from: each group's
+    /// declared default (shapes → rectangle, lines → arrow, brush → pen).
+    /// The previous session's picks must not carry over, so this is written
+    /// back to storage at session start instead of reading the stored map.
+    static var sessionDefaults: ToolbarGroupSelection {
+        ToolbarGroup.all.reduce(ToolbarGroupSelection(dictionary: [:])) { selection, group in
+            selection.selecting(group.defaultMember, in: group)
+        }
+    }
 
     /// The member the group's button currently shows. Falls back to the
     /// group's default when nothing was persisted, or when the persisted
@@ -352,12 +363,11 @@ extension ToolbarGroupSelection {
 }
 
 extension Defaults {
-    /// Persisted last-used tool per toolbar group. Reads run the one-time
-    /// schema migration, so a v1 `lines = line` left over from the old default
-    /// resolves to the arrow tool; writes always stamp the current schema,
-    /// which is what lets a later explicit `line` pick survive every launch.
-    /// Always returned resolved against the current groups, so a stale or
-    /// unknown value can never surface a tool that is not in its group.
+    /// The group selection the editor shows. Reads run the one-time schema
+    /// migration, so a v1 `lines = line` left over from the old default
+    /// resolves to the arrow tool. Session start no longer reads it — see
+    /// `resetToolbarGroupSelectionForNewSession` — so a stored pick can never
+    /// resurface in a new editor.
     static var toolbarGroupSelection: ToolbarGroupSelection {
         get { toolbarGroupSelection(in: .standard) }
         set { setToolbarGroupSelection(newValue, in: .standard) }
@@ -384,6 +394,17 @@ extension Defaults {
     static func setToolbarGroupSelection(_ selection: ToolbarGroupSelection, in defaults: UserDefaults) {
         defaults.set(selection.dictionary, forKey: ToolbarGroupSelection.defaultsKey)
         defaults.set(ToolbarGroupSelection.schemaVersion, forKey: ToolbarGroupSelection.schemaDefaultsKey)
+    }
+
+    /// Session start: every group returns to its default and that default is
+    /// written back, so storage never keeps a stale `ellipse`/`line`/`marker`
+    /// that a later read could surface. The stored map is deliberately not
+    /// read here: the requirement is a clean slate per editor session.
+    @discardableResult
+    static func resetToolbarGroupSelectionForNewSession(in defaults: UserDefaults = .standard) -> ToolbarGroupSelection {
+        let selection = ToolbarGroupSelection.sessionDefaults
+        setToolbarGroupSelection(selection, in: defaults)
+        return selection
     }
 }
 

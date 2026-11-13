@@ -18,6 +18,7 @@ import AppKit
     static func main() {
         inventoryChecks()
         migrationChecks()
+        sessionResetChecks()
         groupingChecks()
         hoverChecks()
         dropdownHoverChecks()
@@ -197,6 +198,72 @@ import AppKit
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    // MARK: - Per-session group reset
+
+    /// Requirement change (J1-f): every new editor session resets all three
+    /// groups to their defaults and writes them back. The one-time schema
+    /// migration above is kept, but it can no longer resurface a stored pick:
+    /// `showToolbar()` never reads the stored map, it overwrites it with the
+    /// defaults before building the bar. This is stricter than the earlier
+    /// "restart keeps the last member" behaviour, not a relaxed assertion.
+    static func sessionResetChecks() {
+        let suiteName = "capcap.harness.toolbar-session-reset"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("could not open the harness defaults suite")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let key = ToolbarGroupSelection.defaultsKey
+        let schemaKey = ToolbarGroupSelection.schemaDefaultsKey
+        func storedMap() -> [String: String] {
+            (defaults.dictionary(forKey: key) as? [String: String]) ?? [:]
+        }
+        func storedSchema() -> Int? {
+            (defaults.object(forKey: schemaKey) as? NSNumber)?.intValue
+        }
+
+        // The session default is exactly rectangle / arrow / pen.
+        let sessionDefaults = ToolbarGroupSelection.sessionDefaults
+        check(sessionDefaults.member(for: .shapes) == .rectangle, "a session starts on the rectangle shape")
+        check(sessionDefaults.member(for: .lines) == .arrow, "a session starts on the arrow line tool")
+        check(sessionDefaults.member(for: .brush) == .pen, "a session starts on the pen brush")
+        check(ToolbarGroup.lines.members == [.arrow, .line], "the lines group lists the arrow first")
+        check(ToolbarGroup.lines.defaultMember == .arrow, "arrow is the lines group default")
+
+        // The previous session picked ellipse / line / marker. Session start
+        // must both show and store the defaults.
+        defaults.set(["shapes": "ellipse", "lines": "line", "brush": "marker"], forKey: key)
+        defaults.set(ToolbarGroupSelection.schemaVersion, forKey: schemaKey)
+        let first = Defaults.resetToolbarGroupSelectionForNewSession(in: defaults)
+        check(first.member(for: .shapes) == .rectangle, "session start shows rectangle, not the last ellipse")
+        check(first.member(for: .lines) == .arrow, "session start shows arrow, not the last line")
+        check(first.member(for: .brush) == .pen, "session start shows pen, not the last marker")
+        check(storedMap() == ["shapes": "rectangle", "lines": "arrow", "brush": "pen"],
+              "session start writes the three defaults back to storage")
+        check(storedSchema() == ToolbarGroupSelection.schemaVersion,
+              "the session reset stamps the current schema, so the migration stays settled")
+        check(Defaults.toolbarGroupSelection(in: defaults).member(for: .shapes) == .rectangle,
+              "a later read cannot surface the previous session's shape")
+        check(Defaults.toolbarGroupSelection(in: defaults).member(for: .lines) == .arrow,
+              "a later read cannot surface the previous session's line tool")
+
+        // Second editor session: a pick made in the first one is not read back.
+        defaults.set(["shapes": "ellipse", "lines": "line", "brush": "marker"], forKey: key)
+        let second = Defaults.resetToolbarGroupSelectionForNewSession(in: defaults)
+        check(second == sessionDefaults, "the second session resets to the same defaults")
+        check(storedMap() == sessionDefaults.dictionary, "the second session rewrites the same defaults")
+
+        // Even a v1 map (no schema marker) is replaced at session start: the
+        // migration cannot bring the old default back into a new editor.
+        defaults.removeObject(forKey: schemaKey)
+        defaults.set(["lines": "line"], forKey: key)
+        let third = Defaults.resetToolbarGroupSelectionForNewSession(in: defaults)
+        check(third.member(for: .lines) == .arrow, "a v1 stored line cannot reach a new editor")
+        check(storedMap()["lines"] == "arrow" && storedSchema() == ToolbarGroupSelection.schemaVersion,
+              "session start overwrites the v1 map with the current defaults and schema")
+
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
     // MARK: - Grouping
 
     static func groupingChecks() {
@@ -238,20 +305,23 @@ import AppKit
         check(oneSlots.contains(.item(.rectangle)) && !oneSlots.contains(.group(.shapes)), "single visible member renders as a plain button")
         check(ToolbarLayout.slots(for: ToolbarLayout(dictionary: ToolbarLayout.default.dictionary).normalized()) == slots, "old primary/side layout renders identically in the single bar")
 
-        // Group selection: defaults, last-used persistence, stale fallback.
+        // Group selection: defaults, within-session picks, stale fallback.
+        // A pick only lives for the current session (J1-f); the resolver still
+        // honours it there, and `sessionResetChecks` covers the reset itself.
         check(ToolbarGroupSelection.empty.member(for: .shapes) == .rectangle, "shapes default to rectangle")
         check(ToolbarGroupSelection.empty.member(for: .lines) == .arrow, "lines default to the arrow tool")
         check(ToolbarGroupSelection.empty.member(for: .brush) == .pen, "brush defaults to the pen tool")
         let pickedShape = ToolbarGroupSelection.empty.selecting(.ellipse, in: .shapes)
-        check(pickedShape.member(for: .shapes) == .ellipse, "last-used shape is remembered")
-        check(ToolbarGroupSelection(dictionary: pickedShape.dictionary) == pickedShape, "group selection round-trips through persistence")
+        check(pickedShape.member(for: .shapes) == .ellipse, "a pick made in this session resolves to that shape")
+        check(ToolbarGroupSelection(dictionary: pickedShape.dictionary) == pickedShape, "group selection round-trips through the stored map")
         check(ToolbarGroupSelection(dictionary: ["shapes": "nope"]).member(for: .shapes) == .rectangle, "unknown persisted value falls back to default")
         check(ToolbarGroupSelection(dictionary: ["shapes": "arrow"]).member(for: .shapes) == .rectangle, "non-member persisted value falls back to default")
-        // An already-persisted line choice still beats the new arrow default.
-        check(ToolbarGroupSelection(dictionary: ["lines": "line"]).member(for: .lines) == .line, "a stored line preference is respected over the new default")
+        // The resolver itself still honours a stored member; a new session
+        // never reads that map, it overwrites it with the defaults first.
+        check(ToolbarGroupSelection(dictionary: ["lines": "line"]).member(for: .lines) == .line, "the resolver honours a stored member when a session asks for it")
         let pickedBrush = ToolbarGroupSelection.empty.selecting(.spotlight, in: .brush)
-        check(pickedBrush.member(for: .brush) == .spotlight, "last-used brush is remembered")
-        check(ToolbarGroupSelection(dictionary: pickedBrush.dictionary).member(for: .brush) == .spotlight, "brush selection round-trips through persistence")
+        check(pickedBrush.member(for: .brush) == .spotlight, "a brush pick made in this session resolves to that member")
+        check(ToolbarGroupSelection(dictionary: pickedBrush.dictionary).member(for: .brush) == .spotlight, "brush selection round-trips through the stored map")
         check(ToolbarGroupSelection(dictionary: ["brush": "rectangle"]).member(for: .brush) == .pen, "non-member brush value falls back to the pen")
     }
 
@@ -544,8 +614,10 @@ import AppKit
         }
         check(geometry.slots.contains(.group(.shapes)) && geometry.slots.contains(.group(.lines)),
               "shapes and lines still render as their own grouped buttons")
-        check(ToolbarGroupSelection.empty.member(for: .lines) == .arrow,
-              "the lines group shows the arrow tool by default")
+        check(ToolbarGroupSelection.sessionDefaults.member(for: .lines) == .arrow,
+              "the lines group shows the arrow tool at session start")
+        check(ToolbarGroup.lines.members.first == .arrow,
+              "the lines group button shows the arrow, which is its first menu member")
         check(geometry.slotCount == renderBarSlotCount, "the bar renders every visible slot exactly once")
         check(geometry.size.height == ToolbarChrome.rowHeight + HarnessBarMetrics.crossPadding * 2,
               "bar thickness is a button plus the cross padding")
@@ -646,6 +718,19 @@ import AppKit
         content.rows[0].setHovered(true)
         let darkHoverRow = RenderEvidence.sample(patch: RenderEvidence.rowPatch(in: content), in: content, appearance: .darkAqua)
         check(darkRow != darkHoverRow, "the dropdown row hover reads in dark appearance too")
+
+        // J1-c: the lines dropdown lists the arrow first and the line second.
+        let linesMembers = ToolbarGroup.lines.members
+        let linesSize = ToolbarGroupMenuPanel.preferredSize(members: linesMembers)
+        let linesContent = ToolbarGroupMenuContentView(frame: NSRect(origin: .zero, size: linesSize))
+        linesContent.configure(
+            members: linesMembers,
+            selected: .arrow,
+            selection: ToolbarGroupMenuSelection(members: linesMembers, selected: .arrow)
+        )
+        check(linesContent.rows.first?.member == .arrow, "the first row of the lines dropdown is the arrow")
+        check(linesContent.rows.last?.member == .line, "the line tool follows the arrow in the dropdown")
+        check(linesContent.rows.first?.isSelected == true, "the arrow row starts selected")
     }
 }
 
@@ -804,7 +889,9 @@ enum RenderEvidence {
                 // drawing is visually identical.
                 drawItem(id, frame: frame, undoEnabled: undoEnabled)
             case .group(let group):
-                let member = ToolbarGroupSelection.empty.member(for: group)
+                // The editor opens with the session defaults, so the render
+                // shows the same member a fresh editor shows.
+                let member = ToolbarGroupSelection.sessionDefaults.member(for: group)
                 let toolFrame = NSRect(
                     x: frame.minX,
                     y: frame.minY,
@@ -1214,6 +1301,20 @@ enum RenderEvidence {
                 content.rows[0].setHovered(true)
                 save(renderMenu(content, appearance: resolved), "toolbar-dropdown-\(tag)-hover-\(name).png")
                 content.rows[0].setHovered(false)
+            }
+            // Lines dropdown (J1-c): arrow first, then line, with the app's
+            // real copy in each language.
+            for (tag, language) in [("zh", "zh-Hans"), ("en", "en")] {
+                HarnessStrings.language = language
+                let members = ToolbarGroup.lines.members
+                let size = ToolbarGroupMenuPanel.preferredSize(members: members)
+                let content = ToolbarGroupMenuContentView(frame: NSRect(origin: .zero, size: size))
+                content.configure(
+                    members: members,
+                    selected: .arrow,
+                    selection: ToolbarGroupMenuSelection(members: members, selected: .arrow)
+                )
+                save(renderMenu(content, appearance: resolved), "toolbar-dropdown-lines-\(tag)-\(name).png")
             }
             HarnessStrings.language = previousLanguage
 

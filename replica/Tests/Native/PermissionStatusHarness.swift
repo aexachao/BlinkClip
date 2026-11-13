@@ -234,14 +234,34 @@ struct PermissionStatusHarness {
         NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: app)
         await settle(mismatchModel)
         check(mismatchModel.requirementMismatch, "Returning to the app must refresh the stale-requirement hint")
-        check(mismatchModel.accessibilityStatus.contains(zh ? "辅助功能" : "Accessibility"),
-              "Accessibility row names its own capability")
-        check(!mismatchModel.accessibilityStatus.contains(zh ? "跨应用发送事件" : "other apps"),
-              "Accessibility status must not report the event-posting capability")
-        check(mismatchModel.postEventsStatus.contains(zh ? "跨应用发送事件" : "other apps"),
-              "Event-posting row names its own capability")
-        check(mismatchModel.screenRecordingStatus.contains(zh ? "屏幕录制" : "Screen Recording"),
-              "Screen Recording row names its own capability")
+        // The row title already names the capability; the status line is only
+        // granted / not granted — no colon, no repeated capability name.
+        let notGranted = zh ? "未授权" : "Not granted"
+        let grantedCopy = zh ? "已授权" : "Granted"
+        check(mismatchModel.accessibilityStatus == notGranted,
+              "Denied Accessibility status is exactly 未授权 / Not granted")
+        check(!mismatchModel.accessibilityStatus.contains(":") && !mismatchModel.accessibilityStatus.contains("："),
+              "The status line carries no colon")
+        check(!mismatchModel.accessibilityStatus.contains(zh ? "辅助功能" : "Accessibility"),
+              "The status line does not repeat the capability name")
+        check(mismatchModel.screenRecordingStatus == notGranted,
+              "Denied Screen Recording status is exactly 未授权 / Not granted")
+        check(!mismatchModel.screenRecordingStatus.contains(zh ? "屏幕录制" : "Screen Recording"),
+              "Screen Recording status does not repeat the capability name")
+        // J1-e: event posting is reported inside the Accessibility row, so a
+        // mismatch between the two is one inline hint, never a second row.
+        check(mismatchModel.postEventsHint == nil,
+              "A denied Accessibility row shows no event-posting hint")
+        var axOnly = true
+        let mergedRow = PermissionStatusModel(readAccessibility: { axOnly }, readPostEvents: { false },
+            readScreenRecording: { true }, requestScreenAccess: {}, openScreenSettings: {},
+            requestAccessibilityAccess: {})
+        await settle(mergedRow)
+        check(mergedRow.accessibilityStatus == grantedCopy,
+              "Granted Accessibility status is exactly 已授权 / Granted")
+        check(mergedRow.postEventsHint?.contains(zh ? "辅助功能" : "Accessibility") == true,
+              "AX granted + event posting denied surfaces one inline hint on the Accessibility row")
+        mergedRow.stop()
         mismatchModel.stop()
         let controllerDirectory = out.appendingPathComponent("guide-controller-close")
         let completionKey = PermissionGuidePersistence.key(for: controllerDirectory)
@@ -303,10 +323,46 @@ struct PermissionStatusHarness {
             preview.stop()
             window.orderOut(nil)
         }
+        // Fresh offscreen renders of the permission page itself, so the layout
+        // changes can be checked without a real System Settings round trip:
+        // one Accessibility row (event posting merged in), one Screen Recording
+        // row, no removed captions, a divider above the refresh button.
+        for (tag, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+            app.appearance = NSAppearance(named: appearanceName)
+            for state in ["granted", "denied", "post-gap"] {
+                let accessibility = state != "denied"
+                let preview = PermissionStatusModel(
+                    readAccessibility: { accessibility },
+                    readPostEvents: { state == "granted" },
+                    readScreenRecording: { accessibility },
+                    requestScreenAccess: {}, openScreenSettings: {}, requestAccessibilityAccess: {})
+                await settle(preview)
+                let host = NSHostingView(rootView: PermissionStatusView(model: preview)
+                    .padding(18)
+                    .frame(width: 520, alignment: .leading)
+                    .background(Color(nsColor: .windowBackgroundColor)))
+                host.frame = NSRect(x: 0, y: 0, width: 520, height: 340)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.setFrameOrigin(NSPoint(x: -5000, y: -5000))
+                window.orderFront(nil)
+                try await Task.sleep(nanoseconds: 200_000_000)
+                host.layoutSubtreeIfNeeded()
+                guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("Missing bitmap") }
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = bitmap.representation(using: .png, properties: [:])!
+                try png.write(to: out.appendingPathComponent("permission-page-\(tag)-\(state).png"))
+                preview.stop()
+                window.orderOut(nil)
+            }
+        }
+        app.appearance = NSAppearance(named: .aqua)
         let result: [String: Any] = ["passed": true, "checks": checks, "language": language,
             "limits": ["Permission decision assertions use injected states; guide controller may read system status without requesting access",
                        "No TCC request, real-store launch, or installed app modification",
                        "Offscreen host close/reopen and SwiftUI rendering; real OS grant/revocation remains manual",
+                       "Permission page renders use injected grant states in a 520x340 offscreen host, not a real System Settings round trip",
                        "Same-executable CLI and signature checks are structural; launch responsibility still requires installed-app validation"]]
         let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: out.appendingPathComponent("permission-\(language).json"))

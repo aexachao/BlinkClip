@@ -427,6 +427,7 @@ class EditWindowController {
         self.selectionChromeOverlay = overlay
 
         showToolbar()
+        resetActiveToolForNewSession()
         // The first editor frame includes the interactive canvas, border,
         // handles and toolbar, even while its precise silhouette is pending.
         repositionFloatingChrome()
@@ -482,7 +483,11 @@ class EditWindowController {
         // divider, then the former side run. The bar exists only when the
         // user has at least one visible tool.
         guard !layout.visibleItems.isEmpty else { return }
-        let tv = ToolbarView(layout: layout, groupSelection: Defaults.toolbarGroupSelection)
+        // Every editor session starts from the group defaults (rectangle /
+        // arrow / pen) and writes them back, so a pick from the previous
+        // session is neither shown nor left in storage for a later read.
+        let groupSelection = Defaults.resetToolbarGroupSelectionForNewSession()
+        let tv = ToolbarView(layout: layout, groupSelection: groupSelection)
         wireToolbarCallbacks(tv)
         tv.frame = toolbarRect(in: hostSelectionView.bounds, size: tv.preferredSize)
         styleFloatingHUD(tv)
@@ -490,6 +495,18 @@ class EditWindowController {
         hostSelectionView.addSubview(tv)
 
         updateCaptureActionAvailability()
+    }
+
+    /// A new editor session has no annotation tool selected: the previous
+    /// session's tool must not carry over (no highlighted button, no drawing
+    /// mode, no sub-toolbar). Group members are reset separately by
+    /// `Defaults.resetToolbarGroupSelectionForNewSession()` in `showToolbar()`.
+    private func resetActiveToolForNewSession() {
+        activeTool = .none
+        canvasView?.activeTool = .none
+        subToolbarView?.removeFromSuperview()
+        subToolbarView = nil
+        toolbarView?.updateSelection(tool: .none)
     }
 
     /// Injects the controller's action callbacks into the toolbar.

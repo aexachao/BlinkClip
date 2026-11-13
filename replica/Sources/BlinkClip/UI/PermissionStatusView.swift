@@ -84,28 +84,32 @@ final class PermissionStatusModel: ObservableObject {
     /// is a separate operational capability and must not turn this grant red.
     var accessibilityReady: Bool { accessibility }
     var statusUnknown: Bool { !hasChecked || checkFailed }
-    /// Each row names the capability it reports: a bare "未授权" left users unable
-    /// to tell Accessibility from "send events to other apps" from Screen Recording.
+    /// The row title already names the capability, so the status line only
+    /// answers granted / not granted. Repeating the name after a colon read as
+    /// a second permission and pushed users into System Settings looking for
+    /// an entry that does not exist.
     var accessibilityStatus: String {
         if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
         if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
         return accessibility
-            ? PermissionCopy.text("已授权：辅助功能", "Granted: Accessibility")
-            : PermissionCopy.text("未生效：辅助功能未授权", "Not active: Accessibility is not granted")
+            ? PermissionCopy.text("已授权", "Granted")
+            : PermissionCopy.text("未授权", "Not granted")
     }
-    var postEventsStatus: String {
-        if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
-        if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
-        return postEvents
-            ? PermissionCopy.text("已授权：跨应用发送事件", "Granted: sending events to other apps")
-            : PermissionCopy.text("未生效：跨应用发送事件未授权", "Not active: sending events to other apps is not granted")
+    /// Event posting is answered from the same Accessibility grant, so it is
+    /// reported inside the Accessibility row. The probe still reads it: a
+    /// build that can read the UI but cannot post events gets one inline
+    /// warning instead of a second row users cannot find in System Settings.
+    var postEventsHint: String? {
+        guard hasChecked, !checkFailed, accessibility, !postEvents else { return nil }
+        return PermissionCopy.text("发送事件权限未就绪，请重新勾选辅助功能。",
+                                   "Sending events is not ready; re-tick Accessibility.")
     }
     var screenRecordingStatus: String {
         if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
         if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
         return screenRecording
-            ? PermissionCopy.text("已授权：屏幕录制", "Granted: Screen Recording")
-            : PermissionCopy.text("未生效：屏幕录制未授权", "Not active: Screen Recording is not granted")
+            ? PermissionCopy.text("已授权", "Granted")
+            : PermissionCopy.text("未授权", "Not granted")
     }
 
     func refresh() {
@@ -237,19 +241,16 @@ struct PermissionStatusView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Three separate capabilities, three rows: macOS grants Accessibility,
-            // "send events to other apps" and Screen Recording independently, and a
-            // single aggregated "未授权" made users unable to tell which one was missing.
+            // macOS grants Accessibility and Screen Recording independently.
+            // Event posting (direct paste) is answered from the Accessibility
+            // grant — `CGPreflightPostEventAccess()` reports the same source —
+            // so it stays inside this row instead of a second row that sends
+            // users looking for a permission System Settings never lists.
             row(title: PermissionCopy.text("辅助功能", "Accessibility"),
-                subtitle: PermissionCopy.text("读取其他应用的界面，用于滚动截图与粘贴。", "Read other apps' interface for scrolling capture and pasting."),
-                granted: model.accessibilityReady, identifier: "permission-accessibility", status: model.accessibilityStatus) {
+                subtitle: PermissionCopy.text("读取其他应用的界面（滚动截图、读取内容），并向其他应用发送键盘事件（直接粘贴）。", "Read other apps' interface (scrolling capture, reading content) and send keyboard events to other apps (direct paste)."),
+                granted: model.accessibilityReady, identifier: "permission-accessibility",
+                status: model.accessibilityStatus, hint: model.postEventsHint) {
                 model.requestAccessibility()
-            }
-            Divider()
-            row(title: PermissionCopy.text("跨应用发送事件", "Send Events to Other Apps"),
-                subtitle: PermissionCopy.text("直接把内容粘贴到其他应用（直接粘贴）。", "Paste straight into other apps (direct paste)."),
-                granted: model.postEvents, identifier: "permission-post-events", status: model.postEventsStatus) {
-                model.requestPostEvents()
             }
             Divider()
             row(title: PermissionCopy.text("屏幕录制", "Screen Recording"),
@@ -257,21 +258,13 @@ struct PermissionStatusView: View {
                 granted: model.screenRecording, identifier: "permission-screen-recording", status: model.screenRecordingStatus) {
                 model.requestScreenRecording()
             }
+            Divider()
             HStack {
-                Text(PermissionCopy.text("返回应用后自动更新权限状态。", "Permission status updates automatically when you return."))
-                    .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Button(PermissionCopy.text("刷新状态", "Refresh Status")) { model.refresh() }
                     .accessibilityIdentifier("permission-refresh-status")
             }
-            Text(PermissionCopy.text("未授权也可使用剪贴板历史。", "Clipboard history works without these permissions."))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if model.needsRestart {
-                Text(PermissionCopy.text("权限已开启，请退出并重新打开应用。", "Access is enabled. Quit and reopen this app to apply it."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if showsRemediation {
+            if showsRemediation {
                 staleRequirementCard
             } else if model.hasChecked && !model.statusUnknown
                         && (!model.accessibility || !model.postEvents || !model.screenRecording) {
@@ -335,7 +328,7 @@ struct PermissionStatusView: View {
     }
 
     private func row(title: String, subtitle: String, granted: Bool, identifier: String,
-                     status: String? = nil, action: @escaping () -> Void) -> some View {
+                     status: String? = nil, hint: String? = nil, action: @escaping () -> Void) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 13, weight: .medium))
@@ -348,6 +341,15 @@ struct PermissionStatusView: View {
                         .font(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }.accessibilityIdentifier(identifier + "-status")
+                if let hint {
+                    // One inline warning for the rare build whose UI access is
+                    // granted while event posting is not: still one row, never
+                    // a capability users cannot find in System Settings.
+                    Text(hint)
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier(identifier + "-hint")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button(granted ? PermissionCopy.text("系统设置…", "System Settings…") : PermissionCopy.text("前往授权…", "Allow Access…"), action: action)
