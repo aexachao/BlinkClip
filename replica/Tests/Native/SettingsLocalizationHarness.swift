@@ -39,6 +39,17 @@ struct SettingsLocalizationHarness {
         record("resolver-zh-hans", SettingsLanguage.settingsLanguage(preferredLanguages: ["zh-Hans"]) == .zhHans)
         record("resolver-zh-cn", SettingsLanguage.settingsLanguage(preferredLanguages: ["zh-CN"]) == .zhHans)
         record("resolver-unsupported", SettingsLanguage.settingsLanguage(preferredLanguages: ["fr"]) == .en)
+        // Preferred languages are matched in order: an unsupported one is
+        // skipped rather than forcing English, so the first *supported* entry
+        // decides. This is the order the shipping `AppLanguage.systemDefault`
+        // uses, and it is why the screenshot pane could drop its own copy of the
+        // rule without changing which table a zh-Hant / zh-Hans system gets.
+        record("resolver-fr-then-zh-hans",
+               SettingsLanguage.settingsLanguage(preferredLanguages: ["fr", "zh-Hans"]) == .zhHans)
+        record("resolver-ja-then-zh-hant",
+               SettingsLanguage.settingsLanguage(preferredLanguages: ["ja", "zh-Hant"]) == .zhHant)
+        record("resolver-takes-first-supported",
+               SettingsLanguage.settingsLanguage(preferredLanguages: ["zh-Hans", "zh-Hant"]) == .zhHans)
         record("resolver-stored-hant",
                SettingsLanguage.resolved(preferredLanguages: ["en"], storedAppLanguage: "zh-Hant") == .zhHant)
         record("resolver-stored-zh",
