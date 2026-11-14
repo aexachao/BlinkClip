@@ -172,6 +172,15 @@ struct CloudKitSyncHarness {
         try push(a)
         try check(try a.prepareCloudKit().pending.isEmpty, "六类实体经真实 SDK 编解码后发送队列收敛")
         try check(Set(server.values.map(\.type)) == CloudKitSchema.recordTypes, "原版六类业务实体完整覆盖")
+        let sentItem = server.values.first { $0.type == "ItemEntity" }!
+        let sentData = server.values.first { $0.type == "ItemDataEntity" }!
+        let sentList = server.values.first { $0.type == "ListEntity" }!
+        let sentMetadata = server.values.first { $0.type == "ListMetadataEntity" }!
+        try check(sentItem.fields["data"] == .reference(sentData.id, deleteSelf: false), "内容不反向归附件所有，避免父引用删除环")
+        try check(sentData.fields["item"] == .reference(sentItem.id, deleteSelf: true), "删除内容向下级联附件")
+        try check(sentList.fields["metadata"]?.referencedID != nil && sentMetadata.fields["list"].map {
+            if case .reference(_, let cascade) = $0 { return cascade }; return false
+        } == true, "列表元数据引用向列表级联，列表不归元数据所有")
         _ = try b.cloudKitTransaction(project: true) { try $0.received(Array(server.values), deleted: [], scope: .private); $0.finishedInitialFetch(scope: .private) }
         try check(b.pinboards.contains(where: { $0.id == empty.id }), "远端空分组投影")
         try check(b.pinboards.first(where: { $0.id == board.id })?.colorHex == "#12AB89", "远端分组颜色投影")

@@ -94,6 +94,15 @@ struct UIInteractionHarness {
         state.originalCloudSync.start()
         state.originalCloudSync.setEnabled(true)
         try require(!state.originalCloudSync.isEnabled && !state.originalCloudSync.isBusy)
+        var cloudRequests = 0, driveRequests = 0
+        ICloudSyncGeneralRow.enablePreferredSync(cloudKitAvailable: true,
+            cloudKit: { cloudRequests += 1 }, drive: { driveRequests += 1 })
+        // The CloudKit callback can return without enabling (user cancelled).
+        // In that case the row must not fall through to Drive.
+        try require(cloudRequests == 1 && driveRequests == 0)
+        ICloudSyncGeneralRow.enablePreferredSync(cloudKitAvailable: false,
+            cloudKit: { cloudRequests += 1 }, drive: { driveRequests += 1 })
+        try require(cloudRequests == 1 && driveRequests == 1)
         let cloudRow = NSHostingView(rootView: ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync))
         cloudRow.frame = NSRect(x: 0, y: 0, width: 430, height: 44)
         cloudRow.layoutSubtreeIfNeeded()
