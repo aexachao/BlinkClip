@@ -74,6 +74,11 @@ install_executable blinkclip-mcp "$bundle/Contents/MacOS/blinkclip-mcp"
 codesign --force --sign - "$bundle/Contents/MacOS/blinkclip-mcp"
 cp "$replica_root/Assets/Sparkle-LICENSE.txt" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
 cp "$replica_root/Assets/capcap-LICENSE.txt" "$bundle/Contents/Resources/capcap-LICENSE.txt"
+# 本项目自身的许可以及第三方/自有范围说明随包分发（AGPL-3.0 第 4、5 条要求随对象码提供许可证）。
+cp "$replica_root/../LICENSE" "$bundle/Contents/Resources/LICENSE.txt"
+cp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"
+cmp "$replica_root/../LICENSE" "$bundle/Contents/Resources/LICENSE.txt"
+cmp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"
 cp "$replica_root/Assets/BlinkClipAppIcon.icns" "$bundle/Contents/Resources/BlinkClipAppIcon.icns"
 ditto "$binary_root/BlinkClip_BlinkClipCore.bundle" "$bundle/Contents/Resources/BlinkClip_BlinkClipCore.bundle"
 # Fail closed if a stale build reintroduces extracted artwork or language tables.
@@ -207,6 +212,39 @@ assert not missing and not extra, f"zh-Hant/Localizable.strings key set differs:
 assert (resources / "zh-Hant.lproj" / "InfoPlist.strings").is_file(), "zh-Hant/InfoPlist.strings is missing"
 print(f"zh-Hant localization: {len(hant)} keys, identical to zh-Hans")
 HANT_KEYS
+# Fail closed on any packaged resource that is not declared here. This runs after the
+# last resource copy and before signing, so an undeclared file can never ship and can
+# never invalidate the signature either. The Core bundle is guarded file by file by
+# OWNED_RESOURCES above, so it is treated as one opaque entry below.
+python3 - "$bundle/Contents/Resources" <<'PACKAGED_RESOURCES'
+from pathlib import Path
+import sys
+resources = Path(sys.argv[1])
+declared_files = {
+    "BlinkClipAppIcon.icns",
+    "Sparkle-LICENSE.txt",
+    "capcap-LICENSE.txt",
+    "LICENSE.txt",
+    "NOTICE.txt",
+}
+declared_directories = {"en.lproj", "zh-Hans.lproj", "zh-Hant.lproj"}
+declared_localizations = {"InfoPlist.strings", "Localizable.strings", "Localizable.stringsdict"}
+opaque_directories = {"BlinkClip_BlinkClipCore.bundle"}
+for entry in sorted(resources.iterdir()):
+    if entry.name in opaque_directories:
+        assert entry.is_dir(), f"Unexpected packaged resource: {entry.name}"
+    elif entry.name in declared_directories:
+        assert entry.is_dir(), f"Unexpected packaged resource: {entry.name}"
+        for member in sorted(entry.iterdir()):
+            assert member.is_file() and member.name in declared_localizations, \
+                f"Unexpected packaged resource: {entry.name}/{member.name}"
+    else:
+        assert entry.is_file() and entry.name in declared_files, f"Unexpected packaged resource: {entry.name}"
+for name in sorted(declared_files):
+    assert (resources / name).is_file(), f"Missing packaged resource: {name}"
+for name in sorted(opaque_directories | declared_directories):
+    assert (resources / name).is_dir(), f"Missing packaged resource: {name}"
+PACKAGED_RESOURCES
 plutil -insert SUFeedURL -string 'https://github.com/aexachao/BlinkClip/releases/latest/download/appcast.xml' "$bundle/Contents/Info.plist"
 plutil -insert SUPublicEDKey -string "$(tr -d '\r\n' < "$replica_root/Assets/UpdatePublicKey.txt")" "$bundle/Contents/Info.plist"
 plutil -insert SURequireSignedFeed -bool YES "$bundle/Contents/Info.plist"

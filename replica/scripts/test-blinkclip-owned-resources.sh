@@ -65,6 +65,56 @@ for name in ['BlinkClipDirectPaste@2x.png','BlinkClipCopyToClipboard@2x.png','Bl
  owned.write_bytes(contents)
 
 checks['sparkle-license-retained']='Sparkle-LICENSE.txt' in (r/'scripts/build-app.sh').read_text()
+
+# Project license and third-party/scope notice are packaged next to the vendored notices,
+# and the copy is byte-checked with cmp at build time (fail closed on drift).
+build_text=(r/'scripts/build-app.sh').read_text()
+checks['project-license-packaged']='cp "$replica_root/../LICENSE" "$bundle/Contents/Resources/LICENSE.txt"' in build_text
+checks['project-notice-packaged']='cp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"' in build_text
+checks['packaged-license-compared']=build_text.count('cmp "$replica_root/../LICENSE"')==1 and build_text.count('cmp "$replica_root/../NOTICE.md"')==1
+checks['agpl-license-at-repository-root']=(r.parent/'LICENSE').read_text().startswith('                    GNU AFFERO GENERAL PUBLIC LICENSE')
+checks['notice-describes-agpl']='GNU Affero General Public License v3.0' in (r.parent/'NOTICE.md').read_text()
+
+# Execute the packaged-resources whitelist (fail closed: any undeclared entry fails).
+checks['packaged-resource-guard']="<<'PACKAGED_RESOURCES'" in build_text and 'Unexpected packaged resource:' in build_text
+packaged_guard=build_text.split("<<'PACKAGED_RESOURCES'\n",1)[1].split('\nPACKAGED_RESOURCES',1)[0]
+def packaged_layout(name):
+ fixture=o.parent/'build'/name
+ (fixture/'BlinkClip_BlinkClipCore.bundle').mkdir(parents=True)
+ (fixture/'BlinkClip_BlinkClipCore.bundle'/'Info.plist').write_text('guard fixture')
+ for entry in ['BlinkClipAppIcon.icns','Sparkle-LICENSE.txt','capcap-LICENSE.txt','LICENSE.txt','NOTICE.txt']:
+  (fixture/entry).write_text('guard fixture')
+ for language,members in {'en.lproj':['InfoPlist.strings','Localizable.strings'],
+                          'zh-Hans.lproj':['InfoPlist.strings','Localizable.strings'],
+                          'zh-Hant.lproj':['InfoPlist.strings']}.items():
+  (fixture/language).mkdir()
+  for member in members:
+   (fixture/language/member).write_text('guard fixture')
+ return fixture
+def packaged_guard_result(fixture):
+ return subprocess.run([sys.executable,'-c',packaged_guard,str(fixture)],capture_output=True,text=True)
+packaged=packaged_layout('packaged-resources-fixture')
+accepted=packaged_guard_result(packaged)
+checks['packaging-accepts-declared-resources']=accepted.returncode==0
+for relative,marker in [('Assets.car','Unexpected packaged resource'),
+                        ('fr.lproj/Localizable.strings','Unexpected packaged resource'),
+                        ('zh-Hant.lproj/Assets.car','Unexpected packaged resource')]:
+ stale=packaged/relative
+ stale.parent.mkdir(parents=True,exist_ok=True);stale.write_text('stale')
+ result=packaged_guard_result(packaged)
+ checks['packaging-resources-reject-'+relative]=result.returncode!=0 and marker in result.stderr
+ stale.unlink()
+ for directory in ['fr.lproj']:
+  leftover=packaged/directory
+  if leftover.is_dir() and not any(leftover.iterdir()): leftover.rmdir()
+for name in ['LICENSE.txt','NOTICE.txt','capcap-LICENSE.txt','Sparkle-LICENSE.txt']:
+ contents=(packaged/name).read_bytes();(packaged/name).unlink()
+ result=packaged_guard_result(packaged)
+ checks['packaging-resources-reject-missing-'+name]=result.returncode!=0 and 'Missing packaged resource' in result.stderr
+ (packaged/name).write_bytes(contents)
+shutil.rmtree(packaged/'zh-Hant.lproj')
+result=packaged_guard_result(packaged)
+checks['packaging-resources-reject-missing-language']=result.returncode!=0 and 'Missing packaged resource' in result.stderr
 (o/'source-wiring.json').write_text(json.dumps({'passed':all(checks.values()),'checks':checks},indent=2)+'\n')
 assert all(checks.values()),checks
 print(f'Source wiring: {len(checks)} checks passed')

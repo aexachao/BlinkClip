@@ -1,5 +1,51 @@
 # 更新日志
 
+## 1.0.11 · 2026-11-14（GitHub Releases）
+
+许可、本地化与数据可靠性变更版：本版在 1.0.10 基础上并入核心持久化投影修复、损坏负载降级、繁体中文本地化表，以及许可文本入包、打包白名单与 CI 强推修复；功能行为除此之外无改动。完整差异可用 `git diff --stat v1.0.10..HEAD` 复核。
+
+### 许可
+
+- 许可证自本版起为 [GNU AGPL-3.0](LICENSE)（`package.json` 记 `AGPL-3.0-only`，仓库中没有「or later」授权表述）；第三方组件各自保留原许可：capcap 为 MIT，Sparkle 及其依赖保持原告知。
+- 安装包内附许可文本：仓库根目录的 `LICENSE` 以 `Contents/Resources/LICENSE.txt` 入包，`NOTICE.md` 以 `Contents/Resources/NOTICE.txt` 入包，与既有 `capcap-LICENSE.txt`、`Sparkle-LICENSE.txt` 并列；构建时用 `cmp` 与仓库文件逐字节比对。
+- README、CONTRIBUTING 与官网的许可表述同步为 AGPL-3.0；`NOTICE.md` 增加「许可证」「版权」两段，并移除了此前的反编译/逆向表述（第三方归属与许可文件保持不变）。
+
+### 修复
+
+- 保存成功后，发布的内存条目改为回填与读投影一致的持久化值（`nativeIdentifier`、`nativeChecksum`、分组显示顺序、来源应用关系）：读投影以列与关系表为准，此前内存态停留在未投影值，同一次成功提交后两者就不相等，下一次三方合并会按旧副本把列改写回去，可能丢掉由负载推导出的校验和。
+- 无变更导入（`importArchive` 不产生事务修改）同样执行回填：此前归档中的未投影值会覆盖已发布值。
+- 私有负载容器损坏时降级而不是整体报错：`com.chrisli.blinkclip.internal.items+json` 整个数组解不开时改为条目级恢复，仍可解码的条目保留、无法解码的条目计数并写入诊断；全部解不开时投影负载里剩余的其它表征（例如 `public.html`）。`types+json` 损坏时按负载实际写着的类型投影。此前这类损坏会让该记录此后每次保存都失败，连带无法删除；真正的损坏（存储状态、归档、受管记录）仍然照原样报错。
+- 修复强推（force-push / 改写根提交）后 CI 计划任务整轮变红：`GITHUB_EVENT_BEFORE` 指向的提交在浅克隆中不可达时，`release-plan.py` 原来直接以 `exit 128` 抛 `CalledProcessError`。现在 `before` 缺失、全零或不可达时回退为「与父提交比较」，父提交也取不到则按「版本未变」处理，并在日志打印回退原因；任何回退都不会被当成「有新版本要发布」。
+- 新增 `replica/scripts/test-release-plan.py`：覆盖 `before` 缺失、`before` 不可达（浅克隆 / 根提交 / 可回退到父提交）与正常可达三种输入，并锁定「`workflow_dispatch` + `publish=true` 才发布」的门禁语义。
+- 核心测试补充持久化投影回填与损坏负载降级的回归用例（`swift run --package-path replica blinkclip-core-tests`：29 个用例全部通过）。
+
+### 本地化
+
+- 新增 `zh-Hant.lproj/Localizable.strings`（668 键，由 ICU `Hans-Hant` 逐值转换后再做台湾用语修订，例如剪貼簿、螢幕、檔案），来源与 en / zh-Hans 同目录（`replica/Vendor/capcap/Resources/zh-Hant.lproj`）。
+- `build-app.sh` 用 `ditto` 复制整个 zh-Hant 目录进包，写入繁体 `InfoPlist.strings`（閃貼）与 6 条 App Intents 繁体名，并对 zh-Hant / zh-Hans 的 `Localizable.strings` 键集合做 fail-closed 一致断言（含 App Intents 后两侧均为 674 键）；键集合一旦漂移构建直接失败，避免繁中逐键回落英文。
+- 工具栏与原生测试 harness 改为遍历随包语言（zh-Hans / zh-Hant / en），并断言繁中表不是简中表的副本。
+- 设置页文案仍由 zh-Hans 表提供（见「已知限制」）。
+
+### 打包
+
+- `build-app.sh` 复制 AGPL 许可与 NOTICE 进包，并对 `Contents/Resources` 增加资源白名单断言（fail closed）：出现未列入的资源、缺少必需资源、`*.lproj` 内出现未列入的成员都会让构建失败；断言在签名之前执行，未列入的文件既不会进包也不会破坏签名。
+
+### 已包含在 1.0.10 中的项（本版未改动）
+
+下列各项随 `v1.0.10`（提交 `35751c4`）发布，1.0.11 不再重复修改：工具会话重置（新编辑会话从默认工具开始）、设置页隐私/权限说明精简与权限行合并、工具栏下拉开行 hover、线条工具默认箭头（含 v1 旧值一次性迁移）、箭头在工具下拉菜单首位。
+
+### 已知限制
+
+- CloudKit 跨设备同步未启用：本构建未带 CloudKit entitlements，也没有可用的自有容器，设置里会直接提示「此构建未配置 … CloudKit 容器和开发者签名，暂不能连接 iCloud」。
+- 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
+- Sparkle 更新私钥已轮换，公钥随之更换；用旧公钥构建的版本无法自动升级到本版，只能手动下载安装，之后可走应用内更新。
+- 繁体中文（zh-Hant）：截图、工具栏与 App Intents 的本地化表已随包提供；设置页文案仍由 zh-Hans 表提供（`ScreenshotSettingsCopy` 对任何 zh* 语言只保留一张中文表），繁中下设置页显示的是简体文案。
+- 应用二进制内仍保留 capcap 命名空间的技术标识与 `capcap-LICENSE.txt` 许可证文件名，属技术标识保留，不代表与上游存在关联或背书。
+
+### 兼容性
+
+Bundle ID 仍为 `com.chrisli.blinkclip`，数据目录仍为 `~/Library/Application Support/BlinkClip`，直接覆盖安装即可，不需要迁移数据。
+
 ## 1.0.10 · 2026-11-13（首个公开版，GitHub Releases）
 
 首个公开版本，从 [GitHub Releases](https://github.com/aexachao/BlinkClip/releases) 免费下载，不在 Mac App Store 上架，也不需要 App Store 账号或内购。
