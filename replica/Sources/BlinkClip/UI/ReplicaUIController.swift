@@ -1106,6 +1106,11 @@ final class ReplicaUIController {
         cancelClosedState()
         state.normalizeSelection()
         installPanelDismissMonitors()
+        // V3：每次呼出都把卡片行横向位置归零。令牌在滑入动画结束时结算，
+        // 期间布局/快照回调会重新归零；结算后不再自动归零，避免抢走用户的滚动。
+        let presentationScrollReset = state.collectionOwner?.beginPresentationScrollReset()
+        // 标签条同理：回到"选中标签可见"的初始位置，而不是上次留下的偏移。
+        state.toolbarOwner?.resetScrollPositionForPresentation()
         mainWindowController?.showWindow(nil)
         originalPanelScreen = screen
         content.superview?.clipsToBounds = true
@@ -1117,6 +1122,10 @@ final class ReplicaUIController {
             content.animator().frame = NSRect(origin: .zero, size: content.frame.size)
         }, completion: { [self] in
             MainActor.assumeIsolated {
+                // 先结算（过期令牌不会清掉新一代），再用世代守卫判断是否续接显示状态。
+                if let presentationScrollReset {
+                    self.state.collectionOwner?.settlePresentationScrollReset(presentationScrollReset)
+                }
                 guard generation == self.panelTransitionGeneration else { return }
                 self.isPanelVisible = true
                 if self.state.searchVisible, self.filterBrowserPopover?.isDisplayed != true {

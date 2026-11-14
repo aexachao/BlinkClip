@@ -116,6 +116,13 @@ final class CollectionScrollAnimator {
         start()
     }
 
+    // V3: 面板呼出归位时只取消正在跑的这一条动画；动画机制本身保持可用，
+    // 后续的揭示滚动仍然走 setContentOffset。
+    func cancelPendingAnimation() {
+        animations.removeValue(forKey: "contentOffset")?.completion?(false)
+        if animations.isEmpty { clock?.stop() }
+    }
+
     private func start() {
         guard !animations.isEmpty else { return }
         if clock == nil {

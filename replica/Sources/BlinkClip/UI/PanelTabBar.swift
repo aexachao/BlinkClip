@@ -261,6 +261,21 @@ final class PanelTabBar: NSView {
 
     private func scrollRectIntoView(_ rect: NSRect) { _ = scrollToVisible(rect) }
 
+    /// V3：面板每次呼出，标签条回到初始位置——先归零，再把当前选中的标签滚回可见，
+    /// 而不是沿用上一段会话留下的偏移。`selectList` 的切换行为保持原样。
+    func resetScrollPositionForPresentation() {
+        let clip = scrollView.contentView
+        if clip.bounds.origin.x != 0 {
+            var bounds = clip.bounds
+            bounds.origin.x = 0
+            clip.bounds = bounds
+        }
+        scrollView.reflectScrolledClipView(clip)
+        guard let selected = stack.arrangedSubviews.compactMap({ $0 as? PinboardTabView })
+            .first(where: { $0.isSelected }) else { return }
+        scrollCellIntoView(selected)
+    }
+
     override func scrollToVisible(_ rect: NSRect) -> Bool {
         // 051068 forwards to the underlying scroll view's contentView.
         scrollView.contentView.scrollToVisible(rect)

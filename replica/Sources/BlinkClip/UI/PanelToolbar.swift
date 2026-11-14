@@ -137,6 +137,9 @@ final class PanelToolbarView: NSView {
 
     func stopObservingLists() { tabBar.stopObservingLists() }
 
+    /// V3：面板呼出时重置分组标签条的横向偏移（选中标签保持可见）。
+    func resetScrollPositionForPresentation() { tabBar.resetScrollPositionForPresentation() }
+
     func observeListEditing(_ publisher: AnyPublisher<ClipboardListTarget, Never>) {
         listEditingObservation = publisher.sink { [weak self] target in
             MainActor.assumeIsolated { self?.tabBar.beginEditingList(target) }

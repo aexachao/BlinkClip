@@ -59,6 +59,8 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
     private var recycledCells: [ReplicaNativeCardCell] = []
     private var lastPrimaryID: UUID?
     private var needsPrimaryReveal = false
+    // V3：面板呼出期间的非零令牌。它保持到滑入动画结束，布局/快照回调据此重新归零。
+    private var presentationScrollReset: UInt64?
     private var boundsObserver: NSObjectProtocol?
     private var windowObservers: [NSObjectProtocol] = []
     private var initialDragLocation: NSPoint?
@@ -398,6 +400,8 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
             revealPrimaryCard(at: index)
             tileCells()
         }
+        // V3：呼出窗口内的每次布局都重新归零，这样揭示/快照引起的布局回弹压不掉归位。
+        applyPresentationScrollReset()
     }
 
     // 06bb3c/06be48: keep the requested index across scrolling, then read the applier again.
@@ -451,6 +455,39 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
         guard let index = items.firstIndex(where: { $0.id == itemID }),
               let cell = visibleSelectionAnchor(at: index, itemID: itemID) else { return nil }
         return cell.frame.minX - scrollView.contentView.bounds.minX
+    }
+
+    /// V3：面板每次呼出，卡片行的横向位置回到初始态。
+    ///
+    /// 返回本次呼出的令牌，`settlePresentationScrollReset(_:)` 在滑入动画结束后消费它。
+    /// 令牌存在期间，每次布局（含快照排空里的重新布局）都会把偏移拉回 0，避免
+    /// “布局完成后才回弹”把归零覆盖掉；结算之后不会再自动归零，所以同一会话里
+    /// 用户自己滚动的位置不会被抢走。
+    func beginPresentationScrollReset() -> UInt64 {
+        let token = (presentationScrollReset ?? 0) &+ 1
+        presentationScrollReset = token
+        applyPresentationScrollReset()
+        return token
+    }
+
+    /// 消费本次呼出的令牌：取消呼出窗口内可能还在跑的揭示动画，做最后一次归零，
+    /// 然后关闭归零窗口。只结算自己这一代令牌，过期的 show 完成回调不会清掉新一代。
+    func settlePresentationScrollReset(_ token: UInt64) {
+        guard presentationScrollReset == token else { return }
+        scrollAnimator.cancelPendingAnimation()
+        applyPresentationScrollReset()
+        presentationScrollReset = nil
+    }
+
+    /// f22cce0 的直接置位：不经过动画，保留竖向偏移（本文档只做横向滚动）。
+    private func applyPresentationScrollReset() {
+        guard presentationScrollReset != nil else { return }
+        let clip = scrollView.contentView
+        guard clip.bounds.origin.x != 0 else { return }
+        var bounds = clip.bounds
+        bounds.origin.x = 0
+        clip.bounds = bounds
+        scrollView.reflectScrolledClipView(clip)
     }
 
     /// f22c9c4: intersecting cards report immediately; offscreen cards use the animator result.
