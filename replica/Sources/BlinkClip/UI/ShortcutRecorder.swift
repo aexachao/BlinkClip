@@ -27,12 +27,12 @@ struct ReplicaShortcutRecorder: View {
             shortcut = value.flatMap { BlinkClipCore.KeyboardShortcut(originalValue: $0) }
         }), errorChanged: error, recordingChanged: { recording in
             recordingSession.update(recording, notify: recordingChanged)
-        }, allowsClearing: allowsClearing, emptyLabel: SettingsCopy.bilingual("未设置", "Not Set"))
+        }, allowsClearing: allowsClearing, emptyLabel: SettingsCopy.trilingual("未设置", "未設定", "Not Set"))
         .accessibilityLabel(ScreenshotSettingsCopy.shortcutAccessibilityLabel(for: label))
         .accessibilityValue(shortcut.map {
             ShortcutFunctions.modifierLabel(verbose: true, modifierRawValue: $0.modifierRawValue)
                 + ShortcutFunctions.displayLabel(keyCode: $0.keyCode)
-        } ?? SettingsCopy.bilingual("未设置", "Not Set"))
+        } ?? SettingsCopy.trilingual("未设置", "未設定", "Not Set"))
         .onDisappear { recordingSession.update(false, notify: recordingChanged) }
     }
 }

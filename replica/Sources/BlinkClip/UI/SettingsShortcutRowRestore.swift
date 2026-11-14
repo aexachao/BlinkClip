@@ -55,7 +55,7 @@ enum SettingsShortcutRow: String, CaseIterable {
         }
     }
     static func conflictMessage(_ owner: Self) -> String {
-        SettingsCopy.bilingual("默认快捷键已被“\(owner.title)”占用。请先修改该行，再重试恢复。", "The default shortcut is used by “\(owner.title)”. Change that row, then restore again.")
+        SettingsCopy.trilingual("默认快捷键已被“\(owner.title)”占用。请先修改该行，再重试恢复。", "預設快捷鍵已被「\(owner.title)」占用。請先修改該列，再重試復原。", "The default shortcut is used by “\(owner.title)”. Change that row, then restore again.")
     }
     struct Conflict: LocalizedError {
         let owner: SettingsShortcutRow

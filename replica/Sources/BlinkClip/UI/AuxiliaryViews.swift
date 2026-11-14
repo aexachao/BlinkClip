@@ -503,7 +503,10 @@ struct ReplicaSettingsView: View {
                     ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync)
                         .frame(minHeight: 30)
                     Divider()
-                    settingsSwitch(String(localized: SettingsLocalization.settingsSoundEffectsTitle()), isOn: preference(\.playSounds))
+                    // Same trilingual table as the rest of this pane: the Core
+                    // bundle has no zh-Hant table, so String(localized:) would
+                    // fall back to English for a Traditional reader.
+                    settingsSwitch(SettingsCopy.text("settings.sound-effects.title"), isOn: preference(\.playSounds))
                 }
             }
             .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
@@ -815,11 +818,11 @@ struct ReplicaSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    settingsSectionTitle(PermissionCopy.text("系统权限", "System Permissions"))
+                    settingsSectionTitle(PermissionCopy.text("系统权限", "系統權限", "System Permissions"))
                     settingsCard { PermissionStatusView(model: permissionModel) }
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    settingsSectionTitle(SettingsCopy.bilingual("显示与预览", "Display and Previews"))
+                    settingsSectionTitle(SettingsCopy.trilingual("显示与预览", "顯示與預覽", "Display and Previews"))
                     settingsCard {
                     settingsToggle("settings.privacy.screensharing.title", subtitle: "settings.privacy.screensharing.subtitle", isOn: preference(\.showDuringScreenSharing))
                     Divider()
@@ -827,7 +830,7 @@ struct ReplicaSettingsView: View {
                 }
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    settingsSectionTitle(SettingsCopy.bilingual("内容过滤", "Content Filters"))
+                    settingsSectionTitle(SettingsCopy.trilingual("内容过滤", "內容過濾", "Content Filters"))
                     settingsCard {
                     settingsToggle("settings.privacy.confidential-content.title", subtitle: "settings.privacy.confidential-content.subtitle", isOn: preference(\.ignoreConcealedContent))
                     Divider()
@@ -858,10 +861,10 @@ struct ReplicaSettingsView: View {
                         Divider()
                         HStack(spacing: 0) {
                             Button(action: chooseExcludedApp) { Image(systemName: "plus").frame(width: 20, height: 24) }
-                                .accessibilityLabel(SettingsCopy.bilingual("添加应用", "Add App"))
+                                .accessibilityLabel(SettingsCopy.trilingual("添加应用", "加入應用程式", "Add App"))
                             Divider().frame(height: 16)
                             Button(action: removeExcludedApps) { Image(systemName: "minus").frame(width: 20, height: 24) }
-                                .disabled(selectedExclusions.isEmpty).accessibilityLabel(SettingsCopy.bilingual("移除应用", "Remove App"))
+                                .disabled(selectedExclusions.isEmpty).accessibilityLabel(SettingsCopy.trilingual("移除应用", "移除應用程式", "Remove App"))
                             Spacer()
                         }.buttonStyle(.borderless)
                     }
@@ -945,7 +948,7 @@ struct ReplicaSettingsView: View {
         let path = row.modifierPath!
         let value = state.store.preferences[keyPath: path]
         let symbols = ShortcutFunctions.modifierLabel(verbose: false, modifierRawValue: value)
-        let selected = value == 0 ? SettingsCopy.bilingual("未设置", "Not Set") : symbols
+        let selected = value == 0 ? SettingsCopy.trilingual("未设置", "未設定", "Not Set") : symbols
         return Menu {
             Picker(row.title, selection: preference(path)) {
                 if row == .quickPaste {
@@ -955,7 +958,7 @@ struct ReplicaSettingsView: View {
                 }
                 Text("⌥ Option").tag(NSEvent.ModifierFlags.option.rawValue)
                 Text("⌃ Control").tag(NSEvent.ModifierFlags.control.rawValue)
-                Text(SettingsCopy.bilingual("未设置", "Not Set")).tag(UInt(0))
+                Text(SettingsCopy.trilingual("未设置", "未設定", "Not Set")).tag(UInt(0))
             }.labelsHidden().pickerStyle(.inline)
         } label: {
             Text(selected + (row == .quickPaste ? " + 1...9" : ""))
@@ -1018,7 +1021,7 @@ struct ReplicaSettingsView: View {
 
     @ViewBuilder private func restoreShortcutButton(_ row: SettingsShortcutRow) -> some View {
         if row.isModified(state.store.preferences, screenshots: rowScreenshotValue) {
-            Button(SettingsCopy.bilingual("恢复默认", "Restore Default")) { restoreShortcut(row) }
+            Button(SettingsCopy.trilingual("恢复默认", "復原預設", "Restore Default")) { restoreShortcut(row) }
                 .buttonStyle(.link).fixedSize()
                 .accessibilityIdentifier("settings.shortcut.restore." + row.rawValue)
         }
@@ -1093,10 +1096,10 @@ struct ReplicaSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 settingsCard {
-                    Label(FileManager.default.isExecutableFile(atPath: mcpExecutable.path) ? SettingsCopy.bilingual("本机服务可用", "Local service available") : SettingsCopy.bilingual("未找到本机服务", "Local service not found"),
+                    Label(FileManager.default.isExecutableFile(atPath: mcpExecutable.path) ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available") : SettingsCopy.trilingual("未找到本机服务", "找不到本機服務", "Local service not found"),
                           systemImage: FileManager.default.isExecutableFile(atPath: mcpExecutable.path) ? "checkmark.circle" : "exclamationmark.circle")
                         .padding(.bottom, 4)
-                    Text(SettingsCopy.bilingual("允许支持 MCP 的 AI 工具搜索、读取和整理历史记录。", "Let an MCP-compatible AI tool search, read, and organize your history."))
+                    Text(SettingsCopy.trilingual("允许支持 MCP 的 AI 工具搜索、读取和整理历史记录。", "允許支援 MCP 的 AI 工具搜尋、讀取和整理歷史記錄。", "Let an MCP-compatible AI tool search, read, and organize your history."))
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1111,8 +1114,8 @@ struct ReplicaSettingsView: View {
         }
         .sheet(isPresented: $showingMCPConfiguration) {
             VStack(alignment: .leading, spacing: 16) {
-                Text(SettingsCopy.bilingual("连接 AI 工具", "Connect an AI Tool")).font(.headline)
-                Text(SettingsCopy.bilingual("复制下方 MCP 配置并添加到客户端。客户端会在本机启动闪贴服务。", "Copy the MCP configuration below and add it to your client. The client starts the BlinkClip service on this Mac."))
+                Text(SettingsCopy.trilingual("连接 AI 工具", "連線 AI 工具", "Connect an AI Tool")).font(.headline)
+                Text(SettingsCopy.trilingual("复制下方 MCP 配置并添加到客户端。客户端会在本机启动闪贴服务。", "複製下方 MCP 設定並加入到用戶端。用戶端會在本機啟動閃貼服務。", "Copy the MCP configuration below and add it to your client. The client starts the BlinkClip service on this Mac."))
                     .font(.callout).foregroundStyle(.secondary)
                 ScrollView {
                     Text(mcpConfiguration).font(.system(size: 11, design: .monospaced))
@@ -1125,7 +1128,7 @@ struct ReplicaSettingsView: View {
                         let pasteboard = state.controller?.pasteboard ?? .general
                         pasteboard.clearContents()
                         if !pasteboard.setString(mcpConfiguration, forType: .string) {
-                            state.controller?.showError(message: SettingsCopy.bilingual("无法复制配置，请重试。", "Could not copy the configuration. Try again."))
+                            state.controller?.showError(message: SettingsCopy.trilingual("无法复制配置，请重试。", "無法複製設定，請重試。", "Could not copy the configuration. Try again."))
                         }
                     }
                     Spacer()
@@ -1150,7 +1153,7 @@ struct ReplicaSettingsView: View {
 
     private func chooseExcludedApp() {
         let panel = NSOpenPanel()
-        panel.title = SettingsCopy.bilingual("选择不记录的应用", "Choose Apps to Exclude")
+        panel.title = SettingsCopy.trilingual("选择不记录的应用", "選擇不記錄的應用程式", "Choose Apps to Exclude")
         panel.allowedContentTypes = [.application]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowsMultipleSelection = true

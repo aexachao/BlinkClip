@@ -6,9 +6,12 @@ import os
 import BlinkClipCore
 import SwiftUI
 
+/// Permission-page copy. All three languages are supplied at every call site and
+/// resolved by the one shared `SettingsStrings` lookup, so `zh-Hant` never lands
+/// on the Simplified string.
 enum PermissionCopy {
-    static func text(_ chinese: String, _ english: String) -> String {
-        Locale.preferredLanguages.first?.hasPrefix("zh") == true ? chinese : english
+    static func text(_ zhHans: String, _ zhHant: String, _ en: String) -> String {
+        SettingsStrings.trilingual(zhHans, zhHant, en)
     }
 }
 
@@ -89,11 +92,11 @@ final class PermissionStatusModel: ObservableObject {
     /// a second permission and pushed users into System Settings looking for
     /// an entry that does not exist.
     var accessibilityStatus: String {
-        if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
-        if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
+        if checkFailed { return PermissionCopy.text("检查失败，请重试", "檢查失敗，請重試", "Check failed; try again") }
+        if !hasChecked { return PermissionCopy.text("正在检查…", "正在檢查…", "Checking…") }
         return accessibility
-            ? PermissionCopy.text("已授权", "Granted")
-            : PermissionCopy.text("未授权", "Not granted")
+            ? PermissionCopy.text("已授权", "已授權", "Granted")
+            : PermissionCopy.text("未授权", "未授權", "Not granted")
     }
     /// Event posting is answered from the same Accessibility grant, so it is
     /// reported inside the Accessibility row. The probe still reads it: a
@@ -101,15 +104,15 @@ final class PermissionStatusModel: ObservableObject {
     /// warning instead of a second row users cannot find in System Settings.
     var postEventsHint: String? {
         guard hasChecked, !checkFailed, accessibility, !postEvents else { return nil }
-        return PermissionCopy.text("发送事件权限未就绪，请重新勾选辅助功能。",
+        return PermissionCopy.text("发送事件权限未就绪，请重新勾选辅助功能。", "傳送事件權限尚未就緒，請重新勾選輔助功能。",
                                    "Sending events is not ready; re-tick Accessibility.")
     }
     var screenRecordingStatus: String {
-        if checkFailed { return PermissionCopy.text("检查失败，请重试", "Check failed; try again") }
-        if !hasChecked { return PermissionCopy.text("正在检查…", "Checking…") }
+        if checkFailed { return PermissionCopy.text("检查失败，请重试", "檢查失敗，請重試", "Check failed; try again") }
+        if !hasChecked { return PermissionCopy.text("正在检查…", "正在檢查…", "Checking…") }
         return screenRecording
-            ? PermissionCopy.text("已授权", "Granted")
-            : PermissionCopy.text("未授权", "Not granted")
+            ? PermissionCopy.text("已授权", "已授權", "Granted")
+            : PermissionCopy.text("未授权", "未授權", "Not granted")
     }
 
     func refresh() {
@@ -246,29 +249,29 @@ struct PermissionStatusView: View {
             // grant — `CGPreflightPostEventAccess()` reports the same source —
             // so it stays inside this row instead of a second row that sends
             // users looking for a permission System Settings never lists.
-            row(title: PermissionCopy.text("辅助功能", "Accessibility"),
-                subtitle: PermissionCopy.text("读取其他应用的界面（滚动截图、读取内容），并向其他应用发送键盘事件（直接粘贴）。", "Read other apps' interface (scrolling capture, reading content) and send keyboard events to other apps (direct paste)."),
+            row(title: PermissionCopy.text("辅助功能", "輔助功能", "Accessibility"),
+                subtitle: PermissionCopy.text("读取其他应用的界面（滚动截图、读取内容），并向其他应用发送键盘事件（直接粘贴）。", "讀取其他應用程式的介面（捲動截圖、讀取內容），並向其他應用程式傳送鍵盤事件（直接貼上）。", "Read other apps' interface (scrolling capture, reading content) and send keyboard events to other apps (direct paste)."),
                 granted: model.accessibilityReady, identifier: "permission-accessibility",
                 status: model.accessibilityStatus, hint: model.postEventsHint) {
                 model.requestAccessibility()
             }
             Divider()
-            row(title: PermissionCopy.text("屏幕录制", "Screen Recording"),
-                subtitle: PermissionCopy.text("截取区域、窗口或整个屏幕。", "Capture a region, window, or full screen."),
+            row(title: PermissionCopy.text("屏幕录制", "螢幕錄製", "Screen Recording"),
+                subtitle: PermissionCopy.text("截取区域、窗口或整个屏幕。", "擷取區域、視窗或整個螢幕。", "Capture a region, window, or full screen."),
                 granted: model.screenRecording, identifier: "permission-screen-recording", status: model.screenRecordingStatus) {
                 model.requestScreenRecording()
             }
             Divider()
             HStack {
                 Spacer(minLength: 8)
-                Button(PermissionCopy.text("刷新状态", "Refresh Status")) { model.refresh() }
+                Button(PermissionCopy.text("刷新状态", "重新整理狀態", "Refresh Status")) { model.refresh() }
                     .accessibilityIdentifier("permission-refresh-status")
             }
             if showsRemediation {
                 staleRequirementCard
             } else if model.hasChecked && !model.statusUnknown
                         && (!model.accessibility || !model.postEvents || !model.screenRecording) {
-                DisclosureGroup(PermissionCopy.text("授权后仍不可用？", "Still unavailable after allowing access?")) {
+                DisclosureGroup(PermissionCopy.text("授权后仍不可用？", "授權後仍無法使用？", "Still unavailable after allowing access?")) {
                     Text(remediationSteps)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -293,7 +296,7 @@ struct PermissionStatusView: View {
     }
 
     private var remediationSteps: String {
-        PermissionCopy.text("若系统设置里已勾选闪贴但仍显示未生效，列表里那条授权很可能属于旧版本：先在该列表中用“−”移除闪贴，再用“+”添加 \(Bundle.main.bundlePath)，然后勾选新增的条目。退出并重新打开应用后仍不生效时按同样步骤处理。", "If BlinkClip is already ticked in System Settings but this page still shows it inactive, that entry most likely belongs to an older build: remove it with “−”, add \(Bundle.main.bundlePath) again with “+”, then tick the new entry. Do the same if quitting and reopening the app does not help.")
+        PermissionCopy.text("若系统设置里已勾选闪贴但仍显示未生效，列表里那条授权很可能属于旧版本：先在该列表中用“−”移除闪贴，再用“+”添加 \(Bundle.main.bundlePath)，然后勾选新增的条目。退出并重新打开应用后仍不生效时按同样步骤处理。", "若系統設定裡已勾選閃貼但仍顯示未生效，列表裡那條授權很可能屬於舊版本：先在該列表中用「−」移除閃貼，再用「+」加入 \(Bundle.main.bundlePath)，然後勾選新增的項目。結束並重新開啟應用程式後仍不生效時，請依相同步驟處理。", "If BlinkClip is already ticked in System Settings but this page still shows it inactive, that entry most likely belongs to an older build: remove it with “−”, add \(Bundle.main.bundlePath) again with “+”, then tick the new entry. Do the same if quitting and reopening the app does not help.")
     }
 
     /// Shown when the app can prove the grant on record was issued to a different
@@ -302,20 +305,20 @@ struct PermissionStatusView: View {
     private var staleRequirementCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(model.requirementMismatch
-                 ? PermissionCopy.text("系统设置里已勾选，但当前版本仍被拒绝", "Ticked in System Settings, still refused")
-                 : PermissionCopy.text("授权后仍不可用？", "Still unavailable after allowing access?"))
+                 ? PermissionCopy.text("系统设置里已勾选，但当前版本仍被拒绝", "系統設定裡已勾選，但目前版本仍被拒絕", "Ticked in System Settings, still refused")
+                 : PermissionCopy.text("授权后仍不可用？", "授權後仍無法使用？", "Still unavailable after allowing access?"))
                 .font(.system(size: 12, weight: .semibold))
             Text(model.requirementMismatch
-                 ? PermissionCopy.text("系统里那条授权属于旧版本（旧签名），当前版本对不上。请按顺序操作：1）在“辅助功能”列表中选中闪贴，点“−”移除；2）点“+”重新添加 \(Bundle.main.bundlePath)；3）勾选新增的条目。完成一次后，之后用同一 Developer ID 身份更新不再需要重做。", "That grant belongs to an older build (a different signature) and cannot match this one. In order: 1) select BlinkClip in the Accessibility list and remove it with “−”; 2) add \(Bundle.main.bundlePath) again with “+”; 3) tick the new entry. After doing this once, updates signed with the same Developer ID identity keep the grant.")
+                 ? PermissionCopy.text("系统里那条授权属于旧版本（旧签名），当前版本对不上。请按顺序操作：1）在“辅助功能”列表中选中闪贴，点“−”移除；2）点“+”重新添加 \(Bundle.main.bundlePath)；3）勾选新增的条目。完成一次后，之后用同一 Developer ID 身份更新不再需要重做。", "系統裡那條授權屬於舊版本（舊簽章），與目前版本不符。請依序操作：1）在「輔助功能」列表中選取閃貼，按「−」移除；2）按「+」重新加入 \(Bundle.main.bundlePath)；3）勾選新增的項目。完成一次後，之後用同一 Developer ID 身分更新就不需要重做。", "That grant belongs to an older build (a different signature) and cannot match this one. In order: 1) select BlinkClip in the Accessibility list and remove it with “−”; 2) add \(Bundle.main.bundlePath) again with “+”; 3) tick the new entry. After doing this once, updates signed with the same Developer ID identity keep the grant.")
                  : remediationSteps)
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                Button(PermissionCopy.text("打开辅助功能设置…", "Open Accessibility Settings…")) {
+                Button(PermissionCopy.text("打开辅助功能设置…", "開啟輔助功能設定…", "Open Accessibility Settings…")) {
                     model.requestAccessibility()
                 }
                 .accessibilityIdentifier("permission-requirement-mismatch-settings")
-                Button(PermissionCopy.text("在访达中显示应用", "Show App in Finder")) {
+                Button(PermissionCopy.text("在访达中显示应用", "在 Finder 中顯示應用程式", "Show App in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
                 }
                 .accessibilityIdentifier("permission-requirement-mismatch-reveal")
@@ -337,7 +340,7 @@ struct PermissionStatusView: View {
                 HStack(spacing: 5) {
                     Circle().fill(model.statusUnknown ? Color.gray : (granted ? Color.green : Color.red)).frame(width: 7, height: 7)
                         .accessibilityHidden(true)
-                    Text(status ?? (granted ? PermissionCopy.text("已授权", "Granted") : PermissionCopy.text("未授权", "Not granted")))
+                    Text(status ?? (granted ? PermissionCopy.text("已授权", "已授權", "Granted") : PermissionCopy.text("未授权", "未授權", "Not granted")))
                         .font(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }.accessibilityIdentifier(identifier + "-status")
@@ -352,7 +355,7 @@ struct PermissionStatusView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button(granted ? PermissionCopy.text("系统设置…", "System Settings…") : PermissionCopy.text("前往授权…", "Allow Access…"), action: action)
+            Button(granted ? PermissionCopy.text("系统设置…", "系統設定…", "System Settings…") : PermissionCopy.text("前往授权…", "前往授權…", "Allow Access…"), action: action)
                 .accessibilityIdentifier(identifier + "-request")
         }
     }
@@ -406,7 +409,7 @@ final class PermissionGuideWindowController: NSWindowController, NSWindowDelegat
         self.directory = directory
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 450),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = PermissionCopy.text("欢迎使用闪贴", "Welcome to BlinkClip")
+        window.title = PermissionCopy.text("欢迎使用闪贴", "歡迎使用閃貼", "Welcome to BlinkClip")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -439,9 +442,9 @@ struct PermissionGuideContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(PermissionCopy.text("准备好常用功能", "Set up your everyday tools"))
+                Text(PermissionCopy.text("准备好常用功能", "準備好常用功能", "Set up your everyday tools"))
                     .font(.title2.bold())
-                Text(PermissionCopy.text("按需开启权限，随时可在设置中查看和修改。", "Enable the features you need. Review permissions anytime in Settings."))
+                Text(PermissionCopy.text("按需开启权限，随时可在设置中查看和修改。", "依需求開啟權限，隨時可在設定中檢視和修改。", "Enable the features you need. Review permissions anytime in Settings."))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -452,7 +455,7 @@ struct PermissionGuideContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack {
                 Spacer()
-                Button(PermissionCopy.text("继续使用", "Continue"), action: complete)
+                Button(PermissionCopy.text("继续使用", "繼續使用", "Continue"), action: complete)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("permission-guide-continue")
             }

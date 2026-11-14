@@ -74,7 +74,7 @@ final class HistoryCapacityControl: NSView {
         errorLabel.isHidden = true
         errorLabel.setAccessibilityIdentifier("history-retention-error")
         setAccessibilityRole(.group)
-        setAccessibilityLabel(HistoryRetentionCopy.text("历史记录保留时间", "History retention"))
+        setAccessibilityLabel(HistoryRetentionCopy.text("历史记录保留时间", "歷史記錄保留時間", "History retention"))
         updateSelection()
     }
     required init?(coder: NSCoder) { nil }
@@ -119,11 +119,11 @@ final class HistoryCapacityControl: NSView {
             if button.isEnabled != !isAwaitingConfirmation { button.isEnabled = !isAwaitingConfirmation; button.needsDisplay = true }
         }
         legacyLabel.isHidden = !hasLegacyPeriod
-        let legacyText = HistoryRetentionCopy.text("当前：\(currentDays) 天（原设置）", "Current: \(currentDays) days (existing setting)")
+        let legacyText = HistoryRetentionCopy.text("当前：\(currentDays) 天（原设置）", "目前：\(currentDays) 天（原設定）", "Current: \(currentDays) days (existing setting)")
         if legacyLabel.stringValue != legacyText { legacyLabel.stringValue = legacyText }
         let explanationText = currentDays > 0
-            ? HistoryRetentionCopy.text("按记录进入历史的时间计算；只清理过期且未加入分组的内容。", "Retention starts when an item enters history. Only expired items outside groups are removed.")
-            : HistoryRetentionCopy.text("不按时间自动清理历史记录，仍可手动删除。", "History is not removed based on age. You can still delete it manually.")
+            ? HistoryRetentionCopy.text("按记录进入历史的时间计算；只清理过期且未加入分组的内容。", "依記錄進入歷史的時間計算；只清除過期且未加入分組的內容。", "Retention starts when an item enters history. Only expired items outside groups are removed.")
+            : HistoryRetentionCopy.text("不按时间自动清理历史记录，仍可手动删除。", "不依時間自動清除歷史記錄，仍可手動刪除。", "History is not removed based on age. You can still delete it manually.")
         if explanation.stringValue != explanationText { explanation.stringValue = explanationText }
         updateMeasuredHeight()
     }
@@ -143,7 +143,7 @@ final class HistoryCapacityControl: NSView {
                 guard let self else { return }
                 self.isAwaitingConfirmation = false
                 guard ticket == self.generation, previous == self.currentDays else {
-                    self.showError(HistoryRetentionCopy.text("保留时间已在其他位置更改，请重新选择。", "Retention changed elsewhere. Choose the period again."))
+                    self.showError(HistoryRetentionCopy.text("保留时间已在其他位置更改，请重新选择。", "保留時間已在其他位置變更，請重新選擇。", "Retention changed elsewhere. Choose the period again."))
                     self.updateSelection()
                     return
                 }
@@ -161,7 +161,7 @@ final class HistoryCapacityControl: NSView {
             generation += 1
             showError("")
         } catch {
-            showError(HistoryRetentionCopy.text("未能保存：", "Could not save: ") + error.localizedDescription)
+            showError(HistoryRetentionCopy.text("未能保存：", "未能儲存：", "Could not save: ") + error.localizedDescription)
         }
         updateSelection()
     }
@@ -176,11 +176,11 @@ final class HistoryCapacityControl: NSView {
         guard let parent = window, parent.attachedSheet == nil else { completion(false); return }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = HistoryRetentionCopy.text("缩短历史保留时间？", "Shorten history retention?")
+        alert.messageText = HistoryRetentionCopy.text("缩短历史保留时间？", "縮短歷史保留時間？", "Shorten history retention?")
         alert.informativeText = HistoryRetentionCopy.shorteningWarning(days)
         // Cancel is the safe default. AppKit supplies the icon, sizing and button layout.
-        alert.addButton(withTitle: HistoryRetentionCopy.text("取消", "Cancel"))
-        alert.addButton(withTitle: HistoryRetentionCopy.text("缩短并清理", "Shorten and Remove"))
+        alert.addButton(withTitle: HistoryRetentionCopy.text("取消", "取消", "Cancel"))
+        alert.addButton(withTitle: HistoryRetentionCopy.text("缩短并清理", "縮短並清除", "Shorten and Remove"))
         activeAlert = alert
         parentCloseObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: parent, queue: .main) { [weak self, weak parent] _ in
             MainActor.assumeIsolated {
@@ -267,6 +267,6 @@ final class HistoryRetentionOptionButton: NSButton {
 
 private enum HistoryRetentionSaveError: LocalizedError {
     case unavailable
-    var errorDescription: String? { HistoryRetentionCopy.text("保存暂不可用，请重试。", "Saving is unavailable. Try again.") }
+    var errorDescription: String? { HistoryRetentionCopy.text("保存暂不可用，请重试。", "儲存暫時無法使用，請重試。", "Saving is unavailable. Try again.") }
 }
 
