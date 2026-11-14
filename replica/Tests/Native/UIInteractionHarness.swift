@@ -33,6 +33,35 @@ struct UIInteractionHarness {
         }
         return item
     }
+    /// 首帧时序等待：原生卡片集合在面板 hosting view 建好后，才通过
+    /// `ReplicaNativeCollectionHost.scheduleSnapshotDrain` 在主队列下一轮排空首个快照，
+    /// 并在首次布局的 `viewDidMoveToWindow` 里取得 panel 第一响应者。若在该同步栈里
+    /// 立刻注入 ⌘A，`appliedItems`/焦点都还未就绪，按键会被丢弃。这里显式等待
+    /// “快照已排空 + 集合已持有焦点”，超时给出可解释的失败原因（而不是无限等待）。
+    @MainActor static func waitForCollectionReady(_ ui: ReplicaUIController, _ state: ReplicaUIState,
+                                                   expectedItemCount: Int) async throws {
+        // 先加载面板（创建 hosting view），再在等待循环里有界地驱动首次布局；
+        // 隐藏面板不会自动触发 SwiftUI 的子视图布局，这里只推进首帧，不改变可见性。
+        let panel = ui.panel
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            panel.contentView?.layoutSubtreeIfNeeded()
+            if let owner = state.collectionOwner,
+               let replicaPanel = panel as? ReplicaPanel,
+               replicaPanel.firstResponder === owner,
+               owner.appliedItems(for: state)?.map(\.id) == state.visibleItems.map(\.id),
+               state.visibleItems.count == expectedItemCount {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let owner = state.collectionOwner
+        let applied = owner?.appliedItems(for: state)?.count
+        let focused = (panel as? ReplicaPanel).map { $0.firstResponder === owner } ?? false
+        throw Failure(description: "Collection not ready within 3s: owner=\(owner != nil), "
+            + "applied=\(String(describing: applied)), visible=\(state.visibleItems.count), "
+            + "expected=\(expectedItemCount), focused=\(focused)")
+    }
     @MainActor static func run() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -69,6 +98,7 @@ struct UIInteractionHarness {
             ui.panel.sendEvent(event)
         }
         state.normalizeSelection()
+        try await waitForCollectionReady(ui, state, expectedItemCount: 2)
         key(0, "a", .command)
         try require(state.selection == Set([first, second]))
         key(8, "c", .command)

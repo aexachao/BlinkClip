@@ -1509,11 +1509,15 @@ final class ReplicaUIController {
     }
 
     func copySelection(plainTextOnly: Bool) {
-        let items = appliedRestoreItems()
+        // 面板 ⌘C / 右键“拷贝”与单卡片“复制”（`copy(item:)`）共用同一写入器：
+        // 表示形式按条目的 kind + payloads 解析，纯文本条目即使没有原生 representation
+        // 也会回退到 `plainText`。这样多选复制才会生成一个聚合条目（文本按显示顺序以
+        // 换行拼接、非纯文本模式附带 RTF），而不是给每条选择各写一个空的原生条目。
+        let items = appliedSelectionItems()
         guard !items.isEmpty else { NSSound.beep(); return }
         performCopy {
-            try store.writeToPasteboard(restoreItems: items, pasteboard: pasteboard,
-                                        options: plainTextOnly ? .plainText : [])
+            try store.writeToPasteboard(selectedItems: items, pasteboard: pasteboard,
+                                        plainTextOnly: plainTextOnly)
         }
     }
 
