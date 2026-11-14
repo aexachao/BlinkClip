@@ -133,20 +133,27 @@ struct ICloudSyncGeneralRow: View {
     @ObservedObject var drive: ICloudDriveSyncController
 
     private var enabled: Bool { drive.isEnabled || sync.isEnabled }
+    /// 状态改成「上次同步 20:17」，放在行标题下方的说明位：标题只写对象，
+    /// 时间属于状态，不再和开关挤在同一行抢宽度。
     private var summary: String {
         if drive.isBusy || sync.isBusy { return SettingsCopy.trilingual("正在同步…", "正在同步…", "Syncing…") }
         guard enabled else { return drive.statusText.hasPrefix("无法开启") ? SettingsCopy.trilingual("无法开启", "無法開啟", "Could Not Enable") : SettingsCopy.trilingual("未开启", "未開啟", "Off") }
         if let date = drive.isEnabled ? drive.lastSyncDate : sync.lastSyncDate {
-            return (drive.isEnabled ? SettingsCopy.trilingual("本地合并 ", "本地合併 ", "Merged Locally ") : SettingsCopy.trilingual("最近更新 ", "最近更新 ", "Last Updated ")) + date.formatted(date: .omitted, time: .shortened)
+            return (drive.isEnabled ? SettingsCopy.trilingual("上次同步 ", "上次同步 ", "Last Synced ") : SettingsCopy.trilingual("最近更新 ", "最近更新 ", "Last Updated ")) + date.formatted(date: .omitted, time: .shortened)
         }
         return SettingsCopy.trilingual("等待同步", "等待同步", "Waiting to Sync")
     }
 
     var body: some View {
         HStack {
-            Text(SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"))
-            Spacer()
-            Text(summary).font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"))
+                    .accessibilityIdentifier("settings.icloud.title")
+                Text(summary).font(.caption).settingsSecondaryText()
+                    .accessibilityIdentifier("settings.icloud.summary")
+            }
+            // 开关独占行右端，与文字至少隔 12pt。
+            Spacer(minLength: 12)
             Toggle(SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"), isOn: Binding(get: { enabled }, set: { value in
                 if value { drive.setEnabled(true) }
                 else {
@@ -155,7 +162,9 @@ struct ICloudSyncGeneralRow: View {
                 }
             })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
                 .disabled(!drive.canSync && !sync.canSync)
+                .accessibilityIdentifier("settings.icloud.toggle")
         }
+        .frame(minHeight: 42)
         .help(drive.isEnabled || !sync.isEnabled ? drive.statusText : sync.statusText)
     }
 }

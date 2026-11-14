@@ -234,6 +234,33 @@ final class PermissionStatusModel: ObservableObject {
     }
 }
 
+/// 「正常 / 不正常 / 未知」的唯一图标语言：7pt 实心圆点。
+///
+/// 隐私页的权限状态与 AI 页的本机服务状态都表示「能力是否正常」，共用这一个
+/// 圆点，不再一处绿点、一处灰勾（同义不同图标）。颜色按语义分：正常绿、
+/// 异常红、检查中灰；圆点永远挨着文字，颜色不是唯一信息。
+struct SettingsStatusDot: View {
+    enum Level { case normal, problem, unknown }
+
+    static let side: CGFloat = 7
+    static let textSpacing: CGFloat = 5
+
+    let level: Level
+
+    private var color: Color {
+        switch level {
+        case .normal: return .green
+        case .problem: return .red
+        case .unknown: return .gray
+        }
+    }
+
+    var body: some View {
+        Circle().fill(color).frame(width: Self.side, height: Self.side)
+            .accessibilityHidden(true)
+    }
+}
+
 @MainActor
 struct PermissionStatusView: View {
     @StateObject private var model: PermissionStatusModel
@@ -273,7 +300,7 @@ struct PermissionStatusView: View {
                         && (!model.accessibility || !model.postEvents || !model.screenRecording) {
                 DisclosureGroup(PermissionCopy.text("授权后仍不可用？", "授權後仍無法使用？", "Still unavailable after allowing access?")) {
                     Text(remediationSteps)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).settingsSecondaryText()
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -311,7 +338,7 @@ struct PermissionStatusView: View {
             Text(model.requirementMismatch
                  ? PermissionCopy.text("系统里那条授权属于旧版本（旧签名），当前版本对不上。请按顺序操作：1）在“辅助功能”列表中选中闪贴，点“−”移除；2）点“+”重新添加 \(Bundle.main.bundlePath)；3）勾选新增的条目。完成一次后，之后用同一 Developer ID 身份更新不再需要重做。", "系統裡那條授權屬於舊版本（舊簽章），與目前版本不符。請依序操作：1）在「輔助功能」列表中選取閃貼，按「−」移除；2）按「+」重新加入 \(Bundle.main.bundlePath)；3）勾選新增的項目。完成一次後，之後用同一 Developer ID 身分更新就不需要重做。", "That grant belongs to an older build (a different signature) and cannot match this one. In order: 1) select BlinkClip in the Accessibility list and remove it with “−”; 2) add \(Bundle.main.bundlePath) again with “+”; 3) tick the new entry. After doing this once, updates signed with the same Developer ID identity keep the grant.")
                  : remediationSteps)
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).settingsSecondaryText()
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button(PermissionCopy.text("打开辅助功能设置…", "開啟輔助功能設定…", "Open Accessibility Settings…")) {
@@ -335,11 +362,10 @@ struct PermissionStatusView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(subtitle).font(.caption).settingsSecondaryText()
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 5) {
-                    Circle().fill(model.statusUnknown ? Color.gray : (granted ? Color.green : Color.red)).frame(width: 7, height: 7)
-                        .accessibilityHidden(true)
+                HStack(spacing: SettingsStatusDot.textSpacing) {
+                    SettingsStatusDot(level: model.statusUnknown ? .unknown : (granted ? .normal : .problem))
                     Text(status ?? (granted ? PermissionCopy.text("已授权", "已授權", "Granted") : PermissionCopy.text("未授权", "未授權", "Not granted")))
                         .font(.caption)
                         .fixedSize(horizontal: false, vertical: true)

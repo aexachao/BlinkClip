@@ -42,3 +42,48 @@ printf '%s\n' "$(ls -1 "${BLINKCLIP_SETTINGS_RENDER_DIR:-/tmp/w3-renders}"/zh-Ha
 cat "$ARTIFACT_TASK_DIR/out/zh-hant-render-count.txt"
 compile_native_test_harness settings-shortcut-reset "$replica_root/Sources/BlinkClip/UI/SettingsShortcutReset.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Tests/Native/SettingsShortcutResetHarness.swift" > "$ARTIFACT_TASK_DIR/out/reset-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/reset-test.log"
+
+# 源码门（新布局）：不得退回浅色卡片比页面暗、两种块宽、卡外按钮和页首管理动作。
+python3 - "$replica_root" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+ui = root / 'Sources/BlinkClip/UI'
+aux = (ui / 'AuxiliaryViews.swift').read_text()
+surface = (ui / 'SettingsSurfaceStyle.swift').read_text()
+retention = (ui / 'HistoryCapacityControl.swift').read_text()
+permission = (ui / 'PermissionStatusView.swift').read_text()
+checks = {
+    # 1) 浅色卡片层级：只允许语义层，不再用 primary.opacity 压暗浅色卡片。
+    'card-layer-is-semantic': 'Color.primary.opacity(0.035)' not in aux,
+    'card-surface-module': 'static func cardBackground(dark: Bool)' in surface and 'NSColor.white' in surface,
+    'card-has-1pt-border': '.strokeBorder(SettingsSurfaceStyle.cardBorderColor(dark: colorScheme == .dark)' in aux
+                           and 'borderWidth: CGFloat = 1' in surface,
+    'caption-above-4.5': 'secondaryTextOpacity: CGFloat = 0.58' in surface,
+    # 2) 固定 4 列网格，行列 10pt，第二行末格留空。
+    'retention-four-columns': 'static let gridColumns = 4' in retention
+                              and 'static let tileSpacing: CGFloat = 10' in retention,
+    'retention-single-width-formula': retention.count('gridColumns - 1) * Self.tileSpacing') == 1,
+    'retention-no-count-3-row': 'index < 4 ? 0 : 1' not in retention and 'row == 0 ? 4 : 3' not in retention,
+    # 3) 六页统一 16pt 顶部节奏。
+    'six-pages-tighten-to-16': aux.count('.padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)') == 6,
+    'six-pages-no-8pt-top': '.padding(.top, 8).padding(.bottom, 20)' not in aux,
+    # 4) AI 页按钮进卡、说明与状态标题对齐、卡片底部同构分隔线。
+    'ai-connect-inside-card': (mcp := aux[aux.index('private var mcp: some View'):aux.index('.sheet(isPresented: $showingMCPConfiguration)')])
+                              .count('Divider().padding(.vertical, 8)') == 1
+                              and mcp.index('Divider().padding(.vertical, 8)') < mcp.index('settings.mcp.connect'),
+    'ai-description-indented-to-title': 'SettingsStatusDot.side + SettingsStatusDot.textSpacing' in aux,
+    # 5) iCloud 行：状态在标题下方、开关独占右端。
+    'icloud-summary-under-title': aux.count('settings.icloud.summary') == 0  # lives in CloudKitSyncController
+                                  and 'settings.icloud.summary' in (ui / 'CloudKitSyncController.swift').read_text(),
+    'icloud-switch-gap': 'Spacer(minLength: 12)' in (ui / 'CloudKitSyncController.swift').read_text(),
+    # 6) 细节：重置入口在页尾并降权；两处开关对齐；状态圆点统一。
+    'reset-all-at-bottom': aux.index('settings.reset-all-shortcuts') > aux.index('ScreenshotSettingsCopy.text(.hotKeySectionTitle)'),
+    'reset-all-link-style': '.buttonStyle(.link)\n                            .accessibilityIdentifier("settings.reset-all-shortcuts")' in aux,
+    'translation-row-centered': 'return HStack {\n            VStack(alignment: .leading, spacing: 3) {\n                Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))' in aux,
+    'status-dot-shared': 'SettingsStatusDot(level:' in permission and 'SettingsStatusDot(level: executable ? .normal : .problem)' in aux,
+    'ai-no-checkmark-icon': '"checkmark.circle"' not in aux and '"exclamationmark.circle"' not in aux,
+}
+failures = {name: value for name, value in checks.items() if not value}
+assert not failures, failures
+print(f'Layout contract: {len(checks)} source checks passed')
+PY

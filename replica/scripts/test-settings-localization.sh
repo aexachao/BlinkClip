@@ -312,7 +312,9 @@ for path in files:
 assert not problems, problems
 
 allow_identical = {'完成', '取消', '播放操作提示音', 'AI 工具', '正在同步…', '等待同步',
-                   '最近更新 ', 'iCloud 同步', '永久', '\\(days) 天', '最近 \\(days) 天'}
+                   '最近更新 ', 'iCloud 同步', '永久', '\\(days) 天', '最近 \\(days) 天',
+                   # 「上次同步」简繁同形：语义与写法在两套字形里完全一致，不是漏翻。
+                   '上次同步 '}
 identical = {a[0] for owner in calls for _, a in calls[owner] if a[0] == a[1]}
 assert identical <= allow_identical, sorted(identical - allow_identical)
 assert len(calls['PermissionCopy']) == 30, len(calls['PermissionCopy'])

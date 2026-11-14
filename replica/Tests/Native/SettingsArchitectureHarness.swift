@@ -44,6 +44,26 @@ import BlinkClipCapture
         guard let data = bitmap.representation(using: .png, properties: [:]) else { throw Failure(message: "no navigation PNG") }
         return data
     }
+    /// Renders the hosted view and returns the sRGB pixel at a screen point.
+    /// Used only for the six-page surface checks: the card must be brighter than
+    /// the page in both appearances, which the semantic colors alone cannot prove.
+    @MainActor static func renderedColor(_ view: NSView, atScreen point: NSPoint) -> NSColor? {
+        guard let window = view.window,
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let local = view.convert(window.convertPoint(fromScreen: point), from: nil)
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, view.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, view.bounds.height)
+        let px = Int(local.x * scaleX)
+        let py = Int((view.isFlipped ? local.y : view.bounds.height - local.y) * scaleY)
+        guard px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh else { return nil }
+        return bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB)
+    }
+
+    @MainActor static func grayLevel(_ color: NSColor) -> Int {
+        Int(((color.usingColorSpace(.sRGB)?.redComponent ?? 0) * 255).rounded())
+    }
+
     @MainActor static func accessibilityTree(_ element: Any) -> [NSObject] {
         var seen = Set<ObjectIdentifier>()
         func visit(_ value: Any) -> [NSObject] {
@@ -78,6 +98,122 @@ import BlinkClipCapture
         typealias Press = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(node.method(for: selector), to: Press.self)(node, selector)
     }
+    @MainActor static var firstElementOffsets: [String: CGFloat] = [:]
+
+    /// Per-page surface + geometry contract:
+    /// - the first content element starts at the same 16pt offset on all six pages;
+    /// - the rendered card is brighter than the page margin in both appearances;
+    /// - the retention grid is one fixed 4-column grid (10pt gaps, empty last cell);
+    /// - the AI connect action sits inside its status card and aligns with the title;
+    /// - the iCloud summary sits under the title with >=12pt to the switch;
+    /// - reset-all shortcuts is below the last card, not at the top right.
+    @MainActor static func checkPageSurface(hosting: NSView, window: NSWindow, section: SettingsSection,
+                                            appearance: String) async throws {
+        let tree = accessibilityTree(hosting)
+        func node(_ identifier: String, height: CGFloat? = nil) -> NSRect? {
+            tree.filter { axID($0) == identifier }
+                .map { axFrame($0) }
+                .filter { height == nil || abs($0.height - height!) < 1 }
+                .max { $0.width < $1.width }
+        }
+        let cardRects = tree.filter { axID($0) == "settings.card" }.map { axFrame($0) }.filter { $0.width > 10 }
+        try check(!cardRects.isEmpty, "\(appearance) \(section) renders no settings card")
+        let titleRects = tree.filter { axID($0) == "settings.section-title" }.map { axFrame($0) }.filter { $0.width > 10 }
+        let contentTop = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.maxY)).y
+        guard let first = (cardRects + titleRects).max(by: { $0.maxY < $1.maxY }) else {
+            throw Failure(message: "\(appearance) \(section) has no first content element")
+        }
+        let offset = contentTop - first.maxY
+        firstElementOffsets["\(appearance)-\(section.rawValue)"] = offset
+        try check(offset >= 14 && offset <= 21,
+                  "\(appearance) \(section) first element offset \(offset) outside 16-20pt")
+
+        // Rendered surface: sample the card fill in the top-right padding and the
+        // page margin just left of it. Pixel levels are 8-bit sRGB gray.
+        guard let card = cardRects.max(by: { $0.maxY < $1.maxY }) else { throw Failure(message: "no card") }
+        guard let cardColor = renderedColor(hosting, atScreen: NSPoint(x: card.minX + 4, y: card.midY)),
+              let pageColor = renderedColor(hosting, atScreen: NSPoint(x: card.minX - 8, y: card.midY)) else {
+            throw Failure(message: "\(appearance) \(section) surface pixel out of bounds")
+        }
+        let cardLevel = grayLevel(cardColor), pageLevel = grayLevel(pageColor)
+        try check(cardLevel > pageLevel,
+                  "\(appearance) \(section) rendered card is not brighter than the page: card \(cardLevel) page \(pageLevel)")
+        try check(cardLevel - pageLevel >= 8,
+                  "\(appearance) \(section) rendered card/page separation \(cardLevel - pageLevel) is under 8 levels")
+
+        if section == .clipboard {
+            // The retention tiles are AppKit buttons inside an NSViewRepresentable:
+            // AX frames carry a 1pt focus-ring outset, so the fixed-grid assertion
+            // reads the real button frames (all in the HistoryCapacityControl).
+            let tileButtons = descendants(hosting, of: NSButton.self)
+                .filter { $0.accessibilityIdentifier().hasPrefix("history-retention-") }
+            try check(tileButtons.count == 7, "retention grid exposes \(tileButtons.count) tiles")
+            let frames = Dictionary(uniqueKeysWithValues: tileButtons.map {
+                ($0.accessibilityIdentifier(), $0.convert($0.bounds, to: nil))
+            })
+            let widths = Set(frames.values.map { ($0.width * 2).rounded() / 2 })
+            try check(widths.count == 1, "retention tiles have different widths: \(widths.sorted())")
+            // 窗口坐标 y 向上：视觉第一行是 y 更大的那一行。
+            let rows = Dictionary(grouping: frames.values) { Int($0.minY.rounded()) }.sorted { $0.key > $1.key }
+            try check(rows.count == 2, "retention grid has \(rows.count) rows: \(rows.map(\.key))")
+            let topRow = rows[0].value.sorted { $0.minX < $1.minX }
+            let bottomRow = rows[1].value.sorted { $0.minX < $1.minX }
+            try check(topRow.count == 4 && bottomRow.count == 3,
+                      "retention rows are \(topRow.count) + \(bottomRow.count), expected 4 + 3")
+            for row in [topRow, bottomRow] {
+                for pair in zip(row, row.dropFirst()) {
+                    try check(abs((pair.1.minX - pair.0.maxX) - HistoryCapacityControl.tileSpacing) < 0.01,
+                              "retention column gap \(pair.1.minX - pair.0.maxX) is not 10pt: \(row.map(\.minX))")
+                }
+            }
+            for (index, tile) in bottomRow.enumerated() {
+                try check(abs(tile.minX - topRow[index].minX) < 0.01,
+                          "retention row 2 column \(index) is not aligned: \(tile.minX) vs \(topRow[index].minX)")
+            }
+            // 窗口坐标 y 向上：上行的 minY 减下行的 maxY 才是两行之间的空隙。
+            let verticalGap = topRow[0].minY - bottomRow[0].maxY
+            try check(abs(verticalGap - HistoryCapacityControl.tileSpacing) < 0.01,
+                      "retention row gap \(verticalGap) is not 10pt")
+            try check(!bottomRow.contains { abs($0.minX - topRow[3].minX) < 1 },
+                      "retention row 2 does not leave the fourth cell empty")
+            try check(abs(bottomRow[2].maxX - topRow[2].maxX) < 0.01,
+                      "retention row 2 ends in the wrong column: \(bottomRow[2].maxX) vs \(topRow[2].maxX)")
+            try check(abs((topRow[0].maxY - bottomRow[0].minY) - HistoryCapacityControl.gridHeight) < 0.01,
+                      "retention grid height is not \(HistoryCapacityControl.gridHeight)pt")
+        }
+
+        if section == .ai {
+            guard let connect = node("settings.mcp.connect"), let status = node("settings.mcp.status"),
+                  let description = node("settings.mcp.description") else {
+                throw Failure(message: "AI page is missing connect/status/description elements")
+            }
+            try check(card.insetBy(dx: -1, dy: -1).contains(connect),
+                      "connect button is outside the status card: button \(connect) card \(card)")
+            try check(abs(description.minX - status.minX) <= 0.5,
+                      "AI description is not left-aligned with the status title: \(description.minX) vs \(status.minX)")
+        }
+
+        if section == .general {
+            guard let title = node("settings.icloud.title"), let summary = node("settings.icloud.summary"),
+                  let toggle = node("settings.icloud.toggle") else {
+                throw Failure(message: "iCloud row is missing title/summary/switch elements")
+            }
+            try check(summary.maxY < title.maxY,
+                      "iCloud summary is not below the row title: summary \(summary) title \(title)")
+            let gap = toggle.minX - max(title.maxX, summary.maxX)
+            try check(gap >= 11.5, "iCloud switch is \(gap)pt from the row text, expected >=12pt")
+        }
+
+        if section == .shortcuts {
+            guard let reset = node("settings.reset-all-shortcuts") else {
+                throw Failure(message: "shortcuts page is missing reset-all")
+            }
+            let lastCardBottom = cardRects.map(\.minY).min() ?? 0
+            try check(reset.maxY <= lastCardBottom + 1,
+                      "reset-all is not below the last card: reset \(reset) last card bottom \(lastCardBottom)")
+        }
+    }
+
     @MainActor static func verifyShortcutRows(store: ClipboardStore, state: ReplicaUIState, model: PermissionStatusModel, out: URL, language: String) async throws {
         guard let domain = Bundle.main.bundleIdentifier, domain.hasPrefix("local.blinkclip.regression.") else { throw Failure(message: "isolated test app domain required") }
         defer { UserDefaults.standard.removePersistentDomain(forName: domain) }
@@ -227,6 +363,7 @@ import BlinkClipCapture
         for appearance in ["light", "dark"] {
         NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
         captures = []
+        firstElementOffsets = [:]
         for section in SettingsSection.allCases {
             let hosting = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: section.rawValue, permissionModel: model).background(Color(nsColor: .windowBackgroundColor)))
             let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000,y: -5000,width: 648,height: 600),styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],backing: .buffered,defer: false)
@@ -239,6 +376,7 @@ import BlinkClipCapture
             await pause()
             hosting.layoutSubtreeIfNeeded()
             try check(hosting.bounds.width >= 640, "minimum width")
+            try await checkPageSurface(hosting: hosting, window: window, section: section, appearance: appearance)
             if appearance == "light", section == .screenshot { screenshotHeader = try pixels(hosting, headerOnly: true) }
             guard let themeFrame = window.contentView?.superview,
                   let title = descendants(themeFrame, of: NSTextField.self).first(where: { $0.accessibilityIdentifier() == "BlinkClipSettingsPaneTitle" }) else { throw Failure(message: "missing complete native titlebar") }
@@ -276,6 +414,13 @@ import BlinkClipCapture
             window.contentView = nil
             window.close()
         }
+        // 六页同一套顶部节奏：首元素（小标题或卡片）距内容区顶的偏移一致。
+        let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
+        try check(pageOffsets.count == SettingsSection.allCases.count,
+                  "\(appearance) only \(pageOffsets.count) pages measured: \(pageOffsets.keys.sorted())")
+        let offsetValues = pageOffsets.map(\.value)
+        try check(offsetValues.max()! - offsetValues.min()! <= 0.75,
+                  "\(appearance) six pages disagree on first-element offset: \(pageOffsets.sorted { $0.key < $1.key })")
         if !captures.isEmpty {
             let cell = NSSize(width: 648, height: 622)
             let sheet = NSImage(size: NSSize(width: cell.width * 4, height: cell.height * 3))
@@ -294,7 +439,30 @@ import BlinkClipCapture
         }
         }
         NSApp.appearance = NSAppearance(named: .aqua)
-                // Independent navigation path: real native outline selection, compared with
+        // ---- shared surface contract (color math, independent of rendering) ----
+        for dark in [false, true] {
+            let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
+            var page = NSColor.windowBackgroundColor
+            appearance.performAsCurrentDrawingAppearance {
+                page = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? page
+            }
+            let card = SettingsSurfaceStyle.composite(SettingsSurfaceStyle.cardBackground(dark: dark), over: page)
+            let pageLevel = Int((page.redComponent * 255).rounded())
+            let cardLevel = Int((card.redComponent * 255).rounded())
+            try check(SettingsSurfaceStyle.relativeLuminance(card) > SettingsSurfaceStyle.relativeLuminance(page),
+                      "dark=\(dark) card is not brighter than the page: card \(cardLevel) page \(pageLevel)")
+            try check(cardLevel - pageLevel >= 8 || (!dark && cardLevel == 255),
+                      "dark=\(dark) card/page separation too small: card \(cardLevel) page \(pageLevel)")
+            let caption = SettingsSurfaceStyle.composite(SettingsSurfaceStyle.secondaryText(dark: dark), over: card)
+            let contrast = SettingsSurfaceStyle.contrastRatio(caption, over: card)
+            try check(contrast >= 4.5,
+                      "dark=\(dark) caption contrast \(contrast) on card \(cardLevel) is below 4.5:1")
+            let border = SettingsSurfaceStyle.composite(SettingsSurfaceStyle.cardBorder(dark: dark), over: card)
+            try check(SettingsSurfaceStyle.contrastRatio(border, over: card) >= 1.05,
+                      "dark=\(dark) 1pt card border is invisible: \(SettingsSurfaceStyle.contrastRatio(border, over: card))")
+        }
+
+        // Independent navigation path: real native outline selection, compared with
         // the rendered screenshot deep-link header. The sidebar is excluded from ROI.
         let navigationHost = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: 0, permissionModel: model).background(Color(nsColor: .windowBackgroundColor)))
         let navigationWindow = OffscreenSettingsWindow(contentRect: NSRect(x: -5000,y: -5000,width: 648,height: 600),styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],backing: .buffered,defer: false)

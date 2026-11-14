@@ -19,6 +19,15 @@ struct HistoryRetentionPicker: NSViewRepresentable {
 @MainActor
 final class HistoryCapacityControl: NSView {
     static let presets = [1, 3, 7, 15, 30, 60, 0]
+    /// 固定 4 列网格：第一行 1/3/7/15 天，第二行 30/60/永久，第二行末格留空。
+    /// 行、列间距统一 10pt；两行的块宽一致，不再出现 4×89pt + 3×117pt 的两种宽度。
+    static let gridColumns = 4
+    static let tileHeight: CGFloat = 44
+    static let tileSpacing: CGFloat = 10
+    /// 网格高度：两行 + 行间距。
+    static var gridHeight: CGFloat { tileHeight * 2 + tileSpacing }
+    /// 网格与说明文字的间距（沿用旧值 10pt：106 - (44 * 2 + 8)）。
+    static let gridBottomGap: CGFloat = 10
     let optionButtons: [HistoryRetentionOptionButton]
     let legacyLabel = NSTextField(wrappingLabelWithString: "")
     let explanation = NSTextField(wrappingLabelWithString: "")
@@ -45,7 +54,7 @@ final class HistoryCapacityControl: NSView {
     private func contentHeight(width: CGFloat) -> CGFloat {
         let legacy = hasLegacyPeriod ? textHeight(legacyLabel, width: width) + 8 : 0
         let error = errorMessage.isEmpty ? 0 : textHeight(errorLabel, width: width) + 8
-        return 106 + legacy + textHeight(explanation, width: width) + error
+        return Self.gridHeight + Self.gridBottomGap + legacy + textHeight(explanation, width: width) + error
     }
     private func updateMeasuredHeight() {
         let next = contentHeight(width: measuredWidth)
@@ -66,7 +75,9 @@ final class HistoryCapacityControl: NSView {
         }
         for label in [legacyLabel, explanation, errorLabel] {
             label.font = .systemFont(ofSize: 12)
-            label.textColor = .secondaryLabelColor
+            // 与设置卡片说明文字同一个语义色：系统 secondaryLabelColor 在浅色
+            // 白卡上只有 3.95:1，这里用 58% 前/背景色（5.32:1 / 4.80:1）。
+            label.textColor = SettingsSurfaceStyle.secondaryTextDynamic
             addSubview(label)
         }
         legacyLabel.font = .systemFont(ofSize: 12, weight: .medium)
@@ -86,20 +97,22 @@ final class HistoryCapacityControl: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: requiredHeight) }
     override func layout() {
         super.layout()
+        let columnWidth = max(0, (bounds.width - CGFloat(Self.gridColumns - 1) * Self.tileSpacing) / CGFloat(Self.gridColumns))
         for (index, button) in optionButtons.enumerated() {
-            let row = index < 4 ? 0 : 1
-            let count = row == 0 ? 4 : 3
-            let column = row == 0 ? index : index - 4
-            let width = max(0, (bounds.width - CGFloat(count - 1) * 8) / CGFloat(count))
-            button.frame = NSRect(x: CGFloat(column) * (width + 8), y: CGFloat(row) * 52, width: width, height: 44)
+            let row = index / Self.gridColumns
+            let column = index % Self.gridColumns
+            button.frame = NSRect(x: CGFloat(column) * (columnWidth + Self.tileSpacing),
+                                  y: CGFloat(row) * (Self.tileHeight + Self.tileSpacing),
+                                  width: columnWidth, height: Self.tileHeight)
         }
         if bounds.width > 0 && measuredWidth != bounds.width {
             measuredWidth = bounds.width
             updateMeasuredHeight()
         }
         let legacyHeight = hasLegacyPeriod ? textHeight(legacyLabel, width: bounds.width) : 0
-        legacyLabel.frame = NSRect(x: 0, y: 106, width: bounds.width, height: legacyHeight)
-        let textTop: CGFloat = 106 + (hasLegacyPeriod ? legacyHeight + 8 : 0)
+        let gridTop = Self.gridHeight + Self.gridBottomGap
+        legacyLabel.frame = NSRect(x: 0, y: gridTop, width: bounds.width, height: legacyHeight)
+        let textTop: CGFloat = gridTop + (hasLegacyPeriod ? legacyHeight + 8 : 0)
         let explanationHeight = textHeight(explanation, width: bounds.width)
         explanation.frame = NSRect(x: 0, y: textTop, width: bounds.width, height: explanationHeight)
         errorLabel.frame = NSRect(x: 0, y: textTop + explanationHeight + 8, width: bounds.width, height: errorMessage.isEmpty ? 0 : textHeight(errorLabel, width: bounds.width))

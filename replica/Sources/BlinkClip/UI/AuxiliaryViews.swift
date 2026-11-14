@@ -437,7 +437,7 @@ struct ReplicaSettingsView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(SettingsCopy.text(title))
             Text(SettingsCopy.text(subtitle))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).settingsSecondaryText()
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
@@ -450,7 +450,7 @@ struct ReplicaSettingsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(SettingsCopy.text(title))
                 Text(ReplicaBrand.replacingName(in: SettingsCopy.text(subtitle)))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).settingsSecondaryText()
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -509,7 +509,7 @@ struct ReplicaSettingsView: View {
                     settingsSwitch(SettingsCopy.text("settings.sound-effects.title"), isOn: preference(\.playSounds))
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -559,19 +559,25 @@ struct ReplicaSettingsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
     private func settingsSectionTitle(_ title: String) -> some View {
         Text(title).font(.system(size: 13, weight: .semibold)).padding(.leading, 10)
+            .accessibilityIdentifier("settings.section-title")
     }
 
     private func settingsCard<Content: View>(verticalPadding: CGFloat = 10, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0, content: content)
-            .padding(.horizontal, 10).padding(.vertical, verticalPadding)
+        let shape = RoundedRectangle(cornerRadius: SettingsSurfaceStyle.cornerRadius)
+        return VStack(alignment: .leading, spacing: 0, content: content)
+            .padding(.horizontal, SettingsSurfaceStyle.contentPadding).padding(.vertical, verticalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+            .background(SettingsSurfaceStyle.cardBackgroundColor(dark: colorScheme == .dark), in: shape)
+            .overlay(shape.strokeBorder(SettingsSurfaceStyle.cardBorderColor(dark: colorScheme == .dark),
+                                        lineWidth: SettingsSurfaceStyle.borderWidth))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("settings.card")
     }
 
     /// 「截图」分区（侧栏 index 2）。
@@ -595,7 +601,7 @@ struct ReplicaSettingsView: View {
                         .pickerStyle(.radioGroup).labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Text(ScreenshotSettingsCopy.text(.postCaptureFootnote))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).settingsSecondaryText()
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 6)
                     }
@@ -607,7 +613,7 @@ struct ReplicaSettingsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -615,7 +621,7 @@ struct ReplicaSettingsView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(screenshotActionTitle(action))
             Text(screenshotActionSubtitle(action))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).settingsSecondaryText()
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
@@ -659,11 +665,13 @@ struct ReplicaSettingsView: View {
         let subtitle = available
             ? ScreenshotSettingsCopy.text(.appleTranslationSubtitle)
             : ScreenshotSettingsCopy.text(.appleTranslationUnavailable)
-        return HStack(alignment: .top) {
+        // 与隐私页同构：标题+说明行里的开关垂直居中，和 42pt 行高对齐，
+        // 不像旧实现那样贴到行顶（两处开关一高一低）。
+        return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))
                 Text(subtitle)
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).settingsSecondaryText()
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
@@ -841,7 +849,7 @@ struct ReplicaSettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(SettingsCopy.text("settings.privacy.applications-history.title")).font(.system(size: 13, weight: .semibold))
                         Text(SettingsCopy.text("settings.privacy.applications-history.subtitle"))
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.callout).settingsSecondaryText()
                     }.padding(.horizontal, 10).padding(.top, 8)
                     VStack(spacing: 0) {
                         List(state.store.preferences.excludedBundleIDs, id: \.self, selection: $selectedExclusions) { identifier in
@@ -854,7 +862,7 @@ struct ReplicaSettingsView: View {
                         .overlay {
                             if state.store.preferences.excludedBundleIDs.isEmpty {
                                 Text(SettingsCopy.text("settings.privacy.applications-history.empty"))
-                                    .foregroundStyle(.secondary).allowsHitTesting(false)
+                                    .settingsSecondaryText().allowsHitTesting(false)
                             }
                         }
                         .frame(height: min(180, max(40, CGFloat(state.store.preferences.excludedBundleIDs.count) * 40)))
@@ -868,26 +876,21 @@ struct ReplicaSettingsView: View {
                             Spacer()
                         }.buttonStyle(.borderless)
                     }
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .background(SettingsSurfaceStyle.cardBackgroundColor(dark: colorScheme == .dark),
+                                in: RoundedRectangle(cornerRadius: SettingsSurfaceStyle.cornerRadius))
+                    .clipShape(RoundedRectangle(cornerRadius: SettingsSurfaceStyle.cornerRadius))
+                    .overlay(RoundedRectangle(cornerRadius: SettingsSurfaceStyle.cornerRadius)
+                        .strokeBorder(SettingsSurfaceStyle.cardBorderColor(dark: colorScheme == .dark),
+                                      lineWidth: SettingsSurfaceStyle.borderWidth))
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
     private var shortcuts: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    Spacer()
-                    Button(SettingsCopy.text("settings.shortcuts.reset-all")) { resetShortcuts() }
-                        .accessibilityIdentifier("settings.reset-all-shortcuts")
-                }
-                if !shortcutError.isEmpty {
-                    Text(shortcutError).foregroundStyle(.red).font(.caption)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.applicationShortcutsTitle))
                     settingsCard(verticalPadding: 0) {
@@ -938,8 +941,22 @@ struct ReplicaSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                // 管理动作放在页尾、改用链接样式降权：它不再是内容区的第一眼焦点，
+                // 首屏节奏回到「小标题 + 卡片」。错误提示跟着动作走，避免报错离按钮太远。
+                VStack(alignment: .trailing, spacing: 8) {
+                    if !shortcutError.isEmpty {
+                        Text(shortcutError).foregroundStyle(.red).font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack {
+                        Spacer()
+                        Button(SettingsCopy.text("settings.shortcuts.reset-all")) { resetShortcuts() }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("settings.reset-all-shortcuts")
+                    }
+                }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -1093,24 +1110,42 @@ struct ReplicaSettingsView: View {
     }
 
     private var mcp: some View {
-        ScrollView {
+        let executable = FileManager.default.isExecutableFile(atPath: mcpExecutable.path)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 settingsCard {
-                    Label(FileManager.default.isExecutableFile(atPath: mcpExecutable.path) ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available") : SettingsCopy.trilingual("未找到本机服务", "找不到本機服務", "Local service not found"),
-                          systemImage: FileManager.default.isExecutableFile(atPath: mcpExecutable.path) ? "checkmark.circle" : "exclamationmark.circle")
-                        .padding(.bottom, 4)
+                    // 「正常/不正常」的图标语言与隐私页统一：同一个 7pt 状态圆点，
+                    // 语义不同由文字区分（「本机服务可用」≠「已授权」）。
+                    HStack(spacing: SettingsStatusDot.textSpacing) {
+                        SettingsStatusDot(level: executable ? .normal : .problem)
+                        Text(executable
+                             ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available")
+                             : SettingsCopy.trilingual("未找到本机服务", "找不到本機服務", "Local service not found"))
+                            .font(.system(size: 13, weight: .semibold))
+                            .accessibilityIdentifier("settings.mcp.status")
+                    }
+                    // 说明行与状态标题文字左对齐：让出「圆点 + 间距」的宽度，
+                    // 不再像旧的 Label 那样比标题左出 19pt。
                     Text(SettingsCopy.trilingual("允许支持 MCP 的 AI 工具搜索、读取和整理历史记录。", "允許支援 MCP 的 AI 工具搜尋、讀取和整理歷史記錄。", "Let an MCP-compatible AI tool search, read, and organize your history."))
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout).settingsSecondaryText()
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Spacer()
-                    Button(SettingsCopy.text("settings.mcp.connect.action.connect-to")) {
-                        showingMCPConfiguration = true
-                    }.disabled(!FileManager.default.isExecutableFile(atPath: mcpExecutable.path))
+                        .padding(.leading, SettingsStatusDot.side + SettingsStatusDot.textSpacing)
+                        .padding(.top, 6)
+                        .accessibilityIdentifier("settings.mcp.description")
+                    // 与隐私页「刷新状态」同构：分隔线 + 右对齐按钮，放在卡片底部；
+                    // 不再把按钮甩到卡外、在它下面留 440pt 空白。
+                    Divider().padding(.vertical, 8)
+                    HStack {
+                        Spacer()
+                        Button(SettingsCopy.text("settings.mcp.connect.action.connect-to")) {
+                            showingMCPConfiguration = true
+                        }
+                        .disabled(!executable)
+                        .accessibilityIdentifier("settings.mcp.connect")
+                    }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
         .sheet(isPresented: $showingMCPConfiguration) {
             VStack(alignment: .leading, spacing: 16) {
