@@ -1,5 +1,6 @@
 import copy
 import datetime
+import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
@@ -63,6 +64,19 @@ class CloudKitSigningTests(unittest.TestCase):
     def test_kvstore_identifier_omitted_when_profile_lacks_it(self):
         self.assertNotIn('com.apple.developer.ubiquity-kvstore-identifier', self.validate())
 
+    def test_apple_wildcard_services_and_kvstore_are_narrowed(self):
+        for services in ['*', ['*'], 'CloudKit']:
+            with self.subTest(services=services):
+                self.profile['Entitlements']['com.apple.developer.icloud-services'] = services
+                self.profile['Entitlements']['com.apple.developer.ubiquity-kvstore-identifier'] = 'TESTTEAM01.*'
+                result = self.validate()
+                self.assertEqual(result['com.apple.developer.icloud-services'], ['CloudKit'])
+                self.assertEqual(result['com.apple.developer.ubiquity-kvstore-identifier'], 'TESTTEAM01.local.blinkclip.tests')
+
+    def test_unrelated_kvstore_wildcard_is_rejected(self):
+        self.profile['Entitlements']['com.apple.developer.ubiquity-kvstore-identifier'] = 'OTHERTEAM.*'
+        with self.assertRaises(ValueError): self.validate()
+
     def test_debugger_attachments_never_signed(self):
         # 开发描述文件会带 get-task-allow；发布签名里出现它等于允许调试器挂载，
         # 与 Assets/BlinkClip.entitlements 的取舍冲突，因此必须显式丢弃。
@@ -70,6 +84,19 @@ class CloudKitSigningTests(unittest.TestCase):
         result = self.validate()
         self.assertNotIn('get-task-allow', result)
         self.assertNotIn('com.apple.security.get-task-allow', result)
+
+    def test_signing_certificate_must_be_authorized_by_profile(self):
+        certificate = b'fixture-certificate'
+        fingerprint = hashlib.sha1(certificate).hexdigest().upper()
+        identities = f'  1) {fingerprint} "Apple Development: Fixture"\n  1 valid identities found'
+        self.profile['DeveloperCertificates'] = [certificate]
+        signing.validate_signing_identity(self.profile, fingerprint, identities)
+        signing.validate_signing_identity(self.profile, 'Apple Development: Fixture', identities)
+        self.profile['DeveloperCertificates'] = [b'other-certificate']
+        with self.assertRaisesRegex(ValueError, 'DeveloperCertificates'):
+            signing.validate_signing_identity(self.profile, fingerprint, identities)
+        with self.assertRaises(ValueError):
+            signing.validate_signing_identity(self.profile, 'missing-identity', identities)
 
 
 if __name__ == '__main__':

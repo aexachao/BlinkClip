@@ -33,7 +33,8 @@ path.write_bytes(plistlib.dumps(info))
 PY
 python3 "$replica_root/scripts/configure-cloudkit-signing.py" \
   --profile "$BLINKCLIP_CLOUDKIT_PROFILE" --bundle "$test_bundle" --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
-  --environment Development --output "$test_root/entitlements.plist"
+  --identity "$BLINKCLIP_SIGNING_IDENTITY" \
+  --environment "${BLINKCLIP_CLOUDKIT_TEST_ENVIRONMENT:-Development}" --output "$test_root/entitlements.plist"
 codesign --force --sign "$BLINKCLIP_SIGNING_IDENTITY" --entitlements "$test_root/entitlements.plist" "$test_bundle"
 codesign --verify --strict "$test_bundle"
 BLINKCLIP_CLOUDKIT_ALLOW_LIVE_TEST=1 "$test_harness"

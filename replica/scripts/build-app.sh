@@ -268,6 +268,7 @@ if [[ -n "${BLINKCLIP_CLOUDKIT_PROFILE:-}${BLINKCLIP_CLOUDKIT_CONTAINER:-}" ]]; 
   fi
   python3 "$replica_root/scripts/configure-cloudkit-signing.py" \
     --profile "$BLINKCLIP_CLOUDKIT_PROFILE" --bundle "$bundle" --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
+    --identity "$BLINKCLIP_SIGNING_IDENTITY" \
     --environment "${BLINKCLIP_CLOUDKIT_ENVIRONMENT:-Development}" --output "$staging/cloudkit-entitlements.plist"
   # 合并基础授权与 CloudKit 授权再签名：CloudKit 键来自描述文件，必须逐字保留，
   # 因此冲突时描述文件优先，基础键（apple-events）作为底层叠加，两边键集不同不会互相覆盖。
