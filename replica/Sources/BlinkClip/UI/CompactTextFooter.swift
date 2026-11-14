@@ -18,6 +18,41 @@ enum CompactTextCardAppearance {
         NSAppearance(named: PreviewTextColors.isLightColor(color) ? .aqua : .darkAqua)
             ?? NSAppearance.currentDrawing()
     }
+
+    /// 卡片底色是亮是暗。纯文本的底色是 `NSColor(name:)` 动态色，必须在真正生效的
+    /// 外观（调用方的 effectiveAppearance）里读，否则会按旧外观判成另一侧。
+    static func isLightBackground(_ color: NSColor, in appearance: NSAppearance) -> Bool {
+        var light = false
+        appearance.performAsCurrentDrawingAppearance { light = PreviewTextColors.isLightColor(color) }
+        return light
+    }
+
+    /// 把动态色调按「卡片底色所在的一侧」解析成静态色。
+    ///
+    /// 面板会切浅/深外观，而来源内容自带的底色（网页/富文本的深色底）是静态的：
+    /// 语义由底色决定，不由窗口决定。因此这里一次性算出静态色，父视图外观一变就
+    /// 重算，子层 CGColor 永远只拿到算好的静态值（顺序不再影响结果）。
+    static func resolved(_ color: NSColor, on background: NSColor, ambient: NSAppearance) -> NSColor {
+        let name: NSAppearance.Name = isLightBackground(background, in: ambient) ? .aqua : .darkAqua
+        let target = NSAppearance(named: name) ?? ambient
+        var resolved = color
+        target.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(.deviceRGB) ?? color
+        }
+        return resolved
+    }
+
+    /// 卡片正文的前景色：底色未知时退回系统动态前景，否则按底色一侧解析一次。
+    static func foreground(on background: NSColor?, ambient: NSAppearance) -> NSColor {
+        let token = SearchAppearance.foregroundColor() ?? NSColor.labelColor
+        guard let background else { return token }
+        return resolved(token, on: background, ambient: ambient)
+    }
+
+    /// 卡片脚注（「N 个字符」/ 渐隐带）的次要前景色。
+    static func secondaryForeground(on background: NSColor, ambient: NSAppearance) -> NSColor {
+        resolved(ToolbarAppearance.secondaryForeground(), on: background, ambient: ambient)
+    }
 }
 
 @MainActor
@@ -49,7 +84,10 @@ private final class CompactTextFadeView: NSView {
         CATransaction.commit()
     }
 
-    override func viewDidChangeEffectiveAppearance() { updateColors() }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
 
     private func updateColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -69,6 +107,9 @@ final class CompactTextFooterView: NSView {
     private let fadingView = CompactTextFadeView(frame: .zero)
     private let textLabel = NSTextField(labelWithString: "")
     private lazy var opaqueHeight = opaqueView.heightAnchor.constraint(equalToConstant: 18)
+    /// 脚注带的本色 = 卡片底色。纯文本时它是动态色，因此只存语义色，
+    /// 每次外观变化都重新解析成静态色（旧实现按创建时外观钉死 → ΔRGB=0）。
+    private var bandColor: NSColor?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -102,16 +143,39 @@ final class CompactTextFooterView: NSView {
         NSSize(width: NSView.noIntrinsicMetric, height: 32 + opaqueHeight.constant)
     }
 
+    /// 不再覆盖 appearance：让脚注跟着面板的当前外观走，再按底色一侧把带色与
+    /// 文字色重解析成静态色。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshColors()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshColors()
+    }
+
     func configure(length: Int, sizeClass: UInt8, fadingColor: NSColor) {
-        appearance = CompactTextCardAppearance.appearance(for: fadingColor)
+        bandColor = fadingColor
         textLabel.stringValue = String(localized: PreviewLocalization.characterCount(Int32(length)))
         let compact = sizeClass == 3
         textLabel.alphaValue = compact ? 0 : 1
         textLabel.isHidden = compact
         opaqueHeight.constant = compact ? 0 : 18
-        opaqueView.backgroundColor = fadingColor
-        fadingView.configure(color: fadingColor)
         invalidateIntrinsicContentSize()
+        refreshColors()
+    }
+
+    private func refreshColors() {
+        guard let bandColor else { return }
+        // 静态解析后再下发：子层 CGColor 不再依赖子视图自己的 effectiveAppearance，
+        // 所以「先父后子」的刷新顺序不再影响结果。
+        let band = CompactTextCardAppearance.resolved(bandColor, on: bandColor,
+                                                      ambient: effectiveAppearance)
+        opaqueView.backgroundColor = band
+        fadingView.configure(color: band)
+        textLabel.textColor = CompactTextCardAppearance.secondaryForeground(on: bandColor,
+                                                                           ambient: effectiveAppearance)
     }
 }
 
