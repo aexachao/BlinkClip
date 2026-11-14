@@ -1,5 +1,38 @@
 # 更新日志
 
+## 1.0.12 · 2026-11-14（GitHub Releases）
+
+关于窗口与更新检查修复版：本版在 1.0.11 基础上重做「关于闪贴」窗口，把版本检查从 GitHub REST API 换成应用本来就用于 Sparkle 的签名 appcast；同时把 Apple 翻译改为默认开启，并修掉 ⌘⇧V 面板呼出时沿用上次横向滚动位置的问题。完整差异可用 `git diff --stat v1.0.11..HEAD` 复核。
+
+### 修复
+
+- **版本检查不再依赖 GitHub REST API。** 关于窗口的「检查更新」原来直接请求 `api.github.com/repos/aexachao/BlinkClip/releases/latest`；GitHub 对匿名请求按 IP 限流（每小时 60 次），额度用完后一律返回 `403`，窗口里就会出现「无法从 GitHub 获取版本信息…(HTTP 403)」。现在改读 `Info.plist` 里 Sparkle 一直在用的那份签名 appcast（`SUFeedURL` → `https://github.com/aexachao/BlinkClip/releases/latest/download/appcast.xml`）：发布资产走 CDN，不受匿名 API 限流影响。
+- 检查器用自带 `XMLParser` 解析 appcast 的 `<item>`，读 `sparkle:version` / `sparkle:shortVersionString` / `sparkle:minimumSystemVersion` / `<enclosure url>`，带命名空间和不带命名空间两种写法都认；版本比较改为数值比较（此前按字符串比，`1.0.10` 与 `1.0.9` 这类会错），支持四段版本号与预发布后缀，只取稳定项，`minimumSystemVersion` 高于本机的项跳过并回退到下一项。
+- 网络、状态码、解析三类失败统一收敛成一句温和文案「暂时无法检查更新，请稍后再试。」，不再把 HTTP 状态码渲染进窗口；状态码、URL、解析字节数与选中版本只写进 `os.Logger`（subsystem `com.chrisli.blinkclip`，category `updates`）便于诊断。
+- 「检查更新」按钮现在真正触发 Sparkle（`SPUUpdater`）的更新流程，窗口状态行只反映 appcast 读取结果，两件事不再混在一起。`BlinkClipInAppUpdater` 的 `SPUStandardUpdaterController` 改为进程内单例，应用菜单与设置侧栏两条入口不会各起一个 updater。
+- **关于窗口重做。** 380×420 固定窗口：应用图标、产品名、「已安装版本」、一句话描述、GitHub 项目 / 更新日志 / AGPL-3.0 许可证链接、版权行；按钮区右对齐贴底，按钮上方是独立的次要颜色状态行（读取中 / 已是最新 / 有新版本）。Esc 关闭窗口，Return（默认按钮）执行「检查更新」。
+- **设置侧栏新增「关于闪贴」入口**（`info.circle`，排在「AI 工具」之后）：点击打开同一个关于窗口（不改变当前分区选中）；侧栏页脚只保留帮助入口，原来的「闪贴设置」产品名一行已删除，产品身份由关于窗口承载。
+- **Apple 翻译默认开启。** 从未设置过 `translation.apple.enabled` 时，系统支持 Apple 翻译即按「开」读；这次读取不写入该键（缺省值不落盘），所以用户显式关掉后重启仍然是关。显式写入的值永远优先：显式 `false` 不会被缺省值覆盖；系统不支持 Apple 翻译时，缺省值不会把不可用的供应商算成可用。设置页开关、截图 OCR 面板的可用供应商列表与配置存储读同一个值。
+- **⌘⇧V 面板每次呼出重置横向滚动。** 卡片行横向偏移回到 0，分组标签条同时回到「当前选中标签可见」的初始位置；同一会话内用户自己滚动的位置不会被抢走。归零挂在确定性生命周期点上（`showPanel()` 开始 + 滑入动画结束结算），期间每次布局都重新归零，不会被揭示动画或快照排空引起的布局回弹压掉。
+
+### 继承自 1.0.11（本版未改动）
+
+许可与打包：AGPL-3.0 与许可文本随包（`Contents/Resources/LICENSE.txt`、`NOTICE.txt`），资源白名单断言仍在签名前 fail closed。本地化：`zh-Hant.lproj` 随包（674 键，与 zh-Hans 键集合一致）。数据可靠性：持久化投影回填、无变更导入回填、损坏负载降级。技术标识：`capcap.*` → `blinkclip.*` / `com.chrisli.blinkclip.*` 改名与兼容别名。详见 1.0.11 段落，本版不重复。
+
+### 验证
+
+- 原生测试全部通过：`test-app-updates.sh`（含 `--live`，直接读线上 appcast）、`test-panel-scroll.sh`、`test-settings-architecture.sh`、`test-settings-localization.sh`、`test-translation-integration.sh`、`test-permission-status.sh`、`test-settings-window-focus.sh`、`test-feedback-shortcuts.sh`、`test-toolbar-upload-removal.sh`、`test-packaged-resources.sh`、`test-blinkclip-owned-resources.sh`、`test-identifier-namespace-migration.sh`。
+- 核心测试 `swift run --package-path replica blinkclip-core-tests`：29 个用例全部通过；`python3 -m unittest discover -s scripts/tests` 通过。
+- 产物核验：包内 `SUFeedURL` 指向 appcast（`releases/latest/download/appcast.xml`），`LICENSE.txt` / `NOTICE.txt` / `zh-Hant.lproj` 随包，`codesign --verify --deep --strict` 通过。
+
+### 已知限制
+
+- CloudKit 跨设备同步未启用：本构建未带 CloudKit entitlements，也没有可用的自有容器，设置里会直接提示「此构建未配置 … CloudKit 容器和开发者签名，暂不能连接 iCloud」。
+- 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
+- Sparkle 更新私钥已轮换，公钥随之更换；用旧公钥构建的版本无法自动升级到本版，只能手动下载安装，之后可走应用内更新。
+- 面板每次呼出都回到最左：若上次选中的是远端卡片，重开后选中仍在但需要手动滚过去。
+- 沿用 1.0.11 的其余已知限制：繁中下设置页文案仍由 zh-Hans 表提供（`ScreenshotSettingsCopy` 对任何 zh* 语言只保留一张中文表）；二进制内保留 1 个 `cn.skyrin.capcap.skip-clipboard-text-history` 兼容别名与 `capcap-LICENSE.txt` 许可证文件名。
+
 ## 1.0.11 · 2026-11-14（GitHub Releases）
 
 许可、本地化与数据可靠性变更版：本版在 1.0.10 基础上并入核心持久化投影修复、损坏负载降级、繁体中文本地化表，以及许可文本入包、打包白名单与 CI 强推修复；功能行为除此之外无改动。完整差异可用 `git diff --stat v1.0.10..HEAD` 复核。
