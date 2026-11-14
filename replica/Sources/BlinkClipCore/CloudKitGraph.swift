@@ -83,7 +83,7 @@ public enum CloudKitGraph {
             var fields: [String: CloudField] = ["identifier": .string(id.name), "createdAt": .date(item.createdAt),
                 "updatedAt": .date(item.updatedAt), "timestamp": .date(item.createdAt),
                 "rawType": rawType,
-                "data": reference(dataID, cascade: true), "list": reference(list.0),
+                "data": reference(dataID), "list": reference(list.0),
                 "device": old?.fields["device"] ?? reference(device)]
             if let title = item.originalTitle { fields["title"] = .string(title) }
             if let preview = item.rawPreview { fields["rawPreview"] = .data(preview) }
@@ -94,7 +94,7 @@ public enum CloudKitGraph {
             }
             result.append(make("ItemEntity", id, scope: scope, fields: fields, parent: list.0))
             result.append(make("ItemDataEntity", dataID, scope: scope,
-                fields: ["rawPasteboardItems": .asset(raw), "item": reference(id)], parent: id))
+                fields: ["rawPasteboardItems": .asset(raw), "item": reference(id, cascade: true)], parent: id))
             grouped[CloudKitJournal.key(list.0, scope: scope), default: []].append(reference(id))
         }
         func list(_ id: CloudRecordID, scope: CloudKitScope, name: String, type: Int64, attributes: Data, index: Int64) {
@@ -102,9 +102,9 @@ public enum CloudKitGraph {
                 ?? CloudRecordID(name: id.name + ".metadata", zone: id.zone, owner: id.owner)
             let refs = (grouped[CloudKitJournal.key(id, scope: scope)] ?? []).sorted { ($0.referencedID?.key ?? "") < ($1.referencedID?.key ?? "") }
             result.append(make("ListEntity", id, scope: scope, fields: ["identifier": .string(id.name), "name": .string(name),
-                "rawType": .integer(type), "rawAttributes": .data(attributes), "items": .array(refs), "metadata": reference(metadata, cascade: true)]))
+                "rawType": .integer(type), "rawAttributes": .data(attributes), "items": .array(refs), "metadata": reference(metadata)]))
             result.append(make("ListMetadataEntity", metadata, scope: scope, fields: ["identifier": .string(metadata.name),
-                "index": .integer(index), "list": reference(id)], parent: id))
+                "index": .integer(index), "list": reference(id, cascade: true)], parent: id))
         }
         list(history, scope: .private, name: "剪贴板", type: 1,
              attributes: try JSONSerialization.data(withJSONObject: ["type": "clipboard", "capacity": capacity], options: .sortedKeys), index: -1)

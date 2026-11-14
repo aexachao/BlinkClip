@@ -218,7 +218,10 @@ public final class CloudKitSyncEngine: CKSyncEngineDelegate {
     private func fail(_ message: String) {
         lastError = message; isRunning = false; generation = UUID(); statusChanged?(message)
         let previous = Array(engines.values); engines.removeAll(); inFlight.removeAll()
-        Task { for engine in previous { await engine.cancelOperations() } }
+        // CKSyncEngine tracks delegate callbacks with task-local state. A regular
+        // Task inherits it and cancelOperations() traps as a reentrant callback.
+        // Leave that context before asking the SDK to cancel outstanding work.
+        Task.detached { for engine in previous { await engine.cancelOperations() } }
     }
 
     nonisolated public func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
@@ -244,7 +247,10 @@ public final class CloudKitSyncEngine: CKSyncEngineDelegate {
                 } else { continue }
                 inFlight[key] = change
             }
-            return CKSyncEngine.RecordZoneChangeBatch(recordsToSave: saves, recordIDsToDelete: deletes)
+            // Parent/child deletions and their list reference updates must commit
+            // together; CloudKit otherwise rejects the intermediate dangling
+            // validating references even when every final record is consistent.
+            return CKSyncEngine.RecordZoneChangeBatch(recordsToSave: saves, recordIDsToDelete: deletes, atomicByZone: true)
         } catch { fail(error.localizedDescription); return nil }
     }
 }

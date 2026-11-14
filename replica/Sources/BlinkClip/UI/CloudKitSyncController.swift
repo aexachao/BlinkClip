@@ -133,6 +133,18 @@ struct ICloudSyncGeneralRow: View {
     @ObservedObject var drive: ICloudDriveSyncController
 
     private var enabled: Bool { drive.isEnabled || sync.isEnabled }
+    private var statusText: String {
+        if drive.isEnabled { return drive.statusText }
+        return sync.isEnabled || sync.canSync ? sync.statusText : drive.statusText
+    }
+
+    // Selecting CloudKit only requests its existing confirmation dialog. Cancelling it
+    // must not silently enable the other backend and upload through iCloud Drive.
+    static func enablePreferredSync(cloudKitAvailable: Bool, cloudKit: () -> Void, drive: () -> Void) {
+        if cloudKitAvailable { cloudKit() }
+        else { drive() }
+    }
+
     /// 状态改成「上次同步 20:17」，放在行标题下方的说明位：标题只写对象，
     /// 时间属于状态，不再和开关挤在同一行抢宽度。
     private var summary: String {
@@ -155,7 +167,11 @@ struct ICloudSyncGeneralRow: View {
             // 开关独占行右端，与文字至少隔 12pt。
             Spacer(minLength: 12)
             Toggle(SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"), isOn: Binding(get: { enabled }, set: { value in
-                if value { drive.setEnabled(true) }
+                if value {
+                    Self.enablePreferredSync(cloudKitAvailable: sync.canSync,
+                                             cloudKit: { sync.setEnabled(true) },
+                                             drive: { drive.setEnabled(true) })
+                }
                 else {
                     if drive.isEnabled { drive.setEnabled(false) }
                     if sync.isEnabled { sync.setEnabled(false) }
@@ -165,6 +181,6 @@ struct ICloudSyncGeneralRow: View {
                 .accessibilityIdentifier("settings.icloud.toggle")
         }
         .frame(minHeight: 42)
-        .help(drive.isEnabled || !sync.isEnabled ? drive.statusText : sync.statusText)
+        .help(statusText)
     }
 }
