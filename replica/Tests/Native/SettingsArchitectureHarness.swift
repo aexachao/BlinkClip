@@ -169,7 +169,7 @@ import BlinkClipCapture
                     }
                 }
             }
-            try check(labels.contains(SettingsCopy.bilingual("未设置", "Not Set")), "cleared screenshot row displays localized Not Set: \(slot)")
+            try check(labels.contains(SettingsCopy.trilingual("未设置", "未設定", "Not Set")), "cleared screenshot row displays localized Not Set: \(slot)")
             try check(restoreNodes().filter { axID($0) == "settings.shortcut.restore." + row }.contains { press($0) }, "actual screenshot individual restore accepts AX press: \(slot)")
             await pause()
             try check(BlinkClipScreenshotSettings.effectiveShortcut(for: slot) == BlinkClipScreenshotSettings.default(for: slot), "individual restore re-enables screenshot default: \(slot)")
@@ -205,6 +205,23 @@ import BlinkClipCapture
         let model = PermissionStatusModel(readAccessibility: { true }, readPostEvents: { true }, readScreenRecording: { true }, requestScreenAccess: {}, requestAccessibilityAccess: {})
         try check(SettingsSection.allCases.map(\.rawValue) == [0,3,2,4,1,5], "stable ordered section IDs")
         try check(SettingsSection(rawValue: 2) == .screenshot, "screenshot deep link preserved")
+        // The six sidebar names are trilingual now: under zh-Hant every one of
+        // them must be Traditional, and no Simplified-only spelling may survive.
+        let settingsLanguage = SettingsCopy.language
+        let sectionTitles = SettingsSection.allCases.map(\.title)
+        if settingsLanguage == .zhHant {
+            try check(sectionTitles == ["一般", "剪貼簿與歷史記錄", "截圖", "快捷鍵", "隱私與權限", "AI 工具"],
+                      "zh-Hant sidebar names: \(sectionTitles)")
+            let simplifiedOnly = ["设置", "默认", "剪贴板", "屏幕", "恢复", "窗口", "保存", "应用", "快捷键", "历史", "权限", "复制"]
+            for title in sectionTitles {
+                for term in simplifiedOnly {
+                    try check(!title.contains(term), "zh-Hant sidebar name still Simplified: \(title) contains \(term)")
+                }
+            }
+        } else if settingsLanguage == .zhHans {
+            try check(sectionTitles == ["通用", "剪贴板与历史", "截图", "快捷键", "隐私与权限", "AI 工具"],
+                      "zh-Hans sidebar names: \(sectionTitles)")
+        }
         let originalRetention = store.preferences.historyRetentionDays
         var screenshotHeader: Data?
         for appearance in ["light", "dark"] {
@@ -314,6 +331,24 @@ import BlinkClipCapture
         }
         // 页脚已删：产品名不再作为侧栏页脚出现；「关于闪贴」变成列表里的最后一行。
         let sidebarNodes = accessibilityTree(navigationHost)
+        // The rendered sidebar must carry the same six trilingual names the
+        // production provider returns for this process language.
+        var sidebarLabels = Set<String>()
+        for node in sidebarNodes {
+            for attribute in [NSAccessibility.Attribute.value, .title, .description] {
+                if let text = node.accessibilityAttributeValue(attribute) as? String { sidebarLabels.insert(text) }
+            }
+            for name in ["accessibilityLabel", "accessibilityValue"] {
+                let selector = NSSelectorFromString(name)
+                if node.responds(to: selector), let text = node.perform(selector)?.takeUnretainedValue() as? String {
+                    sidebarLabels.insert(text)
+                }
+            }
+        }
+        for section in SettingsSection.allCases {
+            try check(sidebarLabels.contains(section.title),
+                      "rendered sidebar is missing \(section.title) in \(settingsLanguage.rawValue): \(sidebarLabels.sorted())")
+        }
         try check(!sidebarNodes.contains { axID($0) == "BlinkClipSettingsProductName" },
                   "the removed settings-footer product name is still rendered")
         try check(sidebarNodes.contains { axID($0) == "BlinkClipSettingsAbout" }, "sidebar is missing the About BlinkClip row")
@@ -348,7 +383,7 @@ import BlinkClipCapture
         try check(store.preferences.historyRetentionDays == originalRetention, "viewing pages does not change retention")
         let reopened = try ClipboardStore(directoryURL: fixture)
         try check(reopened.preferences.historyRetentionDays == originalRetention, "persisted retention unchanged")
-        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,"sections":SettingsSection.allCases.map(\.title),"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
+        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,"sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))

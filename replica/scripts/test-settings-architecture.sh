@@ -23,10 +23,22 @@ for ((run_id=1; run_id<=repeat_count; run_id++)); do
  mkdir -p "$run_out"
  skip_screenshots="${BLINKCLIP_SKIP_SCREENSHOTS:-0}"
  if ((run_id > 1)); then skip_screenshots=1; fi
- for language in en zh-Hans; do
+ for language in en zh-Hans zh-Hant; do
   BLINKCLIP_SETTINGS_RUN_ID="$run_id" BLINKCLIP_SKIP_SCREENSHOTS="$skip_screenshots" \
    "$test_harness" "$run_out" -AppleLanguages "($language)" | tee "$run_out/test-$language.log"
  done
+ # zh-Hant offscreen renders (six settings pages, light + dark) are collected
+ # next to the managed artifacts so the Traditional layout is reviewable.
+ render_dir="${BLINKCLIP_SETTINGS_RENDER_DIR:-/tmp/w3-renders}"
+ if [[ "$skip_screenshots" != 1 ]]; then
+  mkdir -p "$render_dir"
+  for png in "$run_out"/zh-Hant-*.png; do
+   [[ -e "$png" ]] || continue
+   cp "$png" "$render_dir/"
+  done
+ fi
 done
+printf '%s\n' "$(ls -1 "${BLINKCLIP_SETTINGS_RENDER_DIR:-/tmp/w3-renders}"/zh-Hant-*.png 2>/dev/null | wc -l | tr -d ' ')" > "$ARTIFACT_TASK_DIR/out/zh-hant-render-count.txt"
+cat "$ARTIFACT_TASK_DIR/out/zh-hant-render-count.txt"
 compile_native_test_harness settings-shortcut-reset "$replica_root/Sources/BlinkClip/UI/SettingsShortcutReset.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Tests/Native/SettingsShortcutResetHarness.swift" > "$ARTIFACT_TASK_DIR/out/reset-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/reset-test.log"

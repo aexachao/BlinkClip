@@ -11,7 +11,7 @@ mkdir -p "$bundle"
 cp -R "$core/BlinkClipResources/en.lproj" "$core/BlinkClipResources/zh-Hans.lproj" "$bundle/"
 cp "$core/BlinkClipResources/GeneratedIllustrations/"*.png "$bundle/"
 printf '%s\n' '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleDevelopmentRegion</key><string>en</string></dict></plist>' > "$bundle/Info.plist"
-sources=("$core/AppBrand.swift" "$core/ResourceBundle.swift" "$core/SettingsLocalization.swift" "$core/SearchLocalization.swift" "$core/PreviewLocalization.swift" "$core/UnavailablePreviewLocalization.swift" "$core/ShortcutMessages.swift" "$core/BlinkClipAssetRenderer.swift" "$core/SettingsIllustrations.swift" "$replica_root/Tests/Native/BlinkClipOwnedResourcesHarness.swift")
+sources=("$core/AppBrand.swift" "$core/SettingsStrings.swift" "$core/ResourceBundle.swift" "$core/SettingsLocalization.swift" "$core/SearchLocalization.swift" "$core/PreviewLocalization.swift" "$core/UnavailablePreviewLocalization.swift" "$core/ShortcutMessages.swift" "$core/BlinkClipAssetRenderer.swift" "$core/SettingsIllustrations.swift" "$replica_root/Tests/Native/BlinkClipOwnedResourcesHarness.swift")
 shasum -a 256 "${sources[@]}" "$core"/BlinkClipResources/*/* "$replica_root/Package.swift" "$replica_root/scripts/build-app.sh" "$replica_root/Assets/capcap-LICENSE.txt" > "$ARTIFACT_TASK_DIR/out/inputs.sha256"
 xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx14.0" -module-cache-path "$CLANG_MODULE_CACHE_PATH" "${sources[@]}" -o "$ARTIFACT_TASK_DIR/build/harness" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
 for language in fr ja en zh-Hans zh-Hant; do

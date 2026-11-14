@@ -11,16 +11,56 @@ struct BlinkClipOwnedResourcesHarness {
     @MainActor static func main() throws {
         let language = CommandLine.arguments[1]
         let out = URL(fileURLWithPath: CommandLine.arguments[2])
-        let zh = language.hasPrefix("zh")
         var checks: [[String: Any]] = []
         func check(_ name: String, _ passed: Bool, _ value: String = "") {
             checks.append(["case": name, "passed": passed, "value": value])
         }
-        for (languages, expected) in [(["fr", "zh-Hans"], "en"), (["ja"], "en"), (["en"], "en"), (["zh-Hant"], "zh-Hans"), (["", "zh-Hans"], "zh-Hans"), ([], "en")] {
-            check("policy.\(languages)", ResourceBundle.selectedLocale(preferredLanguages: languages).identifier == expected)
+        // An in-app language pick (Defaults.language) must not leak into a run
+        // that only sets -AppleLanguages.
+        UserDefaults.standard.removeObject(forKey: SettingsLanguage.preferenceKey)
+        // zh-Hant is Traditional, never Simplified. The owned bundle ships no
+        // zh-Hant table yet, so a zh-Hant reader gets English (the development
+        // region) rather than Simplified-only glyphs.
+        for (languages, expected) in [(["fr", "zh-Hans"], "en"), (["ja"], "en"), (["en"], "en"),
+                                      (["zh-Hant"], "zh-Hant"), (["zh-TW"], "zh-Hant"),
+                                      (["zh-HK"], "zh-Hant"), (["zh-MO"], "zh-Hant"),
+                                      (["zh-Hans"], "zh-Hans"), (["", "zh-Hans"], "zh-Hans"),
+                                      ([], "en")] {
+            check("policy.\(languages)", ResourceBundle.selectedLocale(preferredLanguages: languages,
+                                                                       storedAppLanguage: nil).identifier == expected)
         }
-        check("active-locale", ResourceBundle.selectedLocale().identifier == (zh ? "zh-Hans" : "en"), Locale.preferredLanguages.description)
-        let tableURL = ResourceBundle.bundle.bundleURL.appendingPathComponent((zh ? "zh-Hans" : "en") + ".lproj/Localizable.strings")
+        let expectedActiveLocale = ["zh-Hant": "zh-Hant", "zh-Hans": "zh-Hans"][language] ?? "en"
+        let enTableURL = ResourceBundle.bundle.bundleURL.appendingPathComponent("en.lproj/Localizable.strings")
+        let hansTableURL = ResourceBundle.bundle.bundleURL.appendingPathComponent("zh-Hans.lproj/Localizable.strings")
+        let enTable = try PropertyListSerialization.propertyList(from: Data(contentsOf: enTableURL), format: nil) as! [String: String]
+        let hansTable = try PropertyListSerialization.propertyList(from: Data(contentsOf: hansTableURL), format: nil) as! [String: String]
+        if language == "zh-Hant" {
+            // Fallback order is zh-Hant -> en. Never zh-Hans.
+            check("zh-hant-falls-back-to-english",
+                  SettingsLocalization.text("settings.general.title") == enTable["settings.general.title"]
+                  && SettingsLocalization.text("settings.general.title") != hansTable["settings.general.title"],
+                  SettingsLocalization.text("settings.general.title"))
+        }
+        check("no-hant-table-yet", !ResourceBundle.bundle.localizations.contains("zh-Hant"),
+              ResourceBundle.bundle.localizations.joined(separator: ","))
+        check("active-locale", ResourceBundle.selectedLocale().identifier == expectedActiveLocale,
+              Locale.preferredLanguages.description)
+        // The table this build can actually show: Simplified for zh-Hans, and
+        // English for zh-Hant while it has no table of its own.
+        let tableLanguage = language == "zh-Hans" ? "zh-Hans" : "en"
+        let simplified = tableLanguage == "zh-Hans"
+        // No table of its own means the Traditional run falls back to the
+        // English text. Chinese has a single CLDR plural category, so the
+        // English "other" branch is selected even for 1 ("1 characters").
+        // Recorded here instead of quietly expecting an English singular.
+        let hantFallsBackToEnglish = language == "zh-Hant"
+        func englishCount(_ count: Int32, _ singular: String, _ plural: String) -> String {
+            count == 1 && !hantFallsBackToEnglish ? "\(count) " + singular : "\(count) " + plural
+        }
+        func englishFileCount(_ count: Int32) -> String {
+            count == 1 && !hantFallsBackToEnglish ? "File" : "\(count) files"
+        }
+        let tableURL = ResourceBundle.bundle.bundleURL.appendingPathComponent(tableLanguage + ".lproj/Localizable.strings")
         let table = try PropertyListSerialization.propertyList(from: Data(contentsOf: tableURL), format: nil) as! [String: String]
         check("table-count", table.count == 126)
         for (key, expected) in table {
@@ -30,10 +70,10 @@ struct BlinkClipOwnedResourcesHarness {
         }
         for count: Int32 in [0, 1, 2] {
             for (name, resource, expected) in [
-                ("characters", PreviewLocalization.characterCount(count), zh ? "\(count) 个字符" : "\(count) " + (count == 1 ? "character" : "characters")),
-                ("words", PreviewLocalization.wordCount(count), zh ? "\(count) 个词" : "\(count) " + (count == 1 ? "word" : "words")),
-                ("lines", PreviewLocalization.lineCount(count), zh ? "\(count) 行" : "\(count) " + (count == 1 ? "line" : "lines")),
-                ("files", PreviewLocalization.fileCount(count), zh ? "\(count) 个文件" : (count == 1 ? "File" : "\(count) files"))
+                ("characters", PreviewLocalization.characterCount(count), simplified ? "\(count) 个字符" : englishCount(count, "character", "characters")),
+                ("words", PreviewLocalization.wordCount(count), simplified ? "\(count) 个词" : englishCount(count, "word", "words")),
+                ("lines", PreviewLocalization.lineCount(count), simplified ? "\(count) 行" : englishCount(count, "line", "lines")),
+                ("files", PreviewLocalization.fileCount(count), simplified ? "\(count) 个文件" : englishFileCount(count))
             ] {
                 let value = String(localized: resource)
                 check("plural.\(name).\(count)", value == expected, value)

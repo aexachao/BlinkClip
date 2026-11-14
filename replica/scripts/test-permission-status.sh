@@ -8,7 +8,9 @@ mkdir -p "$test_build/module-cache" "$test_out"
 export CLANG_MODULE_CACHE_PATH="$test_build/module-cache"
 export SWIFT_MODULECACHE_PATH="$test_build/module-cache"
 target="$(uname -m)-apple-macosx14.0"
-sources=("$replica_root/Sources/BlinkClipCore/AccessibilityService.swift" "$replica_root/Sources/BlinkClipCore/PermissionPromptPolicy.swift" "$replica_root/Sources/BlinkClipCore/PermissionStatusSnapshot.swift")
+# SettingsStrings carries the one trilingual language resolver the permission
+# page now uses, so it belongs in the scratch Core module.
+sources=("$replica_root/Sources/BlinkClipCore/AccessibilityService.swift" "$replica_root/Sources/BlinkClipCore/PermissionPromptPolicy.swift" "$replica_root/Sources/BlinkClipCore/PermissionStatusSnapshot.swift" "$replica_root/Sources/BlinkClipCore/SettingsStrings.swift")
 xcrun swiftc -swift-version 5 -target "$target" -module-cache-path "$test_build/module-cache" \
   -emit-library -emit-module -module-name BlinkClipCore "${sources[@]}" \
   -emit-module-path "$test_build/BlinkClipCore.swiftmodule" -o "$test_build/libBlinkClipCore.dylib" > "$test_out/compile.log" 2>&1
@@ -38,8 +40,12 @@ assert "permission-post-events" not in source, "the separate event-posting row i
 assert "跨应用发送事件" not in source, "the removed event-posting capability title is gone"
 assert "postEventsHint" in source, "the merged row keeps an inline hint for the AX/post mismatch"
 # J1-b: the status line is only 已授权 / 未授权, never "已授权：<capability>".
-assert source.count('PermissionCopy.text("已授权", "Granted")') >= 2, "status copy is the bare 已授权 / Granted"
-assert source.count('PermissionCopy.text("未授权", "Not granted")') >= 2, "status copy is the bare 未授权 / Not granted"
+# The status copy is a trilingual triple: 已授权 / 已授權 / Granted.
+assert source.count('PermissionCopy.text("已授权", "已授權", "Granted")') >= 2, "status copy is the bare 已授权 / 已授權 / Granted"
+assert source.count('PermissionCopy.text("未授权", "未授權", "Not granted")') >= 2, "status copy is the bare 未授权 / 未授權 / Not granted"
+# No blanket "any zh is Simplified" branch may come back to this page.
+assert 'hasPrefix("zh")' not in source, "the permission page must resolve three languages through SettingsStrings"
+assert 'SettingsStrings.trilingual(zhHans, zhHant, en' in source, "PermissionCopy delegates to the one shared resolver"
 assert "已授权：" not in source and "Granted:" not in source, "status lines carry no capability after a colon"
 assert "未生效：" not in source and "Not active:" not in source, "denied status is the bare 未授权 / Not granted"
 # J1-a: the refresh button sits below a divider and keeps its right alignment.
@@ -53,7 +59,7 @@ shasum -a 256 "${sources[@]}" "$replica_root/Sources/BlinkClip/UI/PermissionStat
   "$replica_root/Sources/BlinkClip/UI/AccessibilityRequestAction.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" \
   "$replica_root/Sources/BlinkClip/UI/SettingsWindowFocusRestore.swift" "$replica_root/Sources/BlinkClip/AppMain.swift" > "$test_out/production-inputs.sha256"
-for language in en zh-Hans; do
+for language in en zh-Hans zh-Hant; do
   "$test_build/permission-status" "$test_out" -AppleLanguages "($language)" > "$test_out/$language.log" 2>&1
   cat "$test_out/$language.log"
 done

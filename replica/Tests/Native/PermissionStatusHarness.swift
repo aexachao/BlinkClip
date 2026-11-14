@@ -188,7 +188,12 @@ struct PermissionStatusHarness {
         let ledgerSuite = "blinkclip.permission-ledger.\(UUID().uuidString)"
         let ledger = UserDefaults(suiteName: ledgerSuite)!
         defer { ledger.removePersistentDomain(forName: ledgerSuite) }
-        let zh = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+        // The permission page is trilingual now: expectations come from the one
+        // shared resolver instead of assuming "any zh is Simplified".
+        let permissionLanguage = SettingsLanguage.resolved()
+        func permissionCopy(_ hans: String, _ hant: String, _ en: String) -> String {
+            SettingsStrings.trilingual(hans, hant, en, language: permissionLanguage)
+        }
         let newBuild = PermissionProbeIdentity(executablePath: "/Applications/BlinkClip.app/Contents/MacOS/BlinkClip",
                                                bundleIdentifier: "com.chrisli.blinkclip", codeHash: "cdhash-new",
                                                teamIdentifier: "4NJM425J3B")
@@ -236,17 +241,17 @@ struct PermissionStatusHarness {
         check(mismatchModel.requirementMismatch, "Returning to the app must refresh the stale-requirement hint")
         // The row title already names the capability; the status line is only
         // granted / not granted — no colon, no repeated capability name.
-        let notGranted = zh ? "未授权" : "Not granted"
-        let grantedCopy = zh ? "已授权" : "Granted"
+        let notGranted = permissionCopy("未授权", "未授權", "Not granted")
+        let grantedCopy = permissionCopy("已授权", "已授權", "Granted")
         check(mismatchModel.accessibilityStatus == notGranted,
               "Denied Accessibility status is exactly 未授权 / Not granted")
         check(!mismatchModel.accessibilityStatus.contains(":") && !mismatchModel.accessibilityStatus.contains("："),
               "The status line carries no colon")
-        check(!mismatchModel.accessibilityStatus.contains(zh ? "辅助功能" : "Accessibility"),
+        check(!mismatchModel.accessibilityStatus.contains(permissionCopy("辅助功能", "輔助功能", "Accessibility")),
               "The status line does not repeat the capability name")
         check(mismatchModel.screenRecordingStatus == notGranted,
               "Denied Screen Recording status is exactly 未授权 / Not granted")
-        check(!mismatchModel.screenRecordingStatus.contains(zh ? "屏幕录制" : "Screen Recording"),
+        check(!mismatchModel.screenRecordingStatus.contains(permissionCopy("屏幕录制", "螢幕錄製", "Screen Recording")),
               "Screen Recording status does not repeat the capability name")
         // J1-e: event posting is reported inside the Accessibility row, so a
         // mismatch between the two is one inline hint, never a second row.
@@ -259,7 +264,7 @@ struct PermissionStatusHarness {
         await settle(mergedRow)
         check(mergedRow.accessibilityStatus == grantedCopy,
               "Granted Accessibility status is exactly 已授权 / Granted")
-        check(mergedRow.postEventsHint?.contains(zh ? "辅助功能" : "Accessibility") == true,
+        check(mergedRow.postEventsHint?.contains(permissionCopy("辅助功能", "輔助功能", "Accessibility")) == true,
               "AX granted + event posting denied surfaces one inline hint on the Accessibility row")
         mergedRow.stop()
         mismatchModel.stop()
