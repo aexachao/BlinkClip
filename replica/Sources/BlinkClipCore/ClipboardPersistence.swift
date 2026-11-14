@@ -631,6 +631,23 @@ final class ClipboardPersistence {
         return value
     }
 
+    /// `item(_:)` rebuilds these fields from managed columns and side tables instead of the
+    /// archived value, so the in-memory state a mutation publishes must adopt the same
+    /// projection. Otherwise `store.items` describes a record that no reader can observe: a
+    /// fresh `ClipboardStore` (or another process merging this one) would disagree with it, and
+    /// the next three-way merge would rewrite the columns from the stale copy — losing a
+    /// content checksum that the native item data layer derived from the payloads.
+    nonisolated static func projectPersistedValues(_ item: inout ClipboardItem, from object: NSManagedObject) {
+        item.nativeIdentifier = object.value(forKey: "nativeIdentifier") as? String
+        item.nativeChecksum = object.value(forKey: "nativeChecksum") as? String
+        if item.pinboardIDs.isEmpty {
+            item.pinboardOrder = nil
+        } else {
+            item.pinboardOrder = (object.value(forKey: "displayOrderInPinboard") as? NSNumber)?.int64Value
+        }
+        ClipboardSourcePersistence.projectPersistedApplication(&item, from: object)
+    }
+
     @MainActor
     final class ManagedRepository {
         private let context: NSManagedObjectContext
@@ -959,10 +976,14 @@ final class ClipboardPersistence {
                 let itemValues = restoredMetadataOnly.isEmpty ? state.items : state.items.filter { !restoredMetadataOnly.contains($0.id) }
                 let itemPrevious = restoredMetadataOnly.isEmpty && nativeRestoreWithoutValue.isEmpty ? previousItems
                     : previousItems.filter { !restoredMetadataOnly.contains($0.id) && !nativeRestoreWithoutValue.contains($0.id) }
+                // Entities written by this transaction, used to read the persisted projection back
+                // into the published state once the save succeeds.
+                var persistedItems: [UUID: NSManagedObject] = [:]
                 try transaction.repository.update(itemValues, previous: itemPrevious, entity: "Item", key: { $0.id.uuidString },
                            deletingKeys: deletingItemIDs.map(\.uuidString),
                            updatingKeys: replacements.map(\.uuidString),
                            alreadyDeletedKeys: Set(transaction.repository.alreadyDeletedItemIDs.map(\.uuidString))) { item, old, object in
+                    persistedItems[item.id] = object
                     if transaction.repository.unassignedItemIDs.contains(item.id) {
                         if old.map(contentForComparison) != contentForComparison(item) {
                             object.setValue(try encode(content(item)), forKey: "content")
@@ -1118,6 +1139,12 @@ final class ClipboardPersistence {
                     // Store callers hold their existing cross-process lock through this save/cursor update.
                     viewHistoryToken = context.persistentStoreCoordinator?.currentPersistentHistoryToken(fromStores: nil)
                     viewRevision = root.value(forKey: "revision") as? UUID
+                }
+                // The columns are authoritative for the projected fields even when this transaction
+                // changed nothing: an import can replace a published value with the unprojected one.
+                for index in outcome.state.items.indices {
+                    guard let object = persistedItems[outcome.state.items[index].id] else { continue }
+                    Self.projectPersistedValues(&outcome.state.items[index], from: object)
                 }
                 outcome.state.pinboards = transaction.repository.lists.projectNativePinboards(outcome.state.pinboards)
                 return outcome

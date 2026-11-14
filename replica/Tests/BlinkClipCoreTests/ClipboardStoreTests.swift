@@ -1061,4 +1061,111 @@ final class ClipboardStoreTests {
             expectEqual(reopened.items.first { $0.id == color }?.kind, .color)
         }
     }
+
+    // The read projection rebuilds nativeChecksum, the pinboard display order and the source
+    // application relation from managed columns and side tables. A mutation must publish those
+    // same values, otherwise the item a caller holds describes a record no reader can observe
+    // and the next merge rewrites the column from the stale copy.
+    func testSavedItemsPublishThePersistedProjection() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await MainActor.run {
+            let store = try ClipboardStore(directoryURL: directory)
+            let application = SourceApplicationRecord(bundleIdentifier: "com.example.projection",
+                                                      name: "投影来源", rawIcon: Data([1, 2, 3]), rawColor: 7)
+            let board = try store.createPinboard(name: "投影分组", colorHex: "#223344")
+            let id = try store.add(ClipboardItem(plainText: "projection fixture",
+                                                 payloads: ["public.utf8-plain-text": Data("projection fixture".utf8)],
+                                                 sourceApplicationBundleID: application.bundleIdentifier),
+                                   sourceApplication: application)
+            let added = try requireValue(store.items.first { $0.id == id })
+            let checksum = try requireValue(ClipboardStore.knownPasteboardChecksum(from: added.payloads))
+            expectEqual(added.nativeChecksum, checksum,
+                        "A saved item publishes the content identity the native item data layer derived")
+            expectEqual(added.sourceApplicationSnapshot, application,
+                        "The capture relation is published as the resolved snapshot")
+            expectEqual(store.items, try ClipboardStore(directoryURL: directory).items,
+                        "The published state equals a fresh read of the same commit")
+
+            // An item assigned through the public collection is a value-only record until save.
+            let assigned = ClipboardItem(kind: .unknown, payloads: ["local.projection": Data([9, 8, 7])],
+                                         pinboardIDs: [board.id], pinboardOwnerID: board.id)
+            store.items.append(assigned)
+            try store.save()
+            let reopened = try ClipboardStore(directoryURL: directory)
+            expectEqual(store.items, reopened.items,
+                        "Saving an assigned item publishes the persisted projection")
+            let persisted = try requireValue(reopened.items.first { $0.id == assigned.id })
+            expectNotNil(persisted.nativeChecksum, "The item data layer derived a checksum for the stored payloads")
+            expectEqual(persisted.pinboardOrder, 0, "The managed display order is projected for a grouped item")
+            expectEqual(persisted.hasSourceApplicationSnapshot, true,
+                        "A saved item publishes its resolved native source application relation")
+            let sourced = try requireValue(store.items.first { $0.id == id })
+            expectTrue(sourced.hasSourceApplicationSnapshot)
+            expectEqual(sourced.sourceApplicationSnapshot, application)
+            expectEqual(sourced.sourceApplicationBundleID, application.bundleIdentifier)
+
+            // A later save must not rewrite the derived checksum from an unprojected copy.
+            let pasteboard = privatePasteboard()
+            defer { pasteboard.releaseGlobally() }
+            try store.writeToPasteboard(ids: [id], pasteboard: pasteboard)
+            expectEqual(try ClipboardStore(directoryURL: directory).items.first { $0.id == id }?.nativeChecksum,
+                        checksum, "A later save keeps the derived content identity")
+            expectEqual(store.items.first { $0.id == id }?.nativeChecksum, checksum)
+
+            // The projection survives an archive round trip, which is how migration copies values.
+            let archive = directory.appendingPathComponent("projection.json")
+            try store.exportArchive(to: archive)
+            let destination = try ClipboardStore(directoryURL: directory.appendingPathComponent("destination"))
+            try destination.importArchive(from: archive)
+            expectEqual(destination.items, store.items, "Imported values keep the persisted projection")
+        }
+    }
+
+    // Private payload containers are written by this app, not by the clipboard's owner. One
+    // unreadable container used to fail every save that touched its row, which made the record
+    // impossible to delete. It must degrade to the representations that still exist, while real
+    // damage (an unreadable store) keeps failing.
+    func testCorruptPrivateContainersDegradeInsteadOfFailingWrites() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await MainActor.run {
+            let store = try ClipboardStore(directoryURL: directory)
+            let html = Data("<b>fallback</b>".utf8)
+            let corrupt = ClipboardItem(kind: .richText, plainText: "fallback",
+                payloads: ["public.html": html,
+                           "com.chrisli.blinkclip.internal.items+json": Data("stale items".utf8)])
+            let id = try store.add(corrupt)
+            expectEqual(store.items.first { $0.id == id }?.nativeChecksum,
+                        try ClipboardStore.knownPasteboardChecksum(from: corrupt.payloads),
+                        "The remaining representation still identifies the item")
+            try store.save()
+            let reopened = try ClipboardStore(directoryURL: directory)
+            let stored = try requireValue(reopened.items.first { $0.id == id })
+            expectEqual(stored.payloads["public.html"], html, "The decodable representation is preserved")
+            expectEqual(try ClipboardStore.originalPasteboardItems(from: stored.payloads).map { $0.currentOrderedTypes() },
+                        [["public.html"]], "The unreadable container is not resurrected on read")
+            let pasteboard = privatePasteboard()
+            defer { pasteboard.releaseGlobally() }
+            try reopened.writeToPasteboard(ids: [id], pasteboard: pasteboard)
+            expectEqual(pasteboard.data(forType: .html), html)
+
+            // A partially corrupt container keeps the entries that still decode.
+            let kept = PasteboardItem()
+            kept.setString("kept entry", forType: "public.utf8-plain-text")
+            var container = "["
+            container += String(decoding: try JSONEncoder().encode(kept), as: UTF8.self)
+            container += ",{\"broken\":1},\"junk\"]"
+            let recovered = try ClipboardStore.originalPasteboardItems(from: [
+                "com.chrisli.blinkclip.internal.items+json": Data(container.utf8)])
+            expectEqual(recovered.count, 1, "Undecodable container entries are skipped, not fatal")
+            expectEqual(recovered.first?.stringForType(forType: "public.utf8-plain-text"), "kept entry")
+
+            // Genuine data damage still fails where it is decoded.
+            let corruptDirectory = directory.appendingPathComponent("corrupt-store")
+            try FileManager.default.createDirectory(at: corruptDirectory, withIntermediateDirectories: true)
+            try Data("{corrupt disk state".utf8).write(to: corruptDirectory.appendingPathComponent("clipboard.json"))
+            expectThrows(try ClipboardStore(directoryURL: corruptDirectory))
+        }
+    }
 }

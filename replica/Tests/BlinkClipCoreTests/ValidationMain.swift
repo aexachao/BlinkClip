@@ -116,6 +116,8 @@ struct ValidationMain {
             ,("address-stack-table-contracts", suite.testAddressStackTableContracts)
             ,("address-ocr-preparation-word-geometry", suite.testAddressOCRPreparationAndWordGeometry)
             ,("payload-less-item-identity", suite.testPayloadLessItemsKeepDistinctIdentityWhileDuplicatesStillDedupe)
+            ,("persisted-projection-after-save", suite.testSavedItemsPublishThePersistedProjection)
+            ,("corrupt-payload-container-degrades", suite.testCorruptPrivateContainersDegradeInsteadOfFailingWrites)
         ]
         var selected: Set<String>?
         if let index = CommandLine.arguments.firstIndex(of: "--only") {

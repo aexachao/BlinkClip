@@ -135,22 +135,35 @@ final class ClipboardSourcePersistence {
 
     // 38222c / 383df4 consume the selected entity's current sourceApplication relation.
     nonisolated static func projectApplication(_ item: inout ClipboardItem, from object: NSManagedObject) throws {
+        guard projectApplicationIfResolvable(&item, from: object) else { throw CocoaError(.fileReadCorruptFile) }
+    }
+
+    /// Post-commit form: this transaction just wrote the relation, so a malformed one degrades
+    /// to the unresolved projection instead of failing a save that already succeeded.
+    nonisolated static func projectPersistedApplication(_ item: inout ClipboardItem, from object: NSManagedObject) {
+        _ = projectApplicationIfResolvable(&item, from: object)
+    }
+
+    @discardableResult
+    private nonisolated static func projectApplicationIfResolvable(_ item: inout ClipboardItem,
+                                                                 from object: NSManagedObject) -> Bool {
         item.hasSourceApplicationSnapshot = true
         item.sourceApplicationRelationIsKnown = true
         guard let application = object.value(forKey: "sourceApplication") as? NSManagedObject else {
             item.sourceApplicationSnapshot = nil
             item.sourceApplicationBundleID = nil
-            return
+            return true
         }
         guard let identifier = application.value(forKey: "bundleIdentifier") as? String,
               let name = application.value(forKey: "name") as? String,
               let color = application.value(forKey: "rawColor") as? NSNumber else {
-            throw CocoaError(.fileReadCorruptFile)
+            return false
         }
         item.sourceApplicationBundleID = identifier
         item.sourceApplicationSnapshot = SourceApplicationRecord(bundleIdentifier: identifier, name: name,
             rawIcon: application.value(forKey: "rawIcon") as? Data,
             rawColor: UInt64(bitPattern: color.int64Value))
+        return true
     }
 
     // 35fa18/35fe08: the icon readers use exact case-insensitive names, not the suggestion regex.
