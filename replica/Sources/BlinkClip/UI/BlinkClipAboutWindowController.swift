@@ -3,15 +3,21 @@ import Combine
 import BlinkClipCore
 import os
 
-/// The About window: app icon, product name, installed version, a one-line
-/// summary, links, and a single action row.
+/// The About window: app icon, product name, version, a one-line summary,
+/// links, and a single action row.
 ///
-/// The status line sits on its own line directly above the buttons and always
-/// uses secondary colour, so a failed check never pushes the layout around and
-/// never shows raw network detail — the gentle copy comes from
-/// `BlinkClipUpdateChecker`. The check button starts Sparkle's own update flow;
-/// the status line reports what the appcast says. Those are two different jobs
-/// and stay separate.
+/// The status line belongs to the action block: it sits just above the button
+/// row (8 pt stack spacing, 9 pt frame to frame), on the same centred axis, so it can never float in the loose space
+/// above the buttons. It always uses secondary colour, so a failed check never
+/// pushes the layout around and never shows raw network detail — the gentle copy
+/// comes from `BlinkClipUpdateChecker`. The status line only ever reports a
+/// timestamp ("上次检查 21:04") or a concrete pending/available/failure fact; it
+/// never claims the install is current. Sparkle's own dialog already says
+/// "you're up to date" for a user-initiated check, and Sparkle 2.10.1 has no
+/// public hook to suppress that modal, so the inline line deliberately does not
+/// repeat it (`SPUStandardUserDriverDelegate` only observes modal alerts).
+/// The check button starts Sparkle's own update flow; those are two jobs and
+/// stay separate.
 @MainActor
 final class BlinkClipAboutWindowController: NSWindowController {
     static let windowIdentifier = "blinkclip-about-window"
@@ -83,7 +89,7 @@ final class BlinkClipAboutWindowController: NSWindowController {
         name.alignment = .center
         name.setAccessibilityIdentifier("about-product-name")
 
-        versionLabel.stringValue = text("updates.current-version") + " " + checker.currentVersion
+        versionLabel.stringValue = String(format: text("updates.current-version"), checker.currentVersion)
         versionLabel.font = .systemFont(ofSize: 12.5)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
@@ -150,9 +156,10 @@ final class BlinkClipAboutWindowController: NSWindowController {
         buttonHolder.translatesAutoresizingMaskIntoConstraints = false
         buttonHolder.addSubview(buttonRow)
 
-        // Equal flexible bands above and below the identity block: the block is
-        // centred in the space above the status line instead of leaving one
-        // loose gap at the bottom.
+        // One flexible band above the identity block and one between the legal
+        // row and the action block: the identity block stays optically centred,
+        // and the status line is anchored just above the buttons instead of
+        // floating in leftover space.
         let topSpacer = NSView()
         let bottomSpacer = NSView()
         for spacer in [topSpacer, bottomSpacer] {
@@ -171,6 +178,7 @@ final class BlinkClipAboutWindowController: NSWindowController {
         stack.setCustomSpacing(16, after: description)
         stack.setCustomSpacing(14, after: divider)
         stack.setCustomSpacing(16, after: legal)
+        stack.setCustomSpacing(8, after: statusLabel)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
 
@@ -187,16 +195,27 @@ final class BlinkClipAboutWindowController: NSWindowController {
 
             divider.widthAnchor.constraint(equalTo: stack.widthAnchor),
 
+            // The status line and the buttons form one action block: same
+            // centred axis, 8 pt apart. The divider/links/legal rows above stay
+            // centred too, so the whole window keeps one vertical axis.
             statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            statusLabel.heightAnchor.constraint(equalToConstant: 30),
 
             buttonHolder.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            buttonRow.trailingAnchor.constraint(equalTo: buttonHolder.trailingAnchor),
+            buttonRow.centerXAnchor.constraint(equalTo: buttonHolder.centerXAnchor),
             buttonRow.topAnchor.constraint(equalTo: buttonHolder.topAnchor),
             buttonRow.bottomAnchor.constraint(equalTo: buttonHolder.bottomAnchor),
+            // The buttons must never be squeezed by the flexible bands: their
+            // row keeps its native height, so the 8 pt gap above is real.
+            buttonHolder.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
             checkButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 104),
             closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
         ])
+
+        // Emphasis is a window-level decision, not an appearance-level one: the
+        // check button is the default action (Return) in light and dark alike.
+        // Setting the cell explicitly matters because this window is built in
+        // code; without it AppKit may not resolve a default button at all.
+        window?.defaultButtonCell = checkButton.cell as? NSButtonCell
     }
 
     /// A borderless link button: no new dependency, and VoiceOver still reads it
@@ -222,13 +241,21 @@ final class BlinkClipAboutWindowController: NSWindowController {
         statusLabel.textColor = .secondaryLabelColor
         switch state {
         case .idle:
-            statusLabel.stringValue = ""
+            // Reopening About before anything ran shows either "尚未检查更新"
+            // or the persisted time of the last completed check — never a
+            // freshness claim.
+            statusLabel.stringValue = checker.lastCheckSummary
         case .checking:
             statusLabel.stringValue = text("updates.checking")
         case .upToDate:
-            statusLabel.stringValue = text("updates.up-to-date")
+            // Sparkle's user-initiated check shows its own "you're up to date"
+            // alert. Repeating that sentence inline would be two places saying
+            // the same thing, so the inline line carries only the verification
+            // time.
+            statusLabel.stringValue = checker.lastCheckSummary
         case let .available(update):
-            statusLabel.stringValue = String(format: text("updates.available-format"), update.version)
+            statusLabel.stringValue = String(format: text("updates.available-format"),
+                                             update.version, checker.lastCheckTime)
         case let .failed(message):
             statusLabel.stringValue = message
         }

@@ -7,13 +7,16 @@ private final class UpdateProtocol: URLProtocol {
     private static var payload = Data()
     private static var status = 200
     private static var failure: Error?
+    private static var delay: TimeInterval = 0.02
     private static var requests: [URLRequest] = []
 
-    static func reply(_ data: Data, status: Int = 200, failure: Error? = nil) {
+    static func reply(_ data: Data, status: Int = 200, failure: Error? = nil,
+                      delay: TimeInterval = 0.02) {
         lock.withLock {
             payload = data
             self.status = status
             self.failure = failure
+            Self.delay = delay
             requests = []
         }
     }
@@ -25,11 +28,11 @@ private final class UpdateProtocol: URLProtocol {
     override func stopLoading() { }
 
     override func startLoading() {
-        let (data, status, failure) = Self.lock.withLock {
+        let (data, status, failure, delay) = Self.lock.withLock {
             Self.requests.append(request)
-            return (Self.payload, Self.status, Self.failure)
+            return (Self.payload, Self.status, Self.failure, Self.delay)
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.02) { [self] in
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [self] in
             if let failure {
                 client?.urlProtocol(self, didFailWithError: failure)
                 return
@@ -96,8 +99,12 @@ struct AppUpdateHarness {
         return Data(xml.utf8)
     }
 
-    static func reply(_ data: Data, status: Int = 200) { UpdateProtocol.reply(data, status: status) }
-    static func reply(feed items: [FeedItem], status: Int = 200) { reply(appcast(items), status: status) }
+    static func reply(_ data: Data, status: Int = 200, delay: TimeInterval = 0.02) {
+        UpdateProtocol.reply(data, status: status, delay: delay)
+    }
+    static func reply(feed items: [FeedItem], status: Int = 200, delay: TimeInterval = 0.02) {
+        reply(appcast(items), status: status, delay: delay)
+    }
 
     @MainActor static func pause() async { try? await Task.sleep(nanoseconds: 250_000_000) }
 
@@ -163,7 +170,7 @@ struct AppUpdateHarness {
     @MainActor static func liveChecker(installed: String, feed: URL) async -> BlinkClipUpdateChecker {
         let checker = BlinkClipUpdateChecker(currentVersion: installed,
                                              session: URLSession(configuration: .ephemeral),
-                                             feedURL: feed)
+                                             feedURL: feed, defaults: freshDefaults())
         await checker.check(force: true)
         return checker
     }
@@ -178,10 +185,94 @@ struct AppUpdateHarness {
         throw Failure(message: "the appcast answers (\(probe.detail)) but the product cannot read it: \(reason)\(diagnostic)")
     }
 
+    /// Every About controller in this harness gets its own defaults domain, so
+    /// one scenario's persisted timestamp cannot leak into the next.
+    static func freshDefaults() -> UserDefaults {
+        let suite = "local.blinkclip.regression.updates.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+
+    @MainActor static func lastCheckedText(_ date: Date) -> String {
+        String(format: SettingsLocalization.text("updates.last-check-format"),
+               BlinkClipUpdateChecker.timeText(date))
+    }
+
+    @MainActor static var neverCheckedText: String { SettingsLocalization.text("updates.never-checked") }
+
+    /// Geometry the About window promises, measured in content coordinates:
+    /// the status line sits 8 pt above the button row on the same centred axis,
+    /// and the button group is centred with equal left/right margins.
+    struct AboutLayout {
+        let statusButtonGap: CGFloat
+        let statusRowCenterOffset: CGFloat
+        let buttonLeftInset: CGFloat
+        let buttonRightInset: CGFloat
+        let statusHeight: CGFloat
+        let buttonGroupWidth: CGFloat
+        var debugDescription: String = ""
+
+        var json: [String: Any] {
+            ["status_button_gap": Double(statusButtonGap),
+             "status_row_center_offset": Double(statusRowCenterOffset),
+             "button_left_inset": Double(buttonLeftInset),
+             "button_right_inset": Double(buttonRightInset),
+             "status_height": Double(statusHeight),
+             "button_group_width": Double(buttonGroupWidth)]
+        }
+    }
+
+    @MainActor static func layout(_ controller: BlinkClipAboutWindowController) -> AboutLayout {
+        guard let content = controller.window?.contentView else {
+            return AboutLayout(statusButtonGap: -1, statusRowCenterOffset: -1,
+                               buttonLeftInset: -1, buttonRightInset: -1,
+                               statusHeight: -1, buttonGroupWidth: -1)
+        }
+        content.layoutSubtreeIfNeeded()
+        let status = controller.statusLabel.convert(controller.statusLabel.bounds, to: content)
+        let check = controller.checkButton.convert(controller.checkButton.bounds, to: content)
+        let close = controller.closeButton.convert(controller.closeButton.bounds, to: content)
+        let group = check.union(close)
+        var measured = AboutLayout(statusButtonGap: status.minY - group.maxY,
+                                   statusRowCenterOffset: status.midX - group.midX,
+                                   buttonLeftInset: group.minX,
+                                   buttonRightInset: content.bounds.width - group.maxX,
+                                   statusHeight: status.height,
+                                   buttonGroupWidth: group.width)
+        let row = controller.checkButton.superview
+        let holder = row?.superview
+        let rowFrame = row.map { $0.convert($0.bounds, to: content) }
+        let holderFrame = holder.map { $0.convert($0.bounds, to: content) }
+        measured.debugDescription = "status=\(status) check=\(check) close=\(close) row=\(String(describing: rowFrame)) holder=\(String(describing: holderFrame)) content=\(content.bounds)"
+        return measured
+    }
+
+    @MainActor static func assertAboutLayout(_ controller: BlinkClipAboutWindowController) throws {
+        let measured = layout(controller)
+        try check(measured.statusButtonGap >= 8 && measured.statusButtonGap <= 12,
+                  "Status line is not 8–10 pt above the buttons: \(measured.statusButtonGap) \(measured.debugDescription)")
+        try check(abs(measured.statusRowCenterOffset) <= 2,
+                  "Status line is not centred over the buttons: \(measured.statusRowCenterOffset)")
+        try check(abs(measured.buttonLeftInset - measured.buttonRightInset) <= 2,
+                  "Button group is not centred in the window: left \(measured.buttonLeftInset) right \(measured.buttonRightInset)")
+    }
+
+    /// A completed check reports the timestamp only. Sparkle's own
+    /// user-initiated alert carries the "you're up to date" sentence; the inline
+    /// line must not repeat it (and Sparkle 2.10.1 has no public hook to
+    /// suppress that alert).
     @MainActor static func assertUpToDateAbout(_ checker: BlinkClipUpdateChecker, installed: String) throws {
         let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-        try check(controller.statusLabel.stringValue == SettingsLocalization.text("updates.up-to-date"),
-                  "About disagrees that \(installed) is current: \(controller.statusLabel.stringValue)")
+        guard let checkedAt = checker.lastCheckDate else {
+            throw Failure(message: "About has no completed-check timestamp for \(installed)")
+        }
+        let expected = lastCheckedText(checkedAt)
+        try check(controller.statusLabel.stringValue == expected,
+                  "About does not report the check time for \(installed): \(controller.statusLabel.stringValue)")
+        try check(!controller.statusLabel.stringValue.lowercased().contains("up to date")
+                  && !controller.statusLabel.stringValue.contains("已是最新"),
+                  "About repeats Sparkle's no-update sentence: \(controller.statusLabel.stringValue)")
     }
 
     /// `--live`: compare the installed version against the version the real
@@ -280,10 +371,33 @@ struct AppUpdateHarness {
                     printSkipped(skip.reason)
                 }
             }
+            let summary = "{\"passed\":true,\"version_comparison\":true,\"appcast_parsing\":true,\"gentle_failures\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_controls\":true,\"about_layout\":true,\"last_check_timestamp\":true}"
             if let index = CommandLine.arguments.firstIndex(of: "--render"), index + 1 < CommandLine.arguments.count {
-                try await render(into: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true), session: session)
+                let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+                let prepared = try await prepareRenders(session: session)
+                // A default button is only emphasised in a key window, and a key
+                // window only exists once the app runs its event loop. Prepare
+                // (async) first, then snapshot from a timer inside a real app
+                // run, so the screenshots show the weight a user actually sees
+                // in both appearances instead of an inactive grey pair.
+                NSApp.activate(ignoringOtherApps: true)
+                Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { _ in
+                    var code: Int32 = 0
+                    do {
+                        let written = try snapshot(prepared, into: directory)
+                        print("{\"renders\":\(written),\"directory\":\"\(directory.path)\"}")
+                        print(summary)
+                    } catch {
+                        print("{\"passed\":false,\"error\":\"\(String(describing: error))\"}")
+                        code = 1
+                    }
+                    fflush(stdout)
+                    exit(code)
+                }
+                app.run()
+                return
             }
-            print("{\"passed\":true,\"version_comparison\":true,\"appcast_parsing\":true,\"gentle_failures\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_controls\":true}")
+            print(summary)
         } catch {
             let result: [String: Any] = ["passed": false, "error": String(describing: error)]
             print(String(data: try! JSONSerialization.data(withJSONObject: result), encoding: .utf8)!)
@@ -418,11 +532,13 @@ struct AppUpdateHarness {
                   "Missing SUFeedURL was not handled locally: \(noFeedMessage)")
 
         // ── About window ────────────────────────────────────────────────────
-        try reply(feed: [FeedItem()])
-        let aboutChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
-        await aboutChecker.check(force: true)
+        // 1. Nothing checked yet: no freshness claim, neutral copy, and the
+        // status line belongs to the action block.
+        let aboutDefaults = freshDefaults()
         var sparkleChecks = 0
-        let controller = BlinkClipAboutWindowController(checker: aboutChecker, sparkleCheck: { sparkleChecks += 1 })
+        let idleChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
+                                                 feedURL: feedURL, defaults: aboutDefaults)
+        let controller = BlinkClipAboutWindowController(checker: idleChecker, sparkleCheck: { sparkleChecks += 1 })
         controller.window?.contentView?.layoutSubtreeIfNeeded()
         try check(controller.window?.contentView?.bounds.size == BlinkClipAboutWindowController.contentSize,
                   "About content size changed: \(String(describing: controller.window?.contentView?.bounds.size))")
@@ -430,34 +546,125 @@ struct AppUpdateHarness {
         try check(!controller.checkButton.isHidden && controller.checkButton.isEnabled, "Check button unavailable")
         try check(controller.checkButton.keyEquivalent == "\r", "Return does not start a check")
         try check(controller.closeButton.keyEquivalent == "\u{1b}", "Escape does not close the window")
-        try check(controller.statusLabel.stringValue.contains("1.0.11"), "About omitted the newer version: \(controller.statusLabel.stringValue)")
-        try check(controller.statusLabel.textColor == .secondaryLabelColor, "Status line is not secondary colour")
-        try check(statusIsAboveButtons(controller), "Status line is not above the buttons")
+        try check(controller.statusLabel.stringValue == neverCheckedText,
+                  "About claims a result before any check: \(controller.statusLabel.stringValue)")
+        try check(!controller.statusLabel.stringValue.lowercased().contains("up to date")
+                  && !controller.statusLabel.stringValue.contains("已是最新"),
+                  "About asserts freshness without a check: \(controller.statusLabel.stringValue)")
+        try check(idleChecker.lastCheckDate == nil, "A fresh checker started with a timestamp")
+        let initialLayout = layout(controller)
+        try assertAboutLayout(controller)
+        print(String(data: try JSONSerialization.data(withJSONObject: ["about_layout": initialLayout.json]), encoding: .utf8)!)
+        // Both appearances get the same primary/secondary relationship: the
+        // check button is the window's default button, close is not.
+        try check(controller.checkButton.bezelStyle == .rounded && controller.closeButton.bezelStyle == .rounded,
+                  "About buttons lost their rounded bezel")
+        try check(controller.window?.defaultButtonCell === controller.checkButton.cell,
+                  "Check for Updates is not the default button")
+        try check(controller.window?.defaultButtonCell !== controller.closeButton.cell,
+                  "Close became the default button")
+        if let versionField = descendants(controller.window!.contentView!, of: NSTextField.self)
+            .first(where: { $0.accessibilityIdentifier() == "about-current-version" }) {
+            let expectedVersion = String(format: SettingsLocalization.text("updates.current-version"), "1.0.10")
+            try check(versionField.stringValue == expectedVersion,
+                      "Version line is not neutral: \(versionField.stringValue)")
+            try check(!versionField.stringValue.contains("已安装") && !versionField.stringValue.contains("Installed"),
+                      "Version line still says installed: \(versionField.stringValue)")
+        } else {
+            throw Failure(message: "About is missing about-current-version")
+        }
         for identifier in ["about-current-version", "about-update-status", "about-project-link",
                            "about-release-notes-link", "about-license-link", "about-copyright"] {
             try check(descendants(controller.window!.contentView!, of: NSView.self)
                 .contains { $0.accessibilityIdentifier() == identifier }, "About is missing \(identifier)")
         }
-        controller.checkButton.performClick(nil)
-        try await Task.sleep(for: .milliseconds(150))
+
+        // 2. Checking: inline copy and a disabled button while the request runs.
+        try reply(feed: [FeedItem()], delay: 1.2)
+        let checkingChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
+                                                     feedURL: feedURL, defaults: freshDefaults())
+        let checkingController = BlinkClipAboutWindowController(checker: checkingChecker, sparkleCheck: {})
+        let inFlight = Task { await checkingChecker.check(force: true) }
+        try await Task.sleep(for: .milliseconds(120))
+        try check(checkingController.statusLabel.stringValue == SettingsLocalization.text("updates.checking"),
+                  "Checking is not announced inline: \(checkingController.statusLabel.stringValue)")
+        try check(!checkingController.checkButton.isEnabled, "Check button stays enabled while checking")
+        try assertAboutLayout(checkingController)
+        await inFlight.value
+
+        // 3. A completed check shows a timestamp, not "you're up to date".
+        let fixed = Date(timeIntervalSince1970: 1_760_000_000)
+        try reply(feed: [FeedItem()])
+        let aboutChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
+                                                  feedURL: feedURL, defaults: aboutDefaults)
+        await aboutChecker.check(force: true, now: fixed)
+        let checkedController = BlinkClipAboutWindowController(checker: aboutChecker, sparkleCheck: { sparkleChecks += 1 })
+        let availableCopy = String(format: SettingsLocalization.text("updates.available-format"),
+                                   "1.0.11", BlinkClipUpdateChecker.timeText(fixed))
+        try check(checkedController.statusLabel.stringValue == availableCopy,
+                  "Available copy is not version + time: \(checkedController.statusLabel.stringValue)")
+        try check(checkedController.statusLabel.stringValue.contains("1.0.11"), "About omitted the newer version: \(checkedController.statusLabel.stringValue)")
+        try check(checkedController.statusLabel.textColor == .secondaryLabelColor, "Status line is not secondary colour")
+        try check(statusIsAboveButtons(checkedController), "Status line is not above the buttons")
+        try assertAboutLayout(checkedController)
+        checkedController.checkButton.performClick(nil)
         try check(sparkleChecks == 1, "Check button did not start Sparkle's update flow")
+        for _ in 0..<100 where aboutChecker.lastCheckDate == fixed {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         guard case .available = aboutChecker.state else { throw Failure(message: "Check button did not refresh the appcast summary") }
-        // A failing check shows the gentle line in secondary colour, never red.
-        let failureChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try check(aboutChecker.lastCheckDate != nil, "The clicked check left no timestamp")
+        try check(aboutChecker.lastCheckDate != fixed,
+                  "The clicked check reused the seeded timestamp instead of recording a completion")
+        let recordedBeforeFailure = aboutChecker.lastCheckDate
+
+        // 4. Failures keep the gentle copy, never a status code, and do not
+        // move the "last checked" timestamp (no answer was received).
+        let failureChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
+                                                    feedURL: feedURL, defaults: aboutDefaults)
         try reply(feed: [FeedItem()], status: 403)
-        await failureChecker.check(force: true)
+        await failureChecker.check(force: true, now: fixed.addingTimeInterval(60))
         let failureController = BlinkClipAboutWindowController(checker: failureChecker, sparkleCheck: {})
         try check(failureController.statusLabel.stringValue == gentle, "About does not show the gentle failure copy")
         try check(failureController.statusLabel.textColor != .systemRed, "About paints the failure red")
         try check(!failureController.statusLabel.stringValue.contains("403"), "About shows the status code")
         try check(statusIsAboveButtons(failureController), "Status line moved into the body")
-        // Up to date copy.
+        try check(failureChecker.lastCheckDate == recordedBeforeFailure,
+                  "A failed check moved the last-checked timestamp")
+        try check(failureChecker.lastDiagnostic?.contains("403") == true, "A failed check left no diagnostic")
+        try assertAboutLayout(failureController)
+
+        // 5. Up to date: timestamp only, persisted across a relaunch.
         try reply(feed: [FeedItem()])
-        let currentChecker = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session, feedURL: feedURL)
-        await currentChecker.check(force: true)
+        let currentChecker = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session,
+                                                    feedURL: feedURL, defaults: aboutDefaults)
+        await currentChecker.check(force: true, now: fixed)
         let currentController = BlinkClipAboutWindowController(checker: currentChecker, sparkleCheck: {})
-        try check(currentController.statusLabel.stringValue == SettingsLocalization.text("updates.up-to-date"),
-                  "Up-to-date copy missing: \(currentController.statusLabel.stringValue)")
+        try check(currentController.statusLabel.stringValue == lastCheckedText(fixed),
+                  "Up-to-date status is not a timestamp: \(currentController.statusLabel.stringValue)")
+        try check(!currentController.statusLabel.stringValue.lowercased().contains("up to date")
+                  && !currentController.statusLabel.stringValue.contains("已是最新"),
+                  "About repeats Sparkle's no-update sentence: \(currentController.statusLabel.stringValue)")
+        try assertAboutLayout(currentController)
+        try check(aboutDefaults.object(forKey: BlinkClipUpdateChecker.lastCheckDateKey) as? Date == fixed,
+                  "updates.lastCheckDate was not persisted")
+        let relaunched = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session,
+                                                feedURL: feedURL, defaults: aboutDefaults)
+        try check(relaunched.lastCheckDate == fixed, "A new checker lost the persisted timestamp")
+        let relaunchedController = BlinkClipAboutWindowController(checker: relaunched, sparkleCheck: {})
+        try check(relaunchedController.statusLabel.stringValue == lastCheckedText(fixed),
+                  "A reopened About window does not show the persisted time: \(relaunchedController.statusLabel.stringValue)")
+        try assertAboutLayout(relaunchedController)
+
+        // 6. A feed that offers nothing runnable is a completed check too.
+        let tooNewDefaults = freshDefaults()
+        let tooNewChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
+                                                   feedURL: feedURL, defaults: tooNewDefaults)
+        try reply(feed: [FeedItem(version: "1.0.12", minimumSystem: "99.0")])
+        await tooNewChecker.check(force: true, now: fixed.addingTimeInterval(30))
+        let tooNewController = BlinkClipAboutWindowController(checker: tooNewChecker, sparkleCheck: {})
+        try check(tooNewController.statusLabel.stringValue == lastCheckedText(fixed.addingTimeInterval(30)),
+                  "An unrunnable feed did not record its check time: \(tooNewController.statusLabel.stringValue)")
 
         // ── throttle and concurrency ────────────────────────────────────────
         try reply(feed: [FeedItem()])
@@ -498,46 +705,161 @@ struct AppUpdateHarness {
         return ((view as? T).map { [$0] } ?? []) + children
     }
 
-    /// Off-screen render of the About window in both appearances for every state
-    /// the status line can show.
-    @MainActor static func render(into directory: URL, session: URLSession) async throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        struct Scenario { let name: String; let installed: String; let items: [FeedItem]; let status: Int; let failure: Error? }
+    struct RGB: Equatable {
+        let red: Int
+        let green: Int
+        let blue: Int
+        var json: [String: Int] { ["r": red, "g": green, "b": blue] }
+    }
+
+    /// The fill colour under a button's left third, away from the title glyphs.
+    @MainActor static func fillColor(_ bitmap: NSBitmapImageRep, of view: NSView, in frameView: NSView) -> RGB {
+        let point = view.convert(NSPoint(x: view.bounds.width * 0.25, y: view.bounds.height * 0.5), to: frameView)
+        let scaleX = CGFloat(bitmap.pixelsWide) / frameView.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / frameView.bounds.height
+        let x = Int((point.x * scaleX).rounded())
+        let y = bitmap.pixelsHigh - Int((point.y * scaleY).rounded()) - 1
+        guard let data = bitmap.bitmapData, x >= 0, y >= 0,
+              x < bitmap.pixelsWide, y < bitmap.pixelsHigh else {
+            return RGB(red: -1, green: -1, blue: -1)
+        }
+        // The cached bitmap is 8-bit RGBA with the origin at the top left.
+        let offset = y * bitmap.bytesPerRow + x * 4
+        return RGB(red: Int(data[offset]), green: Int(data[offset + 1]), blue: Int(data[offset + 2]))
+    }
+
+    struct PreparedAbout {
+        let appearance: String
+        let scenario: String
+        let controller: BlinkClipAboutWindowController
+    }
+
+    /// Runs every scenario's check before the app event loop starts, so the
+    /// timer only has to make each window key, snapshot it and sample the
+    /// button fills. Copy and layout are asserted here, where async work is
+    /// allowed.
+    @MainActor static func prepareRenders(session: URLSession) async throws -> [PreparedAbout] {
+        let fixed = Date(timeIntervalSince1970: 1_760_000_000)
+        struct Scenario {
+            let name: String
+            let installed: String
+            let kind: String
+            let items: [FeedItem]
+            let failure: Error?
+        }
         let scenarios = [
-            Scenario(name: "latest", installed: "1.0.11", items: [FeedItem()], status: 200, failure: nil),
-            Scenario(name: "available", installed: "1.0.10", items: [FeedItem()], status: 200, failure: nil),
-            Scenario(name: "offline", installed: "1.0.11", items: [], status: 200, failure: URLError(.notConnectedToInternet))
+            Scenario(name: "initial", installed: "1.0.11", kind: "initial", items: [], failure: nil),
+            Scenario(name: "checking", installed: "1.0.11", kind: "checking", items: [FeedItem()], failure: nil),
+            Scenario(name: "latest", installed: "1.0.11", kind: "checked", items: [FeedItem()], failure: nil),
+            Scenario(name: "available", installed: "1.0.10", kind: "checked", items: [FeedItem()], failure: nil),
+            Scenario(name: "offline", installed: "1.0.11", kind: "checked", items: [], failure: URLError(.notConnectedToInternet))
         ]
-        var written = 0
+        let gentle = SettingsLocalization.text("updates.unreachable")
+        var prepared: [PreparedAbout] = []
         for appearance in ["light", "dark"] {
+            let name = appearance == "light" ? NSAppearance.Name.aqua : .darkAqua
+            NSApp.appearance = NSAppearance(named: name)
             for scenario in scenarios {
-                let name = appearance == "light" ? NSAppearance.Name.aqua : .darkAqua
-                NSApp.appearance = NSAppearance(named: name)
-                UpdateProtocol.reply(appcast(scenario.items), status: scenario.status, failure: scenario.failure)
-                let checker = BlinkClipUpdateChecker(currentVersion: scenario.installed, session: session, feedURL: feedURL)
-                await checker.check(force: true)
+                let checker = BlinkClipUpdateChecker(currentVersion: scenario.installed, session: session,
+                                                     feedURL: feedURL, defaults: freshDefaults())
+                switch scenario.kind {
+                case "checking":
+                    // Keep the request in flight long enough to photograph it.
+                    UpdateProtocol.reply(appcast(scenario.items), status: 200, failure: nil, delay: 30)
+                case "checked":
+                    UpdateProtocol.reply(appcast(scenario.items), status: 200, failure: scenario.failure)
+                    await checker.check(force: true, now: fixed)
+                default:
+                    break
+                }
                 let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-                guard let window = controller.window, let frameView = window.contentView?.superview else {
-                    throw Failure(message: "About window has no content")
+                if scenario.kind == "checking" {
+                    let inFlight = Task { await checker.check(force: true) }
+                    try await Task.sleep(for: .milliseconds(250))
+                    try check(controller.statusLabel.stringValue == SettingsLocalization.text("updates.checking"),
+                              "\(appearance)/checking is not announced: \(controller.statusLabel.stringValue)")
+                    try check(!controller.checkButton.isEnabled, "\(appearance)/checking leaves the button enabled")
+                    _ = inFlight
                 }
-                window.appearance = NSAppearance(named: name)
-                window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
-                window.orderFront(nil)
-                await pause()
-                frameView.layoutSubtreeIfNeeded()
-                guard let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
-                    throw Failure(message: "no about bitmap")
+                switch scenario.kind {
+                case "initial":
+                    try check(controller.statusLabel.stringValue == neverCheckedText,
+                              "\(appearance)/initial claims a result: \(controller.statusLabel.stringValue)")
+                case "checked":
+                    if scenario.failure != nil {
+                        try check(controller.statusLabel.stringValue == gentle,
+                                  "\(appearance)/offline is not gentle: \(controller.statusLabel.stringValue)")
+                    } else if scenario.name == "latest" {
+                        try check(controller.statusLabel.stringValue == lastCheckedText(fixed),
+                                  "\(appearance)/latest is not a timestamp: \(controller.statusLabel.stringValue)")
+                    } else {
+                        let expected = String(format: SettingsLocalization.text("updates.available-format"),
+                                              "1.0.11", BlinkClipUpdateChecker.timeText(fixed))
+                        try check(controller.statusLabel.stringValue == expected,
+                                  "\(appearance)/available lost the timestamp: \(controller.statusLabel.stringValue)")
+                    }
+                default:
+                    break
                 }
-                frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
-                let url = directory.appendingPathComponent("about-\(appearance)-\(scenario.name).png")
-                try bitmap.representation(using: .png, properties: [:])!.write(to: url)
-                written += 1
-                window.orderOut(nil)
-                window.contentView = nil
-                window.close()
+                try assertAboutLayout(controller)
+                prepared.append(PreparedAbout(appearance: appearance, scenario: scenario.name,
+                                              controller: controller))
             }
         }
-        try check(written == 6, "expected six About renders, wrote \(written)")
-        print("{\"renders\":\(written),\"directory\":\"\(directory.path)\"}")
+        return prepared
+    }
+
+    /// Synchronous, key-window snapshot pass: in a key window the default
+    /// button keeps its emphasis, so the two appearances can be compared for
+    /// the same primary/secondary weighting.
+    @MainActor static func snapshot(_ prepared: [PreparedAbout], into directory: URL) throws -> Int {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var written = 0
+        var weights: [[String: Any]] = []
+        for item in prepared {
+            let name = item.appearance == "light" ? NSAppearance.Name.aqua : .darkAqua
+            NSApp.appearance = NSAppearance(named: name)
+            guard let window = item.controller.window, let frameView = window.contentView?.superview else {
+                throw Failure(message: "About window has no content")
+            }
+            window.appearance = NSAppearance(named: name)
+            window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+            window.makeKeyAndOrderFront(nil)
+            // Ask for activation once a window is on screen, then let the AppKit
+            // loop deliver it: an accessory app with no visible window has
+            // nothing to activate.
+            NSApp.activate(ignoringOtherApps: true)
+            for _ in 0..<40 where !window.isKeyWindow {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+            }
+            frameView.layoutSubtreeIfNeeded()
+            guard let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
+                throw Failure(message: "no about bitmap")
+            }
+            frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
+            // A key window is the only place AppKit draws the default button's
+            // emphasis; without a window server (headless CI) the renders are
+            // still written, but the weight comparison is not asserted.
+            if window.isKeyWindow {
+                let checkFill = fillColor(bitmap, of: item.controller.checkButton, in: frameView)
+                let closeFill = fillColor(bitmap, of: item.controller.closeButton, in: frameView)
+                try check(checkFill != closeFill,
+                          "\(item.appearance)/\(item.scenario): primary and secondary buttons render identically (\(checkFill))")
+                weights.append(["appearance": item.appearance, "state": item.scenario,
+                                "check": checkFill.json, "close": closeFill.json,
+                                "layout": layout(item.controller).json])
+            } else {
+                print("{\"warning\":\"\(item.appearance)/\(item.scenario): About window is not key; weight not measured\"}")
+            }
+            let url = directory.appendingPathComponent("about-\(item.appearance)-\(item.scenario).png")
+            try bitmap.representation(using: .png, properties: [:])!.write(to: url)
+            written += 1
+            window.orderOut(nil)
+            window.contentView = nil
+            window.close()
+        }
+        try check(written == 10, "expected ten About renders, wrote \(written)")
+        print(String(data: try JSONSerialization.data(withJSONObject: ["button_weights": weights], options: [.sortedKeys]), encoding: .utf8)!)
+        return written
     }
 }

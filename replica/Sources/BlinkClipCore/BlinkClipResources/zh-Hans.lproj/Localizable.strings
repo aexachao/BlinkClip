@@ -112,9 +112,10 @@
 "general.help-center" = "帮助与指南";
 "updates.check" = "检查更新";
 "updates.checking" = "正在检查更新…";
-"updates.up-to-date" = "已是最新版本";
-"updates.available-format" = "有新版本 %@ 可用。";
-"updates.current-version" = "已安装版本";
+"updates.never-checked" = "尚未检查更新";
+"updates.last-check-format" = "上次检查 %@";
+"updates.available-format" = "有新版本 %@ 可用 · 上次检查 %@";
+"updates.current-version" = "版本 %@";
 "updates.close" = "关闭";
 "updates.invalid-version" = "闪贴无法读取已安装版本的版本号。";
 "updates.missing-installer" = "此版本未提供受支持的通用 DMG 安装包。";

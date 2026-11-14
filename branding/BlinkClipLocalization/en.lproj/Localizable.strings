@@ -112,9 +112,10 @@
 "general.help-center" = "Help & Guides";
 "updates.check" = "Check for Updates";
 "updates.checking" = "Checking for Updates…";
-"updates.up-to-date" = "You’re Up to Date";
-"updates.available-format" = "Version %@ Is Available";
-"updates.current-version" = "Installed Version";
+"updates.never-checked" = "Not checked yet";
+"updates.last-check-format" = "Last checked %@";
+"updates.available-format" = "Version %@ is available · last checked %@";
+"updates.current-version" = "Version %@";
 "updates.close" = "Close";
 "updates.invalid-version" = "BlinkClip could not determine the installed version number.";
 "updates.missing-installer" = "This release does not include a supported Universal DMG.";

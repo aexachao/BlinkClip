@@ -226,22 +226,61 @@ public final class BlinkClipUpdateChecker: ObservableObject {
     /// gentle copy in `State.failed`, so a status code can't leak into the UI.
     @Published public private(set) var lastDiagnostic: String?
 
+    /// When the last *completed* check finished (an answer from the feed), or
+    /// `nil` when no check has ever completed on this Mac. Persisted under
+    /// `updates.lastCheckDate` so the About window can say "last checked 21:04"
+    /// after a relaunch instead of asserting freshness it never verified.
+    /// A failed check does not overwrite it: "last checked" means an answer was
+    /// received, not that a request was attempted.
+    @Published public private(set) var lastCheckDate: Date?
+
     public let currentVersion: String
     /// `SUFeedURL` from the app bundle: the signed Sparkle appcast.
     public let feedURL: URL?
 
+    /// `updates.lastCheckDate` holds a `Date`.
+    public static let lastCheckDateKey = "updates.lastCheckDate"
+
     private let session: URLSession
+    private let defaults: UserDefaults
     private var lastAttempt: Date?
     private static let log = Logger(subsystem: "com.chrisli.blinkclip", category: "updates")
     private static let minimumCheckInterval: TimeInterval = 6 * 60 * 60
 
-    public init(currentVersion: String? = nil, session: URLSession = .shared, feedURL: URL? = nil) {
+    public init(currentVersion: String? = nil, session: URLSession = .shared, feedURL: URL? = nil,
+                defaults: UserDefaults = .standard) {
         self.currentVersion = currentVersion
             ?? Bundle.main.object(forInfoDictionaryKey: "BlinkClipSourceVersion") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? "unknown"
         self.feedURL = feedURL ?? Self.configuredFeedURL()
         self.session = session
+        self.defaults = defaults
+        self.lastCheckDate = defaults.object(forKey: Self.lastCheckDateKey) as? Date
+    }
+
+    /// `HH:mm`, fixed to 24 hours so the line reads the same in every language
+    /// and in screenshots/reports. No date: this is a "how stale is it" hint,
+    /// not a log.
+    public static func timeText(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    /// The time part of the status line, `--:--` when nothing ever completed.
+    public var lastCheckTime: String {
+        lastCheckDate.map { Self.timeText($0) } ?? "--:--"
+    }
+
+    /// Neutral status-line copy: "上次检查 21:04", or "尚未检查更新" before the
+    /// first completed check. It never claims the install is current — only the
+    /// time an answer was actually received.
+    public var lastCheckSummary: String {
+        guard lastCheckDate != nil else { return SettingsLocalization.text("updates.never-checked") }
+        return String(format: SettingsLocalization.text("updates.last-check-format"), lastCheckTime)
     }
 
     /// The release feed the shipped app advertises to Sparkle.
@@ -301,6 +340,7 @@ public final class BlinkClipUpdateChecker: ObservableObject {
                 // Every stable item needs a newer macOS than this one: nothing to offer.
                 lastDiagnostic = "appcast items=\(items.count) none-applicable"
                 Self.log.notice("appcast items=\(items.count, privacy: .public) none applicable, treated as up to date")
+                recordCheck(at: now)
                 state = .upToDate
                 return
             }
@@ -311,6 +351,7 @@ public final class BlinkClipUpdateChecker: ObservableObject {
                 installed=\(current.text, privacy: .public)
                 """)
             if newest.version <= current {
+                recordCheck(at: now)
                 state = .upToDate
                 return
             }
@@ -319,6 +360,7 @@ public final class BlinkClipUpdateChecker: ObservableObject {
                 Self.log.error("appcast item=\(newest.version.text, privacy: .public) enclosure missing")
                 throw CheckError.missingInstaller
             }
+            recordCheck(at: now)
             state = .available(BlinkClipAvailableUpdate(version: newest.version.text,
                                                         downloadURL: url,
                                                         minimumSystemVersion: newest.minimumSystemVersion))
@@ -330,6 +372,12 @@ public final class BlinkClipUpdateChecker: ObservableObject {
             Self.log.error("appcast request failed: \(String(describing: error), privacy: .public)")
             state = .failed(SettingsLocalization.text("updates.unreachable"))
         }
+    }
+
+    /// A completed check is the only event that moves the timestamp.
+    private func recordCheck(at date: Date) {
+        lastCheckDate = date
+        defaults.set(date, forKey: Self.lastCheckDateKey)
     }
 
     private enum CheckError: LocalizedError {
