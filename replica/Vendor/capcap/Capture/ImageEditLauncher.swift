@@ -98,7 +98,7 @@ enum ImageEditLauncher {
     // MARK: - Helpers
 
     private static func tempDir() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("capcap-edit", isDirectory: true)
+        FileManager.default.temporaryDirectory.appendingPathComponent("blinkclip-edit", isDirectory: true)
     }
 
     private static func copyToTemp(_ source: URL) -> URL? {

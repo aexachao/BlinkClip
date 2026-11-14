@@ -29,7 +29,7 @@ final class AutoScroller {
     private let stepPixels: Int
     private let settleDelay: TimeInterval
     private let stallThreshold: Int
-    private let queue = DispatchQueue(label: "capcap.auto-scroll", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "blinkclip.auto-scroll", qos: .userInitiated)
     private let eventSource = CGEventSource(stateID: .hidSystemState)
     private let onKeyPressed: (() -> Void)?
 

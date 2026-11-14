@@ -109,7 +109,7 @@ final class ToolbarGroupMenuRow: NSView, ToolbarHoverable {
         setAccessibilityLabel(title)
         setAccessibilitySelected(isSelected)
         setAccessibilityEnabled(true)
-        setAccessibilityIdentifier("capcap.toolbar.groupRow.\(member.rawValue)")
+        setAccessibilityIdentifier("blinkclip.toolbar.groupRow.\(member.rawValue)")
     }
 
     required init?(coder: NSCoder) {

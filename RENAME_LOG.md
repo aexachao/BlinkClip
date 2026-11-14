@@ -828,6 +828,21 @@ legal Swift overloads: same name in different types, or different parameter list
 | ``Original*` filenames (141 files)` | `descriptive names (`Original` prefix stripped)` | `OriginalPasteboard.swift` → `PasteboardItem.swift` (collision with `Pasteboard.swift`) |
 | ``Original*` class/type names` | ``BlinkClip`-neutral descriptive names` | generic `Original(?=[A-Z])` → `` replace |
 
+## 3b. capcap → blinkclip 技术标识改名（2026-11-14）
+
+盘点后剩下的 `capcap` 技术标识：纯内部标识（无持久化语义）统一改为 `blinkclip.*`；需要跨版本传递的那一个（剪贴板类型）保留一个版本周期的双读双写。许可证文件名与 `Vendor/capcap/` 目录名按 MIT 归属要求原样保留，不在本表内。
+
+| Old | New | Notes |
+|---|---|---|
+| ``capcap.*` NSColor.Name（9 个语义色名）` | ``blinkclip.*`` | `Vendor/capcap/UI/AdaptiveChrome.swift`；纯进程内色名，无持久化语义 |
+| ``capcap.*` DispatchQueue / 定时器标签（7 个）` | ``blinkclip.*`` | 队列标签只用于调试器与 `os_signpost`，不入档 |
+| ``capcap.*` Notification.Name（12 个）` | ``blinkclip.*`` | 全部走 `NotificationCenter.default`，同进程同版本，没有跨进程/跨版本通信依赖 |
+| ``capcap.toolbar.*` accessibilityIdentifier` | ``blinkclip.toolbar.*`` | 仅测试与辅助功能读取，未写入任何持久化格式 |
+| ``capcap-edit` / `capcap-pin-drag` / `capcap-pin-<uuid>.png` 临时路径前缀` | ``blinkclip-…`` | 临时目录每次启动自建，旧目录残留由系统清理 |
+| ``----capcap-<uuid>` multipart 边界` | ``----blinkclip-<uuid>`` | 只在单个上传请求内可见 |
+| ``cn.skyrin.capcap.skip-clipboard-text-history`（剪贴板类型）` | ``com.chrisli.blinkclip.skip-clipboard-text-history`` | 双读双写一个版本周期：先读新名、回退旧名，写入同时写旧名别名（`ClipboardHistorySkipMarker`） |
+| ``capcap.harness.*` 测试 UserDefaults suite` | ``blinkclip.harness.*`` | 测试专用隔离 suite，不承载用户数据 |
+
 ## 4. Comment-only `f_100xxx` references (no definition existed; rewritten as plain descriptions)
 
 | Old reference | Rewritten to | File |

@@ -1998,7 +1998,7 @@ class EditWindowController {
     /// a forgiving capture window without adding a second stitching path.
     private func startManualScrollCapture(capturer: ScrollCapturer) {
         let timer = DispatchSource.makeTimerSource(
-            queue: DispatchQueue(label: "capcap.manual-scroll-capture", qos: .userInitiated)
+            queue: DispatchQueue(label: "blinkclip.manual-scroll-capture", qos: .userInitiated)
         )
         manualScrollCaptureTimer = timer
         timer.schedule(deadline: .now() + 0.25, repeating: 0.25, leeway: .milliseconds(80))
@@ -3634,7 +3634,7 @@ class ToolbarView: NSView {
         )
         btn.hoverTip = id.tooltip
         btn.setAccessibilityLabel(id.tooltip)
-        btn.setAccessibilityIdentifier("capcap.toolbar.\(id.rawValue)")
+        btn.setAccessibilityIdentifier("blinkclip.toolbar.\(id.rawValue)")
         btn.itemID = id
         btn.target = self
         btn.action = #selector(buttonTapped(_:))

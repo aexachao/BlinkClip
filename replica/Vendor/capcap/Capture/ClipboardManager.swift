@@ -1,9 +1,5 @@
 import AppKit
 
-private let skipClipboardHistoryPasteboardType = NSPasteboard.PasteboardType(
-    "cn.skyrin.capcap.skip-clipboard-text-history"
-)
-
 enum ClipboardColorParser {
     static func normalizedHex(from text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -62,7 +58,7 @@ struct ClipboardManager {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.writeObjects(urls.map { $0 as NSURL }) else { return false }
-        pasteboard.setString("1", forType: skipClipboardHistoryPasteboardType)
+        ClipboardHistorySkipMarker.mark(pasteboard)
         return true
     }
 
@@ -71,7 +67,7 @@ struct ClipboardManager {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         if skipHistory {
-            pasteboard.setString("1", forType: skipClipboardHistoryPasteboardType)
+            ClipboardHistorySkipMarker.mark(pasteboard)
         }
     }
 }
@@ -145,7 +141,7 @@ final class ClipboardTextHistoryMonitor: NSObject {
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
         guard Defaults.clipboardTextCacheEnabled,
-              pasteboard.availableType(from: [skipClipboardHistoryPasteboardType]) == nil else { return }
+              !ClipboardHistorySkipMarker.isMarked(in: pasteboard) else { return }
 
         // Inspect declared file types before requesting a text representation.
         // A pasted path string must remain text even if it names a real file.

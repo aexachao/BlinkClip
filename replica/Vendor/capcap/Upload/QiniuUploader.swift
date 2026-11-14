@@ -57,7 +57,7 @@ enum QiniuUploader: UploaderProtocol {
         }
 
         // multipart/form-data
-        let boundary = "----capcap-\(UUID().uuidString)"
+        let boundary = "----blinkclip-\(UUID().uuidString)"
         var body = Data()
         func addField(_ name: String, _ value: String) {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)

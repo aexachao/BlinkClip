@@ -359,7 +359,7 @@ public enum BlinkClipScreenshotSettings {
 extension BlinkClipScreenshotAction {
     /// `PostCaptureAction` 是 internal，只有同 target 的文件能提到它。
     /// `CaptureEntry.swift` 与本文件同属 `BlinkClipCapture`，所以这个映射不需要 public。
-    var capcapPostCaptureAction: OverlayWindowController.PostCaptureAction {
+    var blinkclipPostCaptureAction: OverlayWindowController.PostCaptureAction {
         switch self {
         case .edit: return .edit
         case .quickPin: return .quickPin

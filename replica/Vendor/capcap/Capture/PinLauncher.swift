@@ -1115,7 +1115,7 @@ struct PinImageDragPayload {
     let temporaryFileURL: URL
 
     private static let defaultTemporaryDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("capcap-pin-drag", isDirectory: true)
+        .appendingPathComponent("blinkclip-pin-drag", isDirectory: true)
 
     static func make(
         from image: NSImage,
@@ -1129,7 +1129,7 @@ struct PinImageDragPayload {
                 withIntermediateDirectories: true
             )
             let fileURL = directory.appendingPathComponent(
-                "capcap-pin-\(UUID().uuidString).png",
+                "blinkclip-pin-\(UUID().uuidString).png",
                 isDirectory: false
             )
             try pngData.write(to: fileURL, options: .atomic)
@@ -1163,7 +1163,7 @@ struct PinImageDragPayload {
 /// resample the full-resolution source image on the main thread.
 private enum PinInteractivePreviewRenderer {
     private static let queue = DispatchQueue(
-        label: "capcap.pin.interactive-preview",
+        label: "blinkclip.pin.interactive-preview",
         qos: .userInitiated
     )
 

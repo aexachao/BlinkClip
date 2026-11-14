@@ -75,7 +75,7 @@ public enum CaptureEntry {
         onComplete: @escaping (NSImage?) -> Void
     ) -> AnyObject? {
         let controller = OverlayWindowController(
-            postCaptureAction: BlinkClipScreenshotSettings.postCaptureAction.capcapPostCaptureAction,
+            postCaptureAction: BlinkClipScreenshotSettings.postCaptureAction.blinkclipPostCaptureAction,
             triggerContext: CaptureTriggerContext(source: .keyboardShortcut),
             onFirstFramePresented: nil,
             onRecordingSelection: { _, _ in },

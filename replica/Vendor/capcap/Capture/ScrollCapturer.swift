@@ -32,7 +32,7 @@ final class ScrollCapturer {
     /// capcap's own scroll-capture chrome (e.g. the hint toast) — excluded
     /// from every captured frame so it never appears in the stitched image.
     private let excludedWindowNumbers: [CGWindowID]
-    private let captureQueue = DispatchQueue(label: "capcap.scroll-capture", qos: .userInitiated)
+    private let captureQueue = DispatchQueue(label: "blinkclip.scroll-capture", qos: .userInitiated)
     private let maxFrames = 100
     private let initialCaptureTimeout: TimeInterval = 3.0
     private let settledCaptureTimeout: TimeInterval = 1.5

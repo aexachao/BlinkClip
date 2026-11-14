@@ -91,7 +91,7 @@ import AppKit
     /// v1 state migrates once, and a `line` pick made afterwards is the user's
     /// own choice and survives every restart.
     static func migrationChecks() {
-        let suiteName = "capcap.harness.toolbar-group-selection"
+        let suiteName = "blinkclip.harness.toolbar-group-selection"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             preconditionFailure("could not open the harness defaults suite")
         }
@@ -207,7 +207,7 @@ import AppKit
     /// defaults before building the bar. This is stricter than the earlier
     /// "restart keeps the last member" behaviour, not a relaxed assertion.
     static func sessionResetChecks() {
-        let suiteName = "capcap.harness.toolbar-session-reset"
+        let suiteName = "blinkclip.harness.toolbar-session-reset"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             preconditionFailure("could not open the harness defaults suite")
         }

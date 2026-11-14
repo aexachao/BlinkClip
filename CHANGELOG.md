@@ -30,6 +30,15 @@
 
 - `build-app.sh` 复制 AGPL 许可与 NOTICE 进包，并对 `Contents/Resources` 增加资源白名单断言（fail closed）：出现未列入的资源、缺少必需资源、`*.lproj` 内出现未列入的成员都会让构建失败；断言在签名之前执行，未列入的文件既不会进包也不会破坏签名。
 
+### 技术标识改名与兼容别名
+
+- 截图引擎内部的 `capcap.*` 技术标识统一改为 `blinkclip.*` / `com.chrisli.blinkclip.*`：9 个 `NSColor.Name` 语义色名、7 个 `DispatchQueue` 标签、12 个 `Notification.Name`、2 处无障碍标识（`blinkclip.toolbar.*`）、4 处临时目录/临时文件名前缀与上传 multipart 边界前缀。全部为进程内标识，不写入任何持久化格式。
+- 剪贴板历史跳过标记由 `cn.skyrin.capcap.skip-clipboard-text-history` 改为 `com.chrisli.blinkclip.skip-clipboard-text-history`：读取先看新名、缺失再回退旧名（保留一个版本周期），写入同时写新名与旧名别名，所以回退到旧版本仍能跳过自己写入的那一条。实现在 `ClipboardHistorySkipMarker`。
+- 新增 `LegacyPreferenceKey`：偏好键改名时的双向兼容读取——新键优先；新键缺失则读旧键并把值写回新键；写入只写新键；两者都缺返回 `nil` 交给调用方默认值，旧键永不清空。
+- 通知名一并改名。全部 12 个通知只走 `NotificationCenter.default`，只在本进程内、同一版本内通信，没有跨进程或跨版本依赖，因此不需要保留旧名监听。
+- 不改动：`capcap-LICENSE.txt` 许可证文件名与内容、`replica/Vendor/capcap/` 目录名与 `Package.swift` 的 `path: "Vendor/capcap"`、NOTICE / README 的第三方归属说明，以及代码里标明「这段是上游 capcap 引擎」的来源注释。
+- 验证：新增 `replica/scripts/test-identifier-namespace-migration.sh`，覆盖旧标记 / 新标记 / 双标记 / 无标记四种剪贴板状态，以及偏好键「旧键存在→新键生效」「新键存在→旧键被忽略」「两者都无→默认值」三态（30 项检查）。
+
 ### 已包含在 1.0.10 中的项（本版未改动）
 
 下列各项随 `v1.0.10`（提交 `35751c4`）发布，1.0.11 不再重复修改：工具会话重置（新编辑会话从默认工具开始）、设置页隐私/权限说明精简与权限行合并、工具栏下拉开行 hover、线条工具默认箭头（含 v1 旧值一次性迁移）、箭头在工具下拉菜单首位。
@@ -40,7 +49,7 @@
 - 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
 - Sparkle 更新私钥已轮换，公钥随之更换；用旧公钥构建的版本无法自动升级到本版，只能手动下载安装，之后可走应用内更新。
 - 繁体中文（zh-Hant）：截图、工具栏与 App Intents 的本地化表已随包提供；设置页文案仍由 zh-Hans 表提供（`ScreenshotSettingsCopy` 对任何 zh* 语言只保留一张中文表），繁中下设置页显示的是简体文案。
-- 应用二进制内仍保留 capcap 命名空间的技术标识与 `capcap-LICENSE.txt` 许可证文件名，属技术标识保留，不代表与上游存在关联或背书。
+- 应用二进制内仍保留 1 个 `capcap` 兼容别名 `cn.skyrin.capcap.skip-clipboard-text-history`（剪贴板跳过标记，双读双写保留一个版本周期，见「技术标识改名与兼容别名」）与 `capcap-LICENSE.txt` 许可证文件名，属技术标识保留，不代表与上游存在关联或背书。
 
 ### 兼容性
 

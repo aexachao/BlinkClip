@@ -23,7 +23,7 @@ enum AppLanguage: String, CaseIterable {
     case vi
 
     /// Folder name (without extension) of the matching `.lproj` bundle inside
-    /// `capcap.app/Contents/Resources/`.
+    /// `BlinkClip.app/Contents/Resources/`.
     var lprojName: String {
         switch self {
         case .zh: return "zh-Hans"
@@ -70,17 +70,17 @@ enum AppLanguage: String, CaseIterable {
 }
 
 extension Notification.Name {
-    static let languageDidChange = Notification.Name("capcap.languageDidChange")
-    static let historyCacheEnabledDidChange = Notification.Name("capcap.historyCacheEnabledDidChange")
-    static let clipboardTextCacheEnabledDidChange = Notification.Name("capcap.clipboardTextCacheEnabledDidChange")
-    static let historyCacheLimitDidChange = Notification.Name("capcap.historyCacheLimitDidChange")
-    static let clipboardTextHistoryLimitDidChange = Notification.Name("capcap.clipboardTextHistoryLimitDidChange")
-    static let historyDidUpdate = Notification.Name("capcap.historyDidUpdate")
-    static let recordingSaveDirectoryDidChange = Notification.Name("capcap.recordingSaveDirectoryDidChange")
-    static let historyPanelDisplayModesDidChange = Notification.Name("capcap.historyPanelDisplayModesDidChange")
-    static let hotkeyDidChange = Notification.Name("capcap.hotkeyDidChange")
-    static let editorShortcutsDidChange = Notification.Name("capcap.editorShortcutsDidChange")
-    static let translationConfigDidChange = Notification.Name("capcap.translationConfigDidChange")
+    static let languageDidChange = Notification.Name("blinkclip.languageDidChange")
+    static let historyCacheEnabledDidChange = Notification.Name("blinkclip.historyCacheEnabledDidChange")
+    static let clipboardTextCacheEnabledDidChange = Notification.Name("blinkclip.clipboardTextCacheEnabledDidChange")
+    static let historyCacheLimitDidChange = Notification.Name("blinkclip.historyCacheLimitDidChange")
+    static let clipboardTextHistoryLimitDidChange = Notification.Name("blinkclip.clipboardTextHistoryLimitDidChange")
+    static let historyDidUpdate = Notification.Name("blinkclip.historyDidUpdate")
+    static let recordingSaveDirectoryDidChange = Notification.Name("blinkclip.recordingSaveDirectoryDidChange")
+    static let historyPanelDisplayModesDidChange = Notification.Name("blinkclip.historyPanelDisplayModesDidChange")
+    static let hotkeyDidChange = Notification.Name("blinkclip.hotkeyDidChange")
+    static let editorShortcutsDidChange = Notification.Name("blinkclip.editorShortcutsDidChange")
+    static let translationConfigDidChange = Notification.Name("blinkclip.translationConfigDidChange")
 }
 
 /// Centralized accessor for every user-facing string. Each property resolves a

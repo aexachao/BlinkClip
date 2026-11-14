@@ -60,7 +60,7 @@ enum ProviderConfigStore {
 }
 
 extension Notification.Name {
-    static let uploadProvidersDidChange = Notification.Name("capcap.uploadProvidersDidChange")
+    static let uploadProvidersDidChange = Notification.Name("blinkclip.uploadProvidersDidChange")
 }
 
 extension Defaults {

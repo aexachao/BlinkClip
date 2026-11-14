@@ -8,7 +8,7 @@ import AppKit
 /// from `viewDidChangeEffectiveAppearance`
 enum AdaptiveChrome {
     static let floatingBackground = NSColor(
-        name: NSColor.Name("capcap.floatingBackground")
+        name: NSColor.Name("blinkclip.floatingBackground")
     ) { appearance in
         isDark(appearance)
             ? NSColor(white: 0.15, alpha: 0.94)
@@ -16,7 +16,7 @@ enum AdaptiveChrome {
     }
 
     static let toolbarBackground = NSColor(
-        name: NSColor.Name("capcap.toolbarBackground")
+        name: NSColor.Name("blinkclip.toolbarBackground")
     ) { appearance in
         isDark(appearance)
             ? NSColor(white: 0.12, alpha: 0.90)
@@ -24,7 +24,7 @@ enum AdaptiveChrome {
     }
 
     static let panelBackground = NSColor(
-        name: NSColor.Name("capcap.panelBackground")
+        name: NSColor.Name("blinkclip.panelBackground")
     ) { appearance in
         isDark(appearance)
             ? NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.16, alpha: 0.98)
@@ -32,7 +32,7 @@ enum AdaptiveChrome {
     }
 
     static let popoverBackground = NSColor(
-        name: NSColor.Name("capcap.popoverBackground")
+        name: NSColor.Name("blinkclip.popoverBackground")
     ) { appearance in
         isDark(appearance)
             ? NSColor(calibratedRed: 0.12, green: 0.13, blue: 0.15, alpha: 1)
@@ -40,7 +40,7 @@ enum AdaptiveChrome {
     }
 
     static let cardBackground = NSColor(
-        name: NSColor.Name("capcap.cardBackground")
+        name: NSColor.Name("blinkclip.cardBackground")
     ) { appearance in
         isDark(appearance)
             ? NSColor.white.withAlphaComponent(0.06)
@@ -48,7 +48,7 @@ enum AdaptiveChrome {
     }
 
     static let border = NSColor(
-        name: NSColor.Name("capcap.border")
+        name: NSColor.Name("blinkclip.border")
     ) { appearance in
         isDark(appearance)
             ? NSColor.white.withAlphaComponent(0.16)
@@ -56,7 +56,7 @@ enum AdaptiveChrome {
     }
 
     static let subtleFill = NSColor(
-        name: NSColor.Name("capcap.subtleFill")
+        name: NSColor.Name("blinkclip.subtleFill")
     ) { appearance in
         isDark(appearance)
             ? NSColor.white.withAlphaComponent(0.10)
@@ -64,7 +64,7 @@ enum AdaptiveChrome {
     }
 
     static let selectedFill = NSColor(
-        name: NSColor.Name("capcap.selectedFill")
+        name: NSColor.Name("blinkclip.selectedFill")
     ) { appearance in
         isDark(appearance)
             ? NSColor.white.withAlphaComponent(0.15)
@@ -72,7 +72,7 @@ enum AdaptiveChrome {
     }
 
     static let separator = NSColor(
-        name: NSColor.Name("capcap.separator")
+        name: NSColor.Name("blinkclip.separator")
     ) { appearance in
         isDark(appearance)
             ? NSColor.white.withAlphaComponent(0.20)
