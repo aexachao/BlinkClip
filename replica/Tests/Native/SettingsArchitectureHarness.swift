@@ -212,6 +212,35 @@ import BlinkClipCapture
             try check(reset.maxY <= lastCardBottom + 1,
                       "reset-all is not below the last card: reset \(reset) last card bottom \(lastCardBottom)")
         }
+
+        if section == .clipboard {
+            // 「清空历史记录…」与「恢复全部快捷键…」同一区域策略：内容区底部、右对齐，
+            // 不挤进卡片正文；危险性质只用系统红做语义强调。
+            guard let clear = node("settings.clear-history") else {
+                throw Failure(message: "clipboard page is missing the clear-history footer action")
+            }
+            let lastCardBottom = cardRects.map(\.minY).min() ?? 0
+            try check(clear.maxY <= lastCardBottom + 1,
+                      "clear-history is not below the last card: clear \(clear) last card bottom \(lastCardBottom)")
+            try check(clear.maxX >= (cardRects.map(\.maxX).max() ?? 0) - 2,
+                      "clear-history is not right-aligned with the cards: clear \(clear)")
+        }
+
+        if section == .privacy {
+            // 「刷新状态」在「系统权限」卡片的标题行里：与标题同一行、右对齐、压在卡片上方。
+            guard let refresh = node("permission-refresh-status") else {
+                throw Failure(message: "privacy page is missing the card-title refresh control")
+            }
+            guard let title = titleRects.min(by: { abs($0.midY - refresh.midY) < abs($1.midY - refresh.midY) }) else {
+                throw Failure(message: "privacy page has no card title to hold the refresh control")
+            }
+            try check(abs(refresh.midY - title.midY) <= 3,
+                      "refresh control is not on the card title line: refresh \(refresh) title \(title)")
+            try check(refresh.minY >= card.maxY - 1,
+                      "refresh control is not above the permissions card: refresh \(refresh) card \(card)")
+            try check(abs(card.maxX - refresh.maxX) <= 2,
+                      "refresh control is not right-aligned with the card: refresh \(refresh) card \(card)")
+        }
     }
 
     @MainActor static func verifyShortcutRows(store: ClipboardStore, state: ReplicaUIState, model: PermissionStatusModel, out: URL, language: String) async throws {
@@ -317,6 +346,377 @@ import BlinkClipCapture
             try bitmap.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(language)-restored-shortcuts-complete-window.png"))
         }
     }
+    // MARK: - P4 交互契约（刷新反馈、危险动作、冲突提示、关于项回退）
+
+    @MainActor static func writePNG(_ view: NSView, name: String, out: URL) throws {
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw Failure(message: "no bitmap for \(name)")
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!
+            .write(to: out.appendingPathComponent(name + ".png"))
+    }
+
+    /// 只数「明显偏红」的像素：系统红（浅色 255,59,48 / 深色 255,69,58）的
+    /// 红-绿、红-蓝都远大于 40，而正文灰、链接蓝都过不了这个门。
+    @MainActor static func reddishPixels(_ view: NSView, inScreen rect: NSRect) -> Int {
+        guard let window = view.window,
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return 0 }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, view.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, view.bounds.height)
+        // 屏幕坐标 y 向上、翻转视图 y 向下：换算两个角再取包围盒，别用一个角加宽高。
+        let cornerA = view.convert(window.convertPoint(fromScreen: NSPoint(x: rect.minX, y: rect.minY)), from: nil)
+        let cornerB = view.convert(window.convertPoint(fromScreen: NSPoint(x: rect.maxX, y: rect.maxY)), from: nil)
+        let minX = min(cornerA.x, cornerB.x), maxX = max(cornerA.x, cornerB.x)
+        let minY = min(cornerA.y, cornerB.y), maxY = max(cornerA.y, cornerB.y)
+        var count = 0
+        var y = minY
+        while y <= maxY {
+            var x = minX
+            while x <= maxX {
+                let px = Int(x * scaleX)
+                let py = Int((view.isFlipped ? y : view.bounds.height - y) * scaleY)
+                if px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh,
+                   let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) {
+                    let r = color.redComponent * 255, g = color.greenComponent * 255, b = color.blueComponent * 255
+                    if r >= 120, r - g >= 40, r - b >= 40 { count += 1 }
+                }
+                x += 1
+            }
+            y += 1
+        }
+        return count
+    }
+
+    @MainActor static func texts(_ tree: [NSObject]) -> [String] {
+        var values: [String] = []
+        for node in tree {
+            for attribute in [NSAccessibility.Attribute.value, .title, .description, .help] {
+                if let text = node.accessibilityAttributeValue(attribute) as? String { values.append(text) }
+            }
+            for name in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+                let selector = NSSelectorFromString(name)
+                if node.responds(to: selector), let text = node.perform(selector)?.takeUnretainedValue() as? String {
+                    values.append(text)
+                }
+            }
+        }
+        return values
+    }
+
+    /// 页尾危险动作的渲染证据：滚到底部后取样，确认它真的用系统红画出来（不是灰按钮），
+    /// 并留一张「清空历史记录…」在页尾的截图。
+    @MainActor static func verifyDangerFooter(state: ReplicaUIState, out: URL, language: String) async throws {
+        let host = NSHostingView(rootView: ReplicaSettingsView(state: state,
+                                                              initialTab: SettingsSection.clipboard.rawValue))
+        let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = false
+        window.toolbarStyle = .unified
+        window.setFrame(NSRect(x: -5000, y: -5000, width: 648, height: 600), display: false)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        await pause()
+        for scroll in descendants(host, of: NSScrollView.self) where scroll.documentView != nil {
+            let document = scroll.documentView!
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        await pause()
+        guard let clear = accessibilityTree(host).filter({ axID($0) == "settings.clear-history" })
+            .map({ axFrame($0) }).max(by: { $0.width < $1.width }) else {
+            throw Failure(message: "clipboard page is missing the clear-history footer action")
+        }
+        let reddish = reddishPixels(host, inScreen: clear)
+        try check(reddish > 0,
+                  "clear-history label is not rendered in the system red semantic color: \(clear)")
+        if let themeFrame = window.contentView?.superview {
+            try writePNG(themeFrame, name: "p4-\(language)-clipboard-clear-history-footer", out: out)
+        }
+    }
+
+    /// 「刷新状态」反馈：标题行位置 + 三段可见文案 + 时间戳格式 + 3 秒后恢复。
+    ///
+    /// 用一份「慢探针」（250ms）而不是真实探针：`正在刷新…` 才是可稳定观察的状态，
+    /// 也顺便证明按钮在刷新期间被禁用、不是只换了个字。
+    @MainActor static func verifyRefreshFeedback(state: ReplicaUIState, out: URL, language: String) async throws {
+        let slow = PermissionStatusModel(readStatus: {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            return PermissionStatusReading(currentProcess: PermissionStatusSnapshot(accessibility: true, postEvents: true, screenRecording: false),
+                                           freshProcess: nil, checkFailed: false)
+        })
+        defer { slow.stop() }
+        let host = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: SettingsSection.privacy.rawValue, permissionModel: slow))
+        let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        await pause()
+        func nodes() -> [NSObject] { accessibilityTree(host).filter { axID($0) == "permission-refresh-status" } }
+        func label() -> String? {
+            let locals = texts(nodes())
+            return locals.first { $0.contains("刷新") || $0.contains("整理") || $0.lowercased().contains("refresh") }
+        }
+        let idle = PermissionCopy.text("刷新状态", "重新整理狀態", "Refresh Status")
+        func refreshedPrefix() -> String {
+            String(PermissionCopy.text("已刷新 · %@", "已重新整理 · %@", "Refreshed · %@").split(separator: "%")[0])
+        }
+        try check(label() == idle, "refresh starts as \(idle): \(String(describing: label()))")
+        guard let button = nodes().max(by: { axFrame($0).width < axFrame($1).width }) else {
+            throw Failure(message: "refresh control is missing from the permission card title row")
+        }
+        try writePNG(host, name: "p4-\(language)-refresh-idle", out: out)
+        try check(press(button), "refresh control rejects AX press")
+        try await Task.sleep(nanoseconds: 80_000_000)
+        try check(label() == PermissionCopy.text("正在刷新…", "正在重新整理…", "Refreshing…"),
+                  "refresh shows no in-flight state: \(String(describing: label()))")
+        try writePNG(host, name: "p4-\(language)-refresh-inflight", out: out)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if let value = label(), value.hasPrefix(refreshedPrefix()) { break }
+            await pause()
+        }
+        guard let refreshed = label(), refreshed.hasPrefix(refreshedPrefix()) else {
+            throw Failure(message: "refresh never reached the refreshed state: \(String(describing: label()))")
+        }
+        let stamp = String(refreshed.dropFirst(refreshedPrefix().count))
+        try check(stamp.range(of: #"^\d{2}:\d{2}$"#, options: .regularExpression) != nil,
+                  "refreshed timestamp is not a 24-hour HH:mm: \(stamp)")
+        try writePNG(host, name: "p4-\(language)-refresh-done", out: out)
+        // 2 秒时仍要显示「已刷新」，3 秒后才淡出回「刷新状态」。
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        try check(label()?.hasPrefix(refreshedPrefix()) == true, "refreshed state disappears before its 3s window")
+        try await Task.sleep(nanoseconds: 1_700_000_000)
+        try check(label() == idle, "refresh label never returns to \(idle): \(String(describing: label()))")
+        try writePNG(host, name: "p4-\(language)-refresh-restored", out: out)
+    }
+
+    /// 两个不可撤销动作：确认弹窗写明影响面、取消不改变状态、确认才落地。
+    @MainActor static func verifyDangerActions(state: ReplicaUIState, out: URL, language: String) async throws {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ARTIFACT_TASK_DIR"]!)
+        let directory = root.appendingPathComponent("build/danger-fixture-\(language)")
+        try? FileManager.default.removeItem(at: directory)
+        let dangerStore = try ClipboardStore(directoryURL: directory)
+        for index in 0..<3 { _ = try dangerStore.add(ClipboardItem(plainText: "danger fixture \(index)")) }
+        let pinnedBoard = try dangerStore.createPinboard(name: "danger pinned")
+        let pinned = try dangerStore.add(ClipboardItem(plainText: "pinned fixture", pinboardIDs: [pinnedBoard.id], isInHistory: false, pinboardOwnerID: pinnedBoard.id))
+        try dangerStore.save()
+        try check(SettingsDangerAction.historyCount(in: dangerStore) == 3,
+                  "history count does not match the three erase targets: \(SettingsDangerAction.historyCount(in: dangerStore))")
+        let alert = SettingsDangerAction.makeClearHistoryAlert(count: 3)
+        let confirmTitle = SettingsDangerAction.clearHistoryConfirmTitle(3)
+        try check(alert.buttons.count == 2, "clear-history alert does not offer exactly confirm + cancel")
+        try check(alert.buttons[0].title == SettingsCopy.text("general.action.cancel"), "cancel is not the first button")
+        try check(alert.buttons[1].title == confirmTitle && confirmTitle.contains("3"),
+                  "confirm button does not carry the count: \(alert.buttons[1].title)")
+        try check(alert.buttons[1].hasDestructiveAction, "clear-history confirm is not marked destructive")
+        try check(alert.buttons[0].keyEquivalent == "\r" && alert.buttons[1].keyEquivalent.isEmpty,
+                  "Return is not bound to cancel only")
+        try check(alert.informativeText.contains("3"), "story text does not name how many entries go: \(alert.informativeText)")
+        try check(alert.informativeText.contains("撤销") || alert.informativeText.contains("復原")
+                    || alert.informativeText.lowercased().contains("undo"),
+                  "story text does not say the action cannot be undone: \(alert.informativeText)")
+        let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        var confirms = 0
+        let erase = { try? dangerStore.eraseHistory() }
+        SettingsDangerAction.present(alert, on: window) {
+            confirms += 1
+            erase()
+        }
+        let settleDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet !== alert.window && Date() < settleDeadline { await pause() }
+        try check(window.attachedSheet === alert.window, "clear-history confirmation is not presented as a sheet")
+        if let frameView = alert.window.contentView?.superview {
+            try writePNG(frameView, name: "p4-\(language)-confirm-clear-history", out: out)
+        }
+        alert.buttons[0].performClick(nil)
+        let cancelDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet != nil && Date() < cancelDeadline { await pause() }
+        try check(confirms == 0, "cancelling the clear-history alert still ran the destructive action")
+        try check(SettingsDangerAction.historyCount(in: dangerStore) == 3, "cancelling the alert still erased history")
+        let confirmAlert = SettingsDangerAction.makeClearHistoryAlert(count: 3)
+        SettingsDangerAction.present(confirmAlert, on: window) {
+            confirms += 1
+            erase()
+        }
+        let agreeDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet !== confirmAlert.window && Date() < agreeDeadline { await pause() }
+        confirmAlert.buttons[1].performClick(nil)
+        let doneDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet != nil && Date() < doneDeadline { await pause() }
+        try check(confirms == 1, "confirming the clear-history alert did not run exactly once")
+        try check(SettingsDangerAction.historyCount(in: dangerStore) == 0, "confirmed clear did not erase the three history entries")
+        try check(dangerStore.items.contains { $0.id == pinned }, "confirmed clear removed a pinned item")
+
+        // 「恢复全部快捷键…」：确认文案必须点名 6 条，取消不改任何偏好。
+        for row in SettingsShortcutRow.allCases {
+            if let path = row.path { dangerStore.preferences[keyPath: path] = (nil as BlinkClipCore.KeyboardShortcut?) }
+            if let path = row.modifierPath { dangerStore.preferences[keyPath: path] = 0 }
+        }
+        try dangerStore.save()
+        let before = dangerStore.preferences
+        let resetAlert = SettingsShortcutReset.makeAlert()
+        try check(resetAlert.informativeText.contains("6"),
+                  "restore-all scope does not name the six shortcuts: \(resetAlert.informativeText)")
+        try check(resetAlert.buttons.count == 2 && resetAlert.buttons[0].title == SettingsCopy.text("general.action.cancel"),
+                  "restore-all confirmation does not offer cancel first")
+        var resetConfirmed: Bool?
+        // 走生产入口：先以 sheet 呈现（这样截图是真实的确认弹窗），再分别点取消与确认。
+        SettingsShortcutReset.present(resetAlert, on: window) { confirmed in
+            resetConfirmed = confirmed
+            if confirmed {
+                _ = try? SettingsShortcutReset.apply(confirmed: true, store: dangerStore,
+                                                     commitScreenshots: {}, reload: {})
+            }
+        }
+        let resetDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet !== resetAlert.window && Date() < resetDeadline { await pause() }
+        try check(window.attachedSheet === resetAlert.window, "restore-all confirmation is not presented as a sheet")
+        if let frameView = resetAlert.window.contentView?.superview {
+            try writePNG(frameView, name: "p4-\(language)-confirm-reset-shortcuts", out: out)
+        }
+        resetAlert.buttons[0].performClick(nil)
+        let resetCancelDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet != nil && Date() < resetCancelDeadline { await pause() }
+        try check(resetConfirmed == false, "restore-all cancel reported a confirmation")
+        try check(dangerStore.preferences == before, "cancelling restore-all changed preferences")
+        try check(dangerStore.preferences.historyShortcut == nil && dangerStore.preferences.stackShortcut == nil,
+                  "cancelled restore-all wrote defaults anyway")
+        let confirmReset = SettingsShortcutReset.makeAlert()
+        SettingsShortcutReset.present(confirmReset, on: window) { confirmed in
+            resetConfirmed = confirmed
+            if confirmed {
+                _ = try? SettingsShortcutReset.apply(confirmed: true, store: dangerStore,
+                                                     commitScreenshots: {}, reload: {})
+            }
+        }
+        let resetAgreeDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet !== confirmReset.window && Date() < resetAgreeDeadline { await pause() }
+        confirmReset.buttons[1].performClick(nil)
+        let resetDoneDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet != nil && Date() < resetDoneDeadline { await pause() }
+        try check(resetConfirmed == true, "restore-all confirm did not report a confirmation")
+        try check(dangerStore.preferences.historyShortcut == .historyDefault
+                    && dangerStore.preferences.stackShortcut == .stackDefault,
+                  "confirmed restore-all did not restore the six shortcuts")
+    }
+
+    /// 冲突提示：归属正在编辑的那一行、文案指名占用者、被拒之后仍保持录制态。
+    @MainActor static func verifyShortcutConflict(state: ReplicaUIState, out: URL, language: String) async throws {
+        let store = state.store
+        let historyRow = SettingsShortcutRow.history
+        let stackRow = SettingsShortcutRow.stack
+        let historyValue = KeyboardShortcut(keyCode: 16, modifierRawValue: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
+        let stackValue = KeyboardShortcut(keyCode: 7, modifierRawValue: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
+        let retryValue = KeyboardShortcut(keyCode: 6, modifierRawValue: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
+        store.preferences[keyPath: historyRow.path!] = historyValue
+        store.preferences[keyPath: stackRow.path!] = stackValue
+        try store.save()
+        guard let domain = Bundle.main.bundleIdentifier, domain.hasPrefix("local.blinkclip.regression.") else {
+            throw Failure(message: "isolated test app domain required")
+        }
+        defer { UserDefaults.standard.removePersistentDomain(forName: domain) }
+        defer {
+            store.preferences[keyPath: historyRow.path!] = nil
+            store.preferences[keyPath: stackRow.path!] = nil
+            _ = try? store.save()
+        }
+        let host = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: SettingsSection.shortcuts.rawValue))
+        let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 900), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        if let screen = NSScreen.main {
+            window.setFrameOrigin(NSPoint(x: screen.frame.maxX + 200, y: screen.frame.maxY + 200))
+        }
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        await pause()
+        func recorderNode(_ row: SettingsShortcutRow) -> NSRect? {
+            accessibilityTree(host).filter { axID($0) == "settings.shortcut.recorder." + row.rawValue }
+                .map { axFrame($0) }
+                .first { abs($0.width - 120) <= 1 && abs($0.height - 24) <= 1 }
+        }
+        func errorNode(_ row: SettingsShortcutRow) -> NSRect? {
+            accessibilityTree(host).filter { axID($0) == "settings.shortcut.error." + row.rawValue }
+                .map { axFrame($0) }
+                .max { $0.width < $1.width }
+        }
+        func pressRecorder(_ row: SettingsShortcutRow) throws {
+            guard let node = accessibilityTree(host).first(where: {
+                axID($0) == "settings.shortcut.recorder." + row.rawValue
+                    && abs(axFrame($0).width - 120) <= 1 && abs(axFrame($0).height - 24) <= 1
+            }), press(node) else {
+                throw Failure(message: "recorder for \(row) does not accept AX press")
+            }
+        }
+        func sendKey(_ keyCode: UInt16, _ characters: String, _ flags: NSEvent.ModifierFlags) {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil,
+                                         characters: characters, charactersIgnoringModifiers: characters,
+                                         isARepeat: false, keyCode: keyCode)!
+            NSApp.sendEvent(event)
+        }
+        try pressRecorder(historyRow)
+        await pause()
+        // ⌘⇧X 已经被「打开堆栈面板」占着：这一次赋值必须被拒。
+        sendKey(7, "x", [.command, .shift])
+        await pause()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        await pause()
+        guard let error = errorNode(historyRow), let recorder = recorderNode(historyRow) else {
+            throw Failure(message: "conflict hint is missing under the history row")
+        }
+        let hint = texts(accessibilityTree(host).filter { axID($0) == "settings.shortcut.error." + historyRow.rawValue })
+        try check(hint.contains { $0.contains(stackRow.title) },
+                  "conflict hint does not name the occupying row (\(stackRow.title)): \(hint)")
+        // 窗口坐标 y 向上：行的底边 = 录制器底边 − (minHeight 36 − 24) / 2 = −6pt。
+        let rowBottom = recorder.minY - 6
+        let gap = rowBottom - error.maxY
+        try check(gap >= -0.5 && gap <= 8, "conflict hint is \(gap)pt below the edited row, expected 0...8")
+        try check(store.preferences[keyPath: historyRow.path!] == historyValue,
+                  "a rejected combination was written into preferences anyway")
+        try check(store.preferences[keyPath: stackRow.path!] == stackValue, "the occupying row lost its shortcut")
+        try writePNG(host, name: "p4-\(language)-shortcut-conflict", out: out)
+        // 提示还在，录制也还在：不再点第二次，直接改按 ⌘⇧Z，应当立刻落成新值。
+        sendKey(6, "z", [.command, .shift])
+        await pause()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        try check(store.preferences[keyPath: historyRow.path!] == retryValue,
+                  "recording did not stay armed after the conflict: \(String(describing: store.preferences[keyPath: historyRow.path!]))")
+        try check(errorNode(historyRow) == nil, "conflict hint survived a successful reassignment")
+
+        // 截图热键行同一口径：⌘⇧X 仍被「打开堆栈面板」占着，提示落在截图行正下方并指名它。
+        let regionValue = BlinkClipScreenshotSettings.effectiveShortcut(for: .region)
+        defer {
+            if let regionValue { BlinkClipScreenshotSettings.setShortcut(regionValue, for: .region, force: true) }
+        }
+        try pressRecorder(.region)
+        await pause()
+        sendKey(7, "x", [.command, .shift])
+        await pause()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        guard let hotKeyError = errorNode(.region), let hotKeyRecorder = recorderNode(.region) else {
+            throw Failure(message: "conflict hint is missing under the screenshot hotkey row")
+        }
+        let hotKeyHint = texts(accessibilityTree(host).filter { axID($0) == "settings.shortcut.error.region" })
+        try check(hotKeyHint.contains { $0.contains(stackRow.title) },
+                  "screenshot conflict hint does not name the occupying row: \(hotKeyHint)")
+        let hotKeyGap = (hotKeyRecorder.minY - 6) - hotKeyError.maxY
+        try check(hotKeyGap >= -0.5 && hotKeyGap <= 8,
+                  "screenshot conflict hint is \(hotKeyGap)pt below its row, expected 0...8")
+        try check(BlinkClipScreenshotSettings.effectiveShortcut(for: .region) == regionValue,
+                  "a rejected screenshot shortcut was written anyway")
+        try writePNG(host, name: "p4-\(language)-shortcut-conflict-hotkey", out: out)
+    }
+
     @MainActor static func main() async {
         do { try await run() } catch { print("FAIL \(error)"); exit(1) }
     }
@@ -523,6 +923,7 @@ import BlinkClipCapture
         let aboutRowIndex = SettingsSection.allCases.count
         try check(aboutRowIndex == 6, "About row is not the seventh row")
         let titleBeforeAbout = (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle
+        let selectedBeforeAbout = navigation.selectedRowIndexes
         func aboutWindows() -> [NSWindow] {
             NSApp.windows.filter { $0.identifier?.rawValue == BlinkClipAboutWindowController.windowIdentifier && $0.isVisible }
         }
@@ -537,7 +938,22 @@ import BlinkClipCapture
         navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         await pause()
         try check(aboutWindows().count == 1, "repeated About clicks opened a second window")
+        if let openAbout = aboutWindows().first, let frame = openAbout.contentView?.superview {
+            try writePNG(frame, name: "\(language)-about-window-open", out: out)
+        }
         aboutWindows().forEach { $0.close() }
+        // 关于窗关闭后：选中态回退到点击前的分区，内容与标题一起留在那里。
+        await pause()
+        await pause()
+        try check(navigation.selectedRowIndexes == selectedBeforeAbout,
+                  "closing About left the sidebar highlighted on the action row: \(navigation.selectedRowIndexes) vs \(selectedBeforeAbout)")
+        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == titleBeforeAbout,
+                  "closing About did not restore the original pane title")
+        try check(accessibilityTree(navigationHost).contains { axID($0) == "settings.mcp.status" },
+                  "closing About moved the content away from the original section")
+        if let frame = navigationWindow.contentView?.superview {
+            try writePNG(frame, name: "\(language)-about-closed-restored", out: out)
+        }
         navigationWindow.contentView = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: 2, permissionModel: model))
         await pause()
         try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.screenshot.title, "deep-link root replacement installs current title delegate")
@@ -546,6 +962,12 @@ import BlinkClipCapture
         await pause()
         try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.screenshot.title, "reopen preserves title and delegate")
         navigationWindow.orderOut(nil); navigationWindow.contentView = nil; navigationWindow.close()
+        if runID == "1" {
+            try await verifyRefreshFeedback(state: state, out: out, language: language)
+            try await verifyDangerFooter(state: state, out: out, language: language)
+            try await verifyDangerActions(state: state, out: out, language: language)
+            try await verifyShortcutConflict(state: state, out: out, language: language)
+        }
         try await verifyShortcutRows(store: store, state: state, model: model, out: out, language: language)
         model.stop()
         try check(store.preferences.historyRetentionDays == originalRetention, "viewing pages does not change retention")

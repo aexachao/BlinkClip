@@ -19,6 +19,7 @@ xcrun swiftc -parse-as-library -swift-version 5 -target "$target" -module-cache-
   "$replica_root/Sources/BlinkClip/UI/AccessibilityRequestAction.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" \
+  "$replica_root/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" \
   "$replica_root/Sources/BlinkClip/UI/SettingsWindowFocusRestore.swift" \
   "$replica_root/Tests/Native/PermissionStatusHarness.swift" \
   -o "$test_build/permission-status" >> "$test_out/compile.log" 2>&1
@@ -48,15 +49,19 @@ assert 'hasPrefix("zh")' not in source, "the permission page must resolve three 
 assert 'SettingsStrings.trilingual(zhHans, zhHant, en' in source, "PermissionCopy delegates to the one shared resolver"
 assert "已授权：" not in source and "Granted:" not in source, "status lines carry no capability after a colon"
 assert "未生效：" not in source and "Not active:" not in source, "denied status is the bare 未授权 / Not granted"
-# J1-a: the refresh button sits below a divider and keeps its right alignment.
-refresh_index = body.index("permission-refresh-status")
-before = body[:refresh_index]
-assert before.rindex("Divider()") > before.rindex("row(title:"), "a divider is the last element before the refresh row"
-assert "Spacer(minLength: 8)" in body[max(0, refresh_index - 400):refresh_index], "the refresh button keeps its right alignment"
+# P4: the refresh action left the card body. It now lives in the card title row, so the
+# old "below a divider at the card bottom" contract is gone by design; the card itself
+# keeps exactly two permission rows and the refresh control keeps its own copy + id.
+assert "permission-refresh-status" in source, "the refresh control keeps its stable accessibility identifier"
+assert "permission-refresh-status" not in body, "the refresh control must not sit inside the permission rows"
+assert "struct PermissionRefreshControl" in source, "the card-title refresh control is missing"
+for marker in ["正在刷新…", "已刷新 · %@", "refreshedLinger"]:
+    assert marker in source, f"the refresh control lost its {marker!r} feedback state"
 print("permission page gates: ok")
 PY
 shasum -a 256 "${sources[@]}" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" \
   "$replica_root/Sources/BlinkClip/UI/AccessibilityRequestAction.swift" \
+  "$replica_root/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" \
   "$replica_root/Sources/BlinkClip/UI/PermissionStatusProbe.swift" \
   "$replica_root/Sources/BlinkClip/UI/SettingsWindowFocusRestore.swift" "$replica_root/Sources/BlinkClip/AppMain.swift" > "$test_out/production-inputs.sha256"
 for language in en zh-Hans zh-Hant; do

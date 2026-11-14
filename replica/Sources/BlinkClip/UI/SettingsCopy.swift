@@ -59,7 +59,7 @@ enum SettingsCopy {
     private static let terms: [String: (hans: String, hant: String, en: String)] = [
         "settings.shortcuts.reset-all": ("恢复全部快捷键…", "復原全部快捷鍵…", "Restore All Shortcuts…"),
         "settings.shortcuts.reset-all.confirmation": ("恢复全部快捷键？", "復原全部快捷鍵？", "Restore All Shortcuts?"),
-        "settings.shortcuts.reset-all.scope": ("将恢复四个应用快捷键、两个截图快捷键，以及快捷粘贴和纯文本粘贴的修饰键。其他设置不变。", "將復原四個應用程式快捷鍵、兩個截圖快捷鍵，以及快速貼上和純文字貼上的修飾鍵。其他設定不變。", "Restore the four app shortcuts, both screenshot shortcuts, and the Quick Paste and Plain Text modifier keys. Other settings stay unchanged."),
+        "settings.shortcuts.reset-all.scope": ("将恢复 6 条快捷键为默认：四个应用快捷键、两个截图快捷键，以及快捷粘贴和纯文本粘贴的修饰键。其他设置不变。", "將復原 6 條快捷鍵為預設：四個應用程式快捷鍵、兩個截圖快捷鍵，以及快速貼上和純文字貼上的修飾鍵。其他設定不變。", "Restore 6 shortcuts to their defaults: the four app shortcuts, both screenshot shortcuts, and the Quick Paste and Plain Text modifier keys. Other settings stay unchanged."),
         "settings.shortcuts.reset-all.failed": ("未能恢复快捷键，原设置已保留。", "未能復原快捷鍵，原設定已保留。", "Couldn’t restore shortcuts. Your previous settings were kept."),
         "settings.shortcuts.activate-paste.title": ("打开历史面板", "開啟歷史面板", "Open History Panel"),
         "settings.shortcuts.activate-paste-stack.title": ("打开堆栈面板", "開啟堆疊面板", "Open Stack Panel"),

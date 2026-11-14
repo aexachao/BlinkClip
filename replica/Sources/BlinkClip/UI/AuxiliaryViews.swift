@@ -283,14 +283,32 @@ struct ReplicaStackTable: NSViewRepresentable {
 enum BlinkClipAboutWindow {
     private static var controller: BlinkClipAboutWindowController?
 
-    static func present() {
+    /// 打开关于窗口。`onClose` 只给设置侧栏用：窗口关闭时把侧栏选中态落回点击前的
+    /// 分区；菜单入口不传，行为与之前完全一致。
+    static func present(onClose: (() -> Void)? = nil) {
         if controller == nil {
             controller = BlinkClipAboutWindowController(checker: BlinkClipUpdateChecker()) {
                 try BlinkClipInAppUpdater().checkForUpdates()
             }
         }
+        controller?.onClose = onClose
         controller?.showWindow(nil)
     }
+}
+
+/// 权限状态模型的持有者。
+///
+/// 标题行的「刷新状态」和卡片里的两条权限行必须是**同一份**模型，否则刷新按钮刷的
+/// 是另一个对象；同时用 `lazy` 保持旧行为——只有第一次渲染隐私分区时才真正跑一次
+/// 探针，打开设置（停在别的分区）不会白起一个子进程。
+@MainActor
+final class PermissionStatusModelProvider: ObservableObject {
+    private let injected: PermissionStatusModel?
+    private lazy var stored: PermissionStatusModel = injected ?? PermissionStatusModel()
+
+    init(injected: PermissionStatusModel?) { self.injected = injected }
+
+    var model: PermissionStatusModel { stored }
 }
 
 @MainActor
@@ -299,11 +317,13 @@ struct ReplicaSettingsView: View {
     /// 打开时默认选中的分区。深链（OCR/编辑器里的「打开设置」）用它落到「截图」。
     /// 必须有默认值：`Tests/Native/UIInteractionHarness.swift` 仍然用单参构造。
     var initialTab: Int = 0
-    private let permissionModel: PermissionStatusModel?
+    @StateObject private var permissionProvider: PermissionStatusModelProvider
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedExclusions: Set<String> = []
     @State private var showingMCPConfiguration = false
     @State private var tab: Int?
+    /// 点「关于闪贴」之前的分区：关于窗关闭后侧栏选中态要落回这里。
+    @State private var aboutReturnTab: Int?
     @State private var shortcutError = ""
     @State private var shortcutRowErrors: [String: String] = [:]
     @State private var shortcutRowGenerations: [String: Int] = [:]
@@ -319,13 +339,11 @@ struct ReplicaSettingsView: View {
     @State private var screenshotRegionShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .region)
     @State private var screenshotFullScreenShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .fullScreen)
     @State private var screenshotHotKeyRegistrations = BlinkClipScreenshotSettings.lastRegistration
-    // 与「快捷键」分区的 `shortcutError` 分开：两个分区各显示各的提示，切分区不串味。
-    @State private var screenshotShortcutError = ""
 
     init(state: ReplicaUIState, initialTab: Int = 0, permissionModel: PermissionStatusModel? = nil) {
         _state = ObservedObject(wrappedValue: state)
         self.initialTab = initialTab
-        self.permissionModel = permissionModel
+        _permissionProvider = StateObject(wrappedValue: PermissionStatusModelProvider(injected: permissionModel))
         // `@State` 的初值只在根视图被构造时读取；窗口已经开过就只能换一份新根视图
         // 才能换分区（见 `ReplicaUIController.installSettingsContent`）。
         _tab = State(initialValue: initialTab)
@@ -385,17 +403,34 @@ struct ReplicaSettingsView: View {
             .accessibilityIdentifier("BlinkClipSettingsAbout")
     }
 
-    /// 分区选中仍然直接写进 `tab`；「关于闪贴」那一行改成打开关于窗口，不改分区，
-    /// 所以侧栏的选中态和六项顺序都不受影响。
+    /// 分区选中仍然直接写进 `tab`；「关于闪贴」那一行改成打开关于窗口，不改分区。
+    ///
+    /// 点动作行时**不动** `tab`（右侧内容与标题都留在原分区），只记住点击前的分区；
+    /// 关于窗关闭时再把这个分区写回选中态。原生侧栏在点击那一下已经把自己高亮到
+    /// 动作行上，而 `tab` 没变、SwiftUI 不会重画选区，所以关闭时要显式「清一帧再
+    /// 落回」（见 `restoreSidebarAfterAbout`），否则高亮会一直停在动作行。
     private var sidebarSelection: Binding<Int?> {
         Binding(get: { tab }, set: { value in
             guard let value else { return }
             if value == Self.aboutRowTag {
-                BlinkClipAboutWindow.present()
+                aboutReturnTab = tab ?? 0
+                BlinkClipAboutWindow.present { restoreSidebarAfterAbout() }
                 return
             }
             tab = value
         })
+    }
+
+    /// 关于窗关闭后把侧栏选中态落回点击前的分区，内容与标题跟着一起回去。
+    ///
+    /// 先置空一帧再写回原值：值没变化时 SwiftUI 不会重新应用选中态，原生
+    /// `NSOutlineView` 就留在动作行上。两帧之间内容与标题都指向同一个分区，不会出现
+    /// 「内容 A、标题 B」的错配。
+    private func restoreSidebarAfterAbout() {
+        guard let target = aboutReturnTab else { return }
+        aboutReturnTab = nil
+        tab = nil
+        DispatchQueue.main.async { tab = target }
     }
 
     private var sidebarTopInset: CGFloat {
@@ -549,14 +584,13 @@ struct ReplicaSettingsView: View {
                                 save: { try state.store.save() })
                         }
                         .padding(.vertical, 4)
-                        Divider().padding(.vertical, 8)
-                        HStack {
-                            Spacer()
-                            Button(SettingsCopy.text("general.action.erase-history") + "…") {
-                                state.controller?.clearHistory()
-                            }
-                        }
                     }
+                }
+                // 不可撤销的动作放在页尾（与「快捷键」页的「恢复全部快捷键…」同一区域策略），
+                // 并用系统红标出它的性质；确认弹窗再写明这一次会清掉多少条。
+                settingsFooterAction(SettingsCopy.text("general.action.erase-history") + "…",
+                                     identifier: "settings.clear-history", destructive: true) {
+                    state.controller?.clearHistory()
                 }
             }
             .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
@@ -566,6 +600,26 @@ struct ReplicaSettingsView: View {
     private func settingsSectionTitle(_ title: String) -> some View {
         Text(title).font(.system(size: 13, weight: .semibold)).padding(.leading, 10)
             .accessibilityIdentifier("settings.section-title")
+    }
+
+    /// 页尾动作：影响面大或不可撤销的管理动作统一放在**内容区底部、右对齐**。
+    ///
+    /// 「清空历史记录…」和「恢复全部快捷键…」共用这一条区域策略：不再挤进卡片正文，
+    /// 也不占页首。`destructive` 只用系统红（`NSColor.systemRed`）做语义强调，
+    /// 不引入新的视觉体系。
+    private func settingsFooterAction(_ title: String, identifier: String,
+                                      destructive: Bool = false,
+                                      action: @escaping () -> Void) -> some View {
+        HStack {
+            Spacer(minLength: 8)
+            Button(action: action) {
+                Text(title)
+                    .foregroundStyle(destructive ? Color(nsColor: .systemRed) : Color(nsColor: .linkColor))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(identifier)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func settingsCard<Content: View>(verticalPadding: CGFloat = 10, @ViewBuilder content: () -> Content) -> some View {
@@ -695,10 +749,11 @@ struct ReplicaSettingsView: View {
 
     /// 一行截图热键：标题（+ 注册失败提示）与录制器。
     ///
-    /// 录制器直接复用 `ReplicaShortcutRecorder`（内部是 `ShortcutRecorderView`）：
-    /// 系统快捷键与菜单冲突检测在 `ShortcutValidation` 里，
-    /// 接上即得，不重复实现一套录制/校验。
+    /// 录制器复用 `ReplicaShortcutRecorder`：系统快捷键与菜单冲突检测在
+    /// `ShortcutValidation` 里，接上即得，不重复实现一套录制/校验。冲突与校验提示都
+    /// 落在**这一行正下方**（4pt），并指名占用者；录制态不结束，可以直接改按别的组合。
     private func screenshotHotKeyRow(_ slot: BlinkClipScreenshotHotKeySlot) -> some View {
+        let row: SettingsShortcutRow = slot == .region ? .region : .fullScreen
         let title = slot == .region
             ? ScreenshotSettingsCopy.text(.hotKeyRegionTitle)
             : ScreenshotSettingsCopy.text(.hotKeyFullScreenTitle)
@@ -713,23 +768,26 @@ struct ReplicaSettingsView: View {
             HStack {
                 Text(title)
                 Spacer(minLength: 12)
-                restoreShortcutButton(slot == .region ? .region : .fullScreen)
+                restoreShortcutButton(row)
                 ReplicaShortcutRecorder(shortcut: screenshotHotKeyBinding(slot),
                                         label: title,
-                                        error: { screenshotShortcutError = $0 },
+                                        error: { message in shortcutRowErrors[row.rawValue] = message.isEmpty ? nil : message },
                                         recordingChanged: { recording in
                                             // 录制期间必须摘掉两个截图热键：Carbon 热键会把
                                             // 用户想录的组合吞掉（表现为「录不上」）。
                                             // 走 begin/end 计数：两个录制器重叠时，先结束的那个
                                             // 不能把仍在等键的另一个的「让位」撤掉。
                                             setHotKeyRecording(recording)
-                                        }, allowsClearing: true)
+                                        },
+                                        allowsClearing: true,
+                                        conflict: { value in shortcutConflictMessage(value, excluding: row) },
+                                        conflictChanged: { shortcutRowErrors[row.rawValue] = $0 })
                     .id(shortcutResetGeneration)
                     .accessibilityIdentifier("settings.shortcut.recorder." + (slot == .region ? "region" : "fullScreen"))
                     .frame(width: 120, height: 24)
             }
             .frame(minHeight: 36)
-            shortcutRowError(slot == .region ? .region : .fullScreen)
+            shortcutRowError(row)
             if let failureText {
                 HStack(spacing: 8) {
                     Text(failureText)
@@ -739,7 +797,7 @@ struct ReplicaSettingsView: View {
                     // 都没变，`storeHotKey` 也就不会再发通知（值未变即返回），所以这里必须有一条
                     // **不依赖值变化**的重试入口：直接请协调器按当前偏好重注册一次。
                     Button(ScreenshotSettingsCopy.text(.hotKeyRetryRegistration)) {
-                        screenshotShortcutError = ""
+                        shortcutRowErrors[row.rawValue] = nil
                         BlinkClipScreenshotSettings.requestHotKeyReload()
                     }
                     .buttonStyle(.link)
@@ -759,19 +817,21 @@ struct ReplicaSettingsView: View {
             return BlinkClipCore.KeyboardShortcut(keyCode: hotKey.keyCode,
                                               modifierRawValue: hotKey.modifierRawValue)
         }, set: { value in
+            let row: SettingsShortcutRow = slot == .region ? .region : .fullScreen
             guard let value else {
-                screenshotShortcutError = ""
-                shortcutRowErrors[slot == .region ? "region" : "fullScreen"] = nil
+                shortcutRowErrors[row.rawValue] = nil
                 BlinkClipScreenshotSettings.clearShortcut(for: slot)
                 if slot == .region { screenshotRegionShortcut = nil }
                 else { screenshotFullScreenShortcut = nil }
                 return
             }
-            guard !shortcutIsTaken(value, excludingScreenshotSlot: slot) else {
-                screenshotShortcutError = ScreenshotSettingsCopy.text(.hotKeyDuplicate)
+            // 冲突正常由录制器的 `conflict:` 拦下（提示落在本行下方、录制态保持）；
+            // 这里保留同一口径的兜底，防止别处直接写这个绑定。
+            if let message = shortcutConflictMessage(value, excluding: row) {
+                shortcutRowErrors[row.rawValue] = message
                 return
             }
-            screenshotShortcutError = ""
+            shortcutRowErrors[row.rawValue] = nil
             applyScreenshotHotKey(BlinkClipScreenshotHotKey(keyCode: value.keyCode,
                                                         modifierRawValue: value.modifierRawValue),
                                   for: slot)
@@ -803,31 +863,49 @@ struct ReplicaSettingsView: View {
 
     /// 冲突检查的唯一口径：6 条路径 =「快捷键」分区四条 BlinkClip 命令 + 截图区域 + 截图全屏。
     ///
-    /// 必须把两个截图槽位一起算：底层 `GlobalShortcutMonitor.registerShortcut`
+    /// 返回的是**占用者**而不是布尔：提示要指名「已被「打开堆栈面板」占用」，用户才知道
+    /// 该去改哪一行。必须把两个截图槽位一起算：底层 `GlobalShortcutMonitor.registerShortcut`
     /// 遇到同值会先注销再登记，同值注册**不会**返回错误，只会静默顶掉另一条热键。
-    private func shortcutIsTaken(_ value: BlinkClipCore.KeyboardShortcut,
-                                 excludingPreference path: WritableKeyPath<AppPreferences, BlinkClipCore.KeyboardShortcut?>? = nil,
-                                 excludingScreenshotSlot slot: BlinkClipScreenshotHotKeySlot? = nil) -> Bool {
-        let preferences = state.store.preferences
-        let paths: [WritableKeyPath<AppPreferences, BlinkClipCore.KeyboardShortcut?>] = [
-            \.historyShortcut, \.stackShortcut, \.nextPinboardShortcut, \.previousPinboardShortcut]
-        if paths.contains(where: { $0 != path && preferences[keyPath: $0] == value }) { return true }
-        // 截图侧的单一口径在 `BlinkClipScreenshotSettings.slot(occupyingKeyCode:…)`：
-        // `excluding` 把「正在改的这一行」自己排除掉，与旧实现逐条比对两个槽位等价。
-        if BlinkClipScreenshotSettings.slot(occupyingKeyCode: value.keyCode,
-                                        modifierRawValue: value.modifierRawValue,
-                                        excluding: slot) != nil {
-            return true
+    private func shortcutOccupantTitle(_ value: BlinkClipCore.KeyboardShortcut,
+                                       excluding row: SettingsShortcutRow) -> String? {
+        // 八行统一比对：四条应用命令走偏好，两条截图热键走 `rowScreenshotValue` 的生效值。
+        if let owner = SettingsShortcutRow.occupant(of: value, excluding: row,
+                                                    preferences: state.store.preferences,
+                                                    screenshots: { rowScreenshotValue($0) }) {
+            return owner.title
         }
-        return false
+        let slot: BlinkClipScreenshotHotKeySlot? = row == .region ? .region : (row == .fullScreen ? .fullScreen : nil)
+        if let occupying = BlinkClipScreenshotSettings.slot(occupyingKeyCode: value.keyCode,
+                                                            modifierRawValue: value.modifierRawValue,
+                                                            excluding: slot) {
+            return occupying == .region
+                ? ScreenshotSettingsCopy.text(.hotKeyRegionTitle)
+                : ScreenshotSettingsCopy.text(.hotKeyFullScreenTitle)
+        }
+        return nil
+    }
+
+    /// 行下方的冲突文案。命中占用者才算冲突，`nil` 表示这一行可以赋值。
+    private func shortcutConflictMessage(_ value: BlinkClipCore.KeyboardShortcut,
+                                         excluding row: SettingsShortcutRow) -> String? {
+        guard let owner = shortcutOccupantTitle(value, excluding: row) else { return nil }
+        return SettingsCopy.trilingual("此快捷键已被「\(owner)」占用。",
+                                       "此快捷鍵已被「\(owner)」占用。",
+                                       "That shortcut is already used by “\(owner)”.")
     }
 
     private var privacy: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    settingsSectionTitle(PermissionCopy.text("系统权限", "系統權限", "System Permissions"))
-                    settingsCard { PermissionStatusView(model: permissionModel) }
+                    // 刷新入口落在卡片标题行右侧：它作用于整张卡片（两条权限行 + 授权
+                    // 补救说明），不再像旧实现那样缩在卡片底部、看着只刷新某一条。
+                    HStack(spacing: 8) {
+                        settingsSectionTitle(PermissionCopy.text("系统权限", "系統權限", "System Permissions"))
+                        Spacer(minLength: 8)
+                        PermissionRefreshControl(model: permissionProvider.model)
+                    }
+                    settingsCard { PermissionStatusView(model: permissionProvider.model) }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(SettingsCopy.trilingual("显示与预览", "顯示與預覽", "Display and Previews"))
@@ -930,30 +1008,24 @@ struct ReplicaSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.hotKeySectionTitle))
+                    // 冲突/校验提示都在各自那一行正下方（`shortcutHotKeyRow`/`shortcutRecorder`
+                    // 的 4pt 间距），不再有「卡片下方一整组红字」：提示与行一一对应。
                     settingsCard(verticalPadding: 0) {
                         screenshotHotKeyRow(.region)
                         Divider()
                         screenshotHotKeyRow(.fullScreen)
                     }
-                    if !screenshotShortcutError.isEmpty {
-                        Text(screenshotShortcutError)
-                            .font(.caption).foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
-                // 管理动作放在页尾、改用链接样式降权：它不再是内容区的第一眼焦点，
-                // 首屏节奏回到「小标题 + 卡片」。错误提示跟着动作走，避免报错离按钮太远。
+                // 管理动作放在页尾（与「清空历史记录…」同一区域策略）：它不再是内容区的
+                // 第一眼焦点，首屏节奏回到「小标题 + 卡片」。失败提示跟着动作走。
                 VStack(alignment: .trailing, spacing: 8) {
                     if !shortcutError.isEmpty {
                         Text(shortcutError).foregroundStyle(.red).font(.caption)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("settings.shortcuts.error")
                     }
-                    HStack {
-                        Spacer()
-                        Button(SettingsCopy.text("settings.shortcuts.reset-all")) { resetShortcuts() }
-                            .buttonStyle(.link)
-                            .accessibilityIdentifier("settings.reset-all-shortcuts")
-                    }
+                    settingsFooterAction(SettingsCopy.text("settings.shortcuts.reset-all"),
+                                         identifier: "settings.reset-all-shortcuts") { resetShortcuts() }
                 }
             }
             .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
@@ -985,40 +1057,46 @@ struct ReplicaSettingsView: View {
         .accessibilityLabel(row.title)
     }
 
+    /// 一行应用命令快捷键：标题、恢复默认、录制器。
+    ///
+    /// 冲突在这一层判定并把**占用者**交给录制器（`conflict:`/`conflictChanged:`），
+    /// 提示落在这一行正下方 4pt 处；被拒的组合不会写进偏好，也不会结束录制态，
+    /// 用户可以直接改按别的组合键。旧实现把冲突文案写进整页共享的 `shortcutError`，
+    /// 提示跑到页面最底部，离正在编辑的那一行很远。
     private func shortcutRecorder(_ title: String, path: WritableKeyPath<AppPreferences, BlinkClipCore.KeyboardShortcut?>) -> some View {
         let row = SettingsShortcutRow.allCases.first { $0.path == path }!
         return VStack(alignment: .leading, spacing: 4) {
-        HStack {
-            Text(title)
-            Spacer()
-            restoreShortcutButton(row)
-            ReplicaShortcutRecorder(shortcut: Binding(get: { state.store.preferences[keyPath: path] }, set: { value in
-                // 冲突检查覆盖 6 条路径：四条 BlinkClip 命令 + 两个截图热键（见 `shortcutIsTaken`）。
-                if let value, shortcutIsTaken(value, excludingPreference: path) {
-                    shortcutError = ScreenshotSettingsCopy.text(.hotKeyDuplicate)
-                    return
-                }
-                shortcutError = ""
-                let previous = state.store.preferences[keyPath: path]
-                state.store.preferences[keyPath: path] = value
-                do {
-                    try state.store.save()
-                    shortcutRowErrors[row.rawValue] = nil
-                    state.controller?.hotKeyConfigurationChanged?()
-                } catch {
-                    state.store.preferences[keyPath: path] = previous
-                    shortcutRowErrors[row.rawValue] = error.localizedDescription
-                    shortcutRowGenerations[row.rawValue, default: 0] += 1
-                }
-            }), label: title, error: { shortcutError = $0 }, recordingChanged: { recording in
-                // 录制时截图热键也要让位，否则用户想录的组合可能被它吞掉。
-                // 计数口径：另一个录制器还在等键时，这里的结束不能让热键提前挂回。
-                setHotKeyRecording(recording)
-            }).id("\(shortcutResetGeneration)-\(shortcutRowGenerations[row.rawValue, default: 0])")
+            HStack {
+                Text(title)
+                Spacer()
+                restoreShortcutButton(row)
+                ReplicaShortcutRecorder(shortcut: Binding(get: { state.store.preferences[keyPath: path] }, set: { value in
+                    // 冲突已在录制器里拦下；这里只写确认可用的组合，保存失败仍回滚并报在本行。
+                    let previous = state.store.preferences[keyPath: path]
+                    state.store.preferences[keyPath: path] = value
+                    do {
+                        try state.store.save()
+                        shortcutRowErrors[row.rawValue] = nil
+                        state.controller?.hotKeyConfigurationChanged?()
+                    } catch {
+                        state.store.preferences[keyPath: path] = previous
+                        shortcutRowErrors[row.rawValue] = error.localizedDescription
+                        shortcutRowGenerations[row.rawValue, default: 0] += 1
+                    }
+                }), label: title,
+                   error: { message in shortcutRowErrors[row.rawValue] = message.isEmpty ? nil : message },
+                   recordingChanged: { recording in
+                       // 录制时截图热键也要让位，否则用户想录的组合可能被它吞掉。
+                       // 计数口径：另一个录制器还在等键时，这里的结束不能让热键提前挂回。
+                       setHotKeyRecording(recording)
+                   },
+                   conflict: { value in shortcutConflictMessage(value, excluding: row) },
+                   conflictChanged: { shortcutRowErrors[row.rawValue] = $0 })
+                    .id("\(shortcutResetGeneration)-\(shortcutRowGenerations[row.rawValue, default: 0])")
                     .accessibilityIdentifier("settings.shortcut.recorder." + row.rawValue)
                     .frame(width: 120, height: 24)
-        }.frame(minHeight: 36)
-        shortcutRowError(row)
+            }.frame(minHeight: 36)
+            shortcutRowError(row)
         }
     }
 
@@ -1089,7 +1167,6 @@ struct ReplicaSettingsView: View {
             shortcutRowErrors = [:]
             shortcutResetGeneration += 1
             shortcutError = ""
-            screenshotShortcutError = ""
         } catch {
             shortcutError = SettingsCopy.text("settings.shortcuts.reset-all.failed") + " " + error.localizedDescription
         }

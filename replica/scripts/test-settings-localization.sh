@@ -317,7 +317,7 @@ allow_identical = {'完成', '取消', '播放操作提示音', 'AI 工具', '�
                    '上次同步 '}
 identical = {a[0] for owner in calls for _, a in calls[owner] if a[0] == a[1]}
 assert identical <= allow_identical, sorted(identical - allow_identical)
-assert len(calls['PermissionCopy']) == 30, len(calls['PermissionCopy'])
+assert len(calls['PermissionCopy']) == 32, len(calls['PermissionCopy'])
 assert len(calls['HistoryRetentionCopy']) >= 10, len(calls['HistoryRetentionCopy'])
 assert len(calls['SettingsCopy']) >= 6, len(calls['SettingsCopy'])
 

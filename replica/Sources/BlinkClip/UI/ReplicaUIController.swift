@@ -1485,27 +1485,25 @@ final class ReplicaUIController {
         state.perform { try store.updateItem(id: item.id, title: title, text: nil) }
     }
 
+    /// 清空历史记录（面板菜单与设置页共用一个入口）。
+    ///
+    /// 确认弹窗由 `SettingsDangerAction` 生成：正文写明**这一下会清掉多少条**、
+    /// 不可撤销、钉到分组的项目会保留；确认按钮自带计数（「清空 N 条」）。取消或
+    /// 关闭弹窗不会调用 `eraseHistory()`，状态一个字节都不变。历史为空时保留旧行为：
+    /// 直接落库（只把残留的 `isInHistory` 标记抹掉），不弹一个「清空 0 条」的框。
     func clearHistory() {
-        guard !store.localListMenuState(pinboardID: nil).isEmpty else {
+        let count = SettingsDangerAction.historyCount(in: store)
+        guard count > 0 else {
             state.perform { try store.eraseHistory() }
             return
         }
-        let alert = NSAlert()
+        let alert = SettingsDangerAction.makeClearHistoryAlert(count: count)
         sharingPolicy.apply(to: alert.window)
-        alert.messageText = "您确定要删除剪贴板历史记录吗？"
-        alert.informativeText = "已固定的项目和 \(ReplicaBrand.name) 不会被删除。此操作无法撤销。"
-        let deleteButton = alert.addButton(withTitle: "删除历史")
-        deleteButton.hasDestructiveAction = true
-        deleteButton.keyEquivalent = ""
-        let cancelButton = alert.addButton(withTitle: "取消")
-        cancelButton.keyEquivalent = "\r"
-        alert.window.defaultButtonCell = cancelButton.cell as? NSButtonCell
-        if let settingsWindow, settingsWindow.isVisible {
-            alert.beginSheetModal(for: settingsWindow) { [weak self] response in
-                guard let self, response == .alertFirstButtonReturn else { return }
-                self.state.perform { try self.store.eraseHistory() }
-            }
-        } else if alert.runModal() == .alertFirstButtonReturn { state.perform { try store.eraseHistory() } }
+        SettingsDangerAction.present(alert,
+                                     on: settingsWindow?.isVisible == true ? settingsWindow : nil) { [weak self] in
+            guard let self else { return }
+            self.state.perform { try self.store.eraseHistory() }
+        }
     }
 
     func copySelection(plainTextOnly: Bool) {

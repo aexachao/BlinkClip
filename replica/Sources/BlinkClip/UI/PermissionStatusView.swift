@@ -34,6 +34,8 @@ final class PermissionStatusModel: ObservableObject {
     private(set) var isRequestingScreen = false
     private var observations: [AnyCancellable] = []
     private var refreshTask: Task<Void, Never>?
+    /// 本次用户手动刷新等待落地的回调（与读取一一对应，落地后统一清空）。
+    private var refreshCompletions: [() -> Void] = []
     private var screenRequestTask: Task<Void, Never>?
     private var generation = 0
     private(set) var isObserving = false
@@ -115,6 +117,19 @@ final class PermissionStatusModel: ObservableObject {
             : PermissionCopy.text("未授权", "未授權", "Not granted")
     }
 
+    /// 用户手动点「刷新状态」：**一定**重跑一次读取，并在它落地时回调一次。
+    ///
+    /// 不走 `refresh()` 的「已有读取就早退」：定时刷新的读取可能马上就结束，按钮会从
+    /// 「正在刷新…」直接跳到「已刷新」，用户看不到自己点下去产生的动作。取消在飞的那次
+    /// 读取（`generation` 会让它的结果被丢弃）再重读，回调才是这次点击真正的结果。
+    func refreshUserInitiated(completion: @escaping () -> Void) {
+        refreshTask?.cancel()
+        refreshTask = nil
+        isRefreshing = false
+        refreshCompletions.append(completion)
+        refresh()
+    }
+
     func refresh() {
         guard refreshTask == nil else { return }
         generation += 1
@@ -147,6 +162,9 @@ final class PermissionStatusModel: ObservableObject {
             if self.checkFailed != reading.checkFailed { self.checkFailed = reading.checkFailed }
             self.isRefreshing = false
             self.refreshTask = nil
+            let completions = self.refreshCompletions
+            self.refreshCompletions.removeAll()
+            for completion in completions { completion() }
         }
     }
 
@@ -196,6 +214,7 @@ final class PermissionStatusModel: ObservableObject {
         screenRequestTask = nil
         isRequestingScreen = false
         if isRefreshing { isRefreshing = false }
+        refreshCompletions.removeAll()
     }
 
     func requestAccessibility() {
@@ -288,12 +307,6 @@ struct PermissionStatusView: View {
                 granted: model.screenRecording, identifier: "permission-screen-recording", status: model.screenRecordingStatus) {
                 model.requestScreenRecording()
             }
-            Divider()
-            HStack {
-                Spacer(minLength: 8)
-                Button(PermissionCopy.text("刷新状态", "重新整理狀態", "Refresh Status")) { model.refresh() }
-                    .accessibilityIdentifier("permission-refresh-status")
-            }
             if showsRemediation {
                 staleRequirementCard
             } else if model.hasChecked && !model.statusUnknown
@@ -383,6 +396,84 @@ struct PermissionStatusView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Button(granted ? PermissionCopy.text("系统设置…", "系統設定…", "System Settings…") : PermissionCopy.text("前往授权…", "前往授權…", "Allow Access…"), action: action)
                 .accessibilityIdentifier(identifier + "-request")
+        }
+    }
+}
+
+/// 「系统权限」卡片标题行右侧的刷新入口。
+///
+/// 位置放在卡片标题行、与卡片标题同一行右对齐，明确作用于**整张卡片**（两条权限
+/// 行加上授权补救说明），不再像旧实现那样缩在卡片底部、看起来只刷新某一条。
+/// 点击后按钮自己给三段可见反馈：`正在刷新…`（禁用）→ `已刷新 · HH:mm` →
+/// 3 秒后淡出回 `刷新状态`。时间戳固定 24 小时制，与关于窗口的检查时间同一口径。
+@MainActor
+struct PermissionRefreshControl: View {
+    enum Phase: Equatable { case idle, refreshing, refreshed }
+
+    @ObservedObject var model: PermissionStatusModel
+    @State private var phase: Phase = .idle
+    @State private var refreshedAt: Date?
+    @State private var fading = false
+    @State private var resetTask: Task<Void, Never>?
+
+    /// 固定 24 小时制：语言无关，截图与读屏口径一致。
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    /// 「已刷新」停留时长：之后淡出回「刷新状态」。
+    static let refreshedLinger: TimeInterval = 3
+    static let fadeDuration: TimeInterval = 0.25
+
+    private var label: String {
+        switch phase {
+        case .idle:
+            return PermissionCopy.text("刷新状态", "重新整理狀態", "Refresh Status")
+        case .refreshing:
+            return PermissionCopy.text("正在刷新…", "正在重新整理…", "Refreshing…")
+        case .refreshed:
+            return String(format: PermissionCopy.text("已刷新 · %@", "已重新整理 · %@", "Refreshed · %@"),
+                          Self.clock.string(from: refreshedAt ?? Date()))
+        }
+    }
+
+    var body: some View {
+        Button(action: refresh) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(phase == .refreshing ? Color.secondary : Color(nsColor: .linkColor))
+                .opacity(fading ? 0 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(phase == .refreshing)
+        .fixedSize()
+        .accessibilityIdentifier("permission-refresh-status")
+        .accessibilityLabel(label)
+        .onDisappear { resetTask?.cancel() }
+    }
+
+    private func refresh() {
+        guard phase != .refreshing else { return }
+        resetTask?.cancel()
+        fading = false
+        refreshedAt = nil
+        phase = .refreshing
+        model.refreshUserInitiated {
+            refreshedAt = Date()
+            phase = .refreshed
+            resetTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(Self.refreshedLinger * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: Self.fadeDuration)) { fading = true }
+                try? await Task.sleep(nanoseconds: UInt64(Self.fadeDuration * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                phase = .idle
+                refreshedAt = nil
+                withAnimation(.easeIn(duration: Self.fadeDuration)) { fading = false }
+            }
         }
     }
 }

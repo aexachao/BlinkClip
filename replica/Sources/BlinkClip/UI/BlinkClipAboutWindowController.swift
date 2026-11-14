@@ -19,7 +19,7 @@ import os
 /// The check button starts Sparkle's own update flow; those are two jobs and
 /// stay separate.
 @MainActor
-final class BlinkClipAboutWindowController: NSWindowController {
+final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate {
     static let windowIdentifier = "blinkclip-about-window"
     static let contentSize = NSSize(width: 380, height: 420)
 
@@ -35,6 +35,9 @@ final class BlinkClipAboutWindowController: NSWindowController {
     private let sparkleCheck: () throws -> Void
     private var observation: AnyCancellable?
     private var linkTargets: [URL] = []
+    /// 窗口关闭回调。设置侧栏用它把选中态落回点击「关于闪贴」之前的分区；窗口
+    /// 从菜单打开时没有人登记，回调为空、行为不变。回调只触发一次。
+    var onClose: (() -> Void)?
 
     let statusLabel = NSTextField(wrappingLabelWithString: "")
     let checkButton = NSButton()
@@ -51,6 +54,7 @@ final class BlinkClipAboutWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
+        window.delegate = self
         configureContent()
         refresh(checker.state)
         observation = checker.$state.sink { [weak self] state in
@@ -276,6 +280,15 @@ final class BlinkClipAboutWindowController: NSWindowController {
 
     @objc func closeWindow() {
         window?.performClose(nil)
+    }
+
+    /// 关窗前把一次性的回调取走：重复关闭（菜单入口 vs 侧栏入口、`showWindow` 关掉
+    /// 另一个关于窗）不会把回调触发第二次。
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === window else { return }
+        let handler = onClose
+        onClose = nil
+        handler?()
     }
 
     @objc private func openLink(_ sender: NSButton) {

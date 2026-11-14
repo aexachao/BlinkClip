@@ -78,7 +78,37 @@ checks = {
     'icloud-switch-gap': 'Spacer(minLength: 12)' in (ui / 'CloudKitSyncController.swift').read_text(),
     # 6) 细节：重置入口在页尾并降权；两处开关对齐；状态圆点统一。
     'reset-all-at-bottom': aux.index('settings.reset-all-shortcuts') > aux.index('ScreenshotSettingsCopy.text(.hotKeySectionTitle)'),
-    'reset-all-link-style': '.buttonStyle(.link)\n                            .accessibilityIdentifier("settings.reset-all-shortcuts")' in aux,
+    # P4：两个不可撤销动作共用页尾区域策略；清空历史记录用系统红做语义色，
+    # 两个动作都走「影响面写进确认弹窗」的同一层（`settingsFooterAction`）。
+    'danger-actions-share-footer': aux.count('settingsFooterAction(') >= 3
+                                    and 'settingsFooterAction(SettingsCopy.text("general.action.erase-history") + "…",\n                                     identifier: "settings.clear-history", destructive: true)' in aux
+                                    and 'settingsFooterAction(SettingsCopy.text("settings.shortcuts.reset-all"),\n                                         identifier: "settings.reset-all-shortcuts")' in aux,
+    'clear-history-uses-system-red': 'Color(nsColor: .systemRed)' in aux,
+    'clear-history-leaves-the-card': aux.count('general.action.erase-history') == 1
+                                     and aux.index('settings.clear-history') > aux.index('HistoryRetentionPicker(')
+                                     and 'settings.card' not in aux[aux.index('HistoryRetentionPicker('):aux.index('settings.clear-history')],
+    'reset-all-confirmation-names-six': '復原 6 條快捷鍵為預設' in (ui / 'SettingsCopy.swift').read_text()
+                                        and 'Restore 6 shortcuts to their defaults' in (ui / 'SettingsCopy.swift').read_text(),
+    'clear-history-confirmation-layer': 'makeClearHistoryAlert(count: count)' in (ui / 'ReplicaUIController.swift').read_text()
+                                        and 'historyCount(in: store)' in (ui / 'ReplicaUIController.swift').read_text()
+                                        and 'clearHistoryConfirmTitle' in (ui / 'SettingsDangerAction.swift').read_text(),
+    # P4：刷新入口在卡片标题行（不再是卡片底部那一行）。
+    'refresh-in-card-title-row': 'PermissionRefreshControl(model: permissionProvider.model)' in aux
+                                 and 'Spacer(minLength: 8)\n                        PermissionRefreshControl' in aux
+                                 and 'Button(PermissionCopy.text("刷新状态", "重新整理狀態", "Refresh Status")) { model.refresh() }' not in permission,
+    'refresh-has-three-states': all(marker in permission for marker in
+                                    ['case idle, refreshing, refreshed', '正在重新整理…', '已重新整理 · %@', 'refreshedLinger']),
+    # P4：冲突提示落在正在编辑的那一行下方，指名占用者，并保持录制态。
+    'conflict-hint-owns-its-row': 'shortcutRowError(row)' in aux
+                                   and 'screenshotShortcutError' not in aux
+                                   and 'shortcutConflictMessage(value, excluding: row)' in aux,
+    'conflict-names-the-occupant': '此快捷鍵已被「\\(owner)」占用。' in aux,
+    'conflict-keeps-recording': 'rejection.pending != nil, case .assigned = state' in (ui / 'ShortcutRecorder.swift').read_text()
+                                 and 'model.beginRecording()' in (ui / 'ShortcutRecorder.swift').read_text(),
+    # P4：关于动作行关闭后回落到点击前的分区。
+    'about-close-restores-selection': 'aboutReturnTab' in aux and 'restoreSidebarAfterAbout' in aux
+                                       and 'controller?.onClose = onClose' in aux
+                                       and 'func windowWillClose(_ notification: Notification)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
     'translation-row-centered': 'return HStack {\n            VStack(alignment: .leading, spacing: 3) {\n                Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))' in aux,
     'status-dot-shared': 'SettingsStatusDot(level:' in permission and 'SettingsStatusDot(level: executable ? .normal : .problem)' in aux,
     'ai-no-checkmark-icon': '"checkmark.circle"' not in aux and '"exclamationmark.circle"' not in aux,
