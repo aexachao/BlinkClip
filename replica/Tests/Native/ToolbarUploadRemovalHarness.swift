@@ -571,7 +571,7 @@ import AppKit
         check(HarnessStrings.resourceRoot != nil, "the harness is given the app's real localization resources")
         let previous = HarnessStrings.language
         var titles: [String: [String]] = [:]
-        for language in ["zh-Hans", "en"] {
+        for language in HarnessStrings.shippedLanguages {
             HarnessStrings.language = language
             // Reading a title loads the table (same lazily-resolved bundle as
             // `Localizer`), so the load assertion comes after the first read.
@@ -588,12 +588,16 @@ import AppKit
         // silently render English (Localizer falls back), so require each
         // shipped language to carry every toolbar string itself.
         for key in HarnessToolbarStrings.keys {
-            for language in ["zh-Hans", "en"] {
+            for language in HarnessStrings.shippedLanguages {
                 check(HarnessStrings.has(key, in: language), "\(language).lproj carries \(key)")
             }
         }
         HarnessStrings.language = previous
         check(titles["zh-Hans"] != titles["en"], "the brush rows really are translated (zh != en)")
+        // The traditional table is a real table, not a copy of the simplified
+        // one: 畫筆/螢光筆/聚光燈 must differ from 画笔/高亮笔/聚光灯.
+        check(titles["zh-Hant"] != titles["en"], "the brush rows are translated in zh-Hant too")
+        check(titles["zh-Hant"] != titles["zh-Hans"], "zh-Hant carries its own copy, not the simplified table")
         check(HarnessStrings.missingKeys.isEmpty,
               "no toolbar key fell back to its raw name: \(HarnessStrings.missingKeys.sorted())")
     }
@@ -1124,7 +1128,7 @@ enum RenderEvidence {
         }
 
         let previousLanguage = HarnessStrings.language
-        for language in ["zh-Hans", "en"] {
+        for language in HarnessStrings.shippedLanguages {
             HarnessStrings.language = language
             let size = ToolbarGroupMenuPanel.preferredSize(members: [.pen, .marker, .spotlight])
             out["panel.\(language).size"] = String(format: "%.0fx%.0f pt", size.width, size.height)
@@ -1288,7 +1292,7 @@ enum RenderEvidence {
             groupChevron.setHovered(false)
 
             // Dropdown with the app's real copy, per language.
-            for (tag, language) in [("zh", "zh-Hans"), ("en", "en")] {
+            for (tag, language) in [("zh", "zh-Hans"), ("hant", "zh-Hant"), ("en", "en")] {
                 HarnessStrings.language = language
                 let size = ToolbarGroupMenuPanel.preferredSize(members: [.pen, .marker, .spotlight])
                 let content = ToolbarGroupMenuContentView(frame: NSRect(origin: .zero, size: size))
@@ -1304,7 +1308,7 @@ enum RenderEvidence {
             }
             // Lines dropdown (J1-c): arrow first, then line, with the app's
             // real copy in each language.
-            for (tag, language) in [("zh", "zh-Hans"), ("en", "en")] {
+            for (tag, language) in [("zh", "zh-Hans"), ("hant", "zh-Hant"), ("en", "en")] {
                 HarnessStrings.language = language
                 let members = ToolbarGroup.lines.members
                 let size = ToolbarGroupMenuPanel.preferredSize(members: members)

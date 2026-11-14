@@ -159,8 +159,16 @@ cat > "$bundle/Contents/Resources/en.lproj/InfoPlist.strings" <<'STRINGS'
 "NSScreenCaptureUsageDescription" = "BlinkClip needs screen access to capture a region or display and save it to your history.";
 "NSAppleEventsUsageDescription" = "BlinkClip needs to control Finder to read the files you have selected, so it can pin or capture them.";
 STRINGS
-mkdir -p "$bundle/Contents/Resources/zh-Hant.lproj"
-cp "$bundle/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" "$bundle/Contents/Resources/zh-Hant.lproj/InfoPlist.strings"
+# zh-Hant 带自己的繁体表（Vendor/capcap/Resources/zh-Hant.lproj），不再从
+# zh-Hans 复制 InfoPlist.strings：Localizer 按 AppLanguage.lprojName 直接读主包
+# Resources 里的 lproj，缺表就会回落英文，所以繁体表必须真的进包。
+ditto "$replica_root/Vendor/capcap/Resources/zh-Hant.lproj" "$bundle/Contents/Resources/zh-Hant.lproj"
+cat > "$bundle/Contents/Resources/zh-Hant.lproj/InfoPlist.strings" <<'STRINGS'
+"CFBundleName" = "閃貼";
+"CFBundleDisplayName" = "閃貼";
+"NSScreenCaptureUsageDescription" = "閃貼需要讀取螢幕內容，用於截取您選取的區域或整個螢幕並儲存到歷史。";
+"NSAppleEventsUsageDescription" = "閃貼需要控制 Finder 以讀取您選取的檔案，用於固定或截圖。";
+STRINGS
 # Static App Intents metadata resolves in the main bundle, alongside capture localization.
 cat >> "$bundle/Contents/Resources/zh-Hans.lproj/Localizable.strings" <<'STRINGS'
 
@@ -171,6 +179,34 @@ cat >> "$bundle/Contents/Resources/zh-Hans.lproj/Localizable.strings" <<'STRINGS
 "BlinkClip Item Type" = "闪贴项目类型";
 "Create BlinkClip" = "创建闪贴分组";
 STRINGS
+cat >> "$bundle/Contents/Resources/zh-Hant.lproj/Localizable.strings" <<'STRINGS'
+
+"BlinkClip" = "閃貼";
+"Create BlinkClip Item" = "建立閃貼項目";
+"Get BlinkClip Item at Index" = "取得指定位置的閃貼項目";
+"Get Latest BlinkClip Item" = "取得最新閃貼項目";
+"BlinkClip Item Type" = "閃貼項目類型";
+"Create BlinkClip" = "建立閃貼群組";
+STRINGS
+# Fail closed: a shipped zh-Hant table must carry exactly the zh-Hans key set,
+# otherwise 繁中 falls back to English one key at a time without any build error.
+python3 - "$bundle/Contents/Resources" <<'HANT_KEYS'
+import re, sys
+from pathlib import Path
+
+resources = Path(sys.argv[1])
+entry = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*=', re.M)
+
+def keys(language):
+    text = (resources / f"{language}.lproj" / "Localizable.strings").read_text(encoding="utf-8")
+    return set(entry.findall(text))
+
+hans, hant = keys("zh-Hans"), keys("zh-Hant")
+missing, extra = sorted(hans - hant), sorted(hant - hans)
+assert not missing and not extra, f"zh-Hant/Localizable.strings key set differs: missing={missing[:5]} extra={extra[:5]}"
+assert (resources / "zh-Hant.lproj" / "InfoPlist.strings").is_file(), "zh-Hant/InfoPlist.strings is missing"
+print(f"zh-Hant localization: {len(hant)} keys, identical to zh-Hans")
+HANT_KEYS
 plutil -insert SUFeedURL -string 'https://github.com/aexachao/BlinkClip/releases/latest/download/appcast.xml' "$bundle/Contents/Info.plist"
 plutil -insert SUPublicEDKey -string "$(tr -d '\r\n' < "$replica_root/Assets/UpdatePublicKey.txt")" "$bundle/Contents/Info.plist"
 plutil -insert SURequireSignedFeed -bool YES "$bundle/Contents/Info.plist"

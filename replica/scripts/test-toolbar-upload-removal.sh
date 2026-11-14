@@ -38,6 +38,9 @@ enum HarnessBarMetrics {
 /// up as a failure rather than as a silent fallback.
 enum HarnessStrings {
     static var language = "zh-Hans"
+    /// Every table the shipped app carries. zh-Hant is a real table of its own,
+    /// not the build-time copy of zh-Hans' InfoPlist.strings.
+    static let shippedLanguages = ["zh-Hans", "zh-Hant", "en"]
     private static var tables: [String: [String: String]] = [:]
     private(set) static var missingKeys: Set<String> = []
     private(set) static var loaded: Set<String> = []
@@ -188,12 +191,55 @@ for lang,value in [('zh-Hans','完成'),('en','Done')]:
   'redo: runtime-hidden from the bar, ⇧⌘Z binding kept in the registry',
   'dropdown: self-drawn panel reuses the bar surface, no NSMenu, keyboard + VoiceOver + resign-key dismissal',
   'confirm tooltip: 完成 / Done in both localizations',
+  'zh-Hant: key set identical to zh-Hans (668 keys), no simplified-only spellings left, spot-checked 8 known divergent keys',
 ],'boundary':'Source entrypoint review plus the native harness render/sampling below; the harness drives the per-session group reset through a scratch UserDefaults suite, the lines dropdown order through the real menu content view, and row hover through synthetic mouse events inside a real non-key NSPanel, not a click-driven editor session'},indent=2))
 paths=[layout,r/'Vendor/capcap/Editor/EditWindowController.swift',r/'Vendor/capcap/Editor/EditorShortcutRegistry.swift',
        r/'Vendor/capcap/Editor/ToolbarChrome.swift',r/'Vendor/capcap/Editor/ToolbarButtons.swift',
        r/'Vendor/capcap/Editor/ToolbarGroupMenu.swift',
        r/'Tests/Native/ToolbarUploadRemovalHarness.swift',r/'scripts/test-toolbar-upload-removal.sh']
 (t/'out/source-sha256.json').write_text(json.dumps({str(p.relative_to(r)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},indent=2))
+
+# --- zh-Hant table gate -----------------------------------------------------
+# The traditional table is machine-converted, so this gate re-checks the two
+# things a converter can get wrong: a diverging key set (a missing key would
+# silently render English through Localizer's fallback) and simplified-only
+# forms surviving inside the values.
+entry_re=re.compile(r'^"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)";\s*$',re.M)
+hans_table=dict(entry_re.findall((r/'Vendor/capcap/Resources/zh-Hans.lproj/Localizable.strings').read_text()))
+hant_table=dict(entry_re.findall((r/'Vendor/capcap/Resources/zh-Hant.lproj/Localizable.strings').read_text()))
+parity={
+    'zh-Hans-key-count': len(hans_table)==668 and len(hant_table)==668,
+    'zh-Hant-key-set-equals-zh-Hans': set(hant_table)==set(hans_table),
+    'zh-Hant-missing-keys': sorted(set(hans_table)-set(hant_table)),
+    'zh-Hant-extra-keys': sorted(set(hant_table)-set(hans_table)),
+}
+# Simplified-only spellings that must not survive anywhere in the Hant table.
+simplified_only=['剪贴板','设置','默认','撤销','屏幕','录制','全屏','菜单','图标','缓存','鼠标','网络','链接','搜索','拖拽','窗口','刘海','倒计时','弹窗','视频','设备','保存']
+leftovers={term:[k for k,v in hant_table.items() if term in v] for term in simplified_only}
+parity['zh-Hant-simplified-leftovers']={k:v for k,v in leftovers.items() if v}
+assert parity['zh-Hant-key-set-equals-zh-Hans'], parity
+assert not parity['zh-Hant-simplified-leftovers'], parity['zh-Hant-simplified-leftovers']
+# Spot-check the known simplified/traditional divergences by value.
+spot={
+ 'settingsTitle':'閃貼設定',
+ 'clipboardShortcutHeader':'複製到剪貼簿',
+ 'fileSaveShortcutHeader':'儲存到檔案',
+ 'screenRecordingPermission':'螢幕錄製',
+ 'historyPanelNotchMode':'瀏海',
+ 'tipUndo':'復原',
+ 'tipRedo':'重做',
+ 'showCopyToast':'複製成功後顯示提示',
+}
+spot_checks={key: hant_table.get(key)==value for key,value in spot.items()}
+parity['zh-Hant-spot-checks']=spot_checks
+assert all(spot_checks.values()), [k for k,v in spot_checks.items() if not v]
+(t/'out/zh-hant-table.json').write_text(json.dumps({
+  'passed': True,
+  'keyCount': len(hant_table),
+  'parity': parity,
+  'sampleKeys': spot,
+  'note': 'zh-Hant 由 macOS ICU Hans-Hant 逐值转换 + 台湾用语术语表修正后生成；此处只校验键集合与抽查值，不校验文案风格。',
+}, ensure_ascii=False, indent=2)+'\n')
 PY
 # Prefer the installed app's resources (what ships); fall back to the source
 # .lproj when the app has not been built in this checkout.
