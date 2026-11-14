@@ -33,6 +33,16 @@ struct UIInteractionHarness {
         }
         return item
     }
+    /// 03a538（`ReplicaUIState.reconcileTabListSelection`）：列表被删除后，产品不跳回历史，
+    /// 而是把旧位置夹取到剩余原生顺序里的同位（min(oldIndex, count-1)）；列表栈空时才是历史。
+    /// 原生快照 = 历史(0) + `store.pinboards`，两侧的下标偏移在夹取后相互抵消，因此用
+    /// `store.pinboards` 的旧下标算出的期望值与产品一致。测试按这条语义给出期望目标，
+    /// 不再假设“删组后选中历史”。
+    @MainActor static func expectedBoardAfterDeletion(indexBefore: Int, store: ClipboardStore) -> UUID? {
+        let remaining = store.pinboards
+        guard !remaining.isEmpty else { return nil }
+        return remaining[min(indexBefore, remaining.count - 1)].id
+    }
     /// 首帧时序等待：原生卡片集合在面板 hosting view 建好后，才通过
     /// `ReplicaNativeCollectionHost.scheduleSnapshotDrain` 在主队列下一轮排空首个快照，
     /// 并在首次布局的 `viewDidMoveToWindow` 里取得 panel 第一响应者。若在该同步栈里
@@ -127,15 +137,24 @@ struct UIInteractionHarness {
         key(124, "", .option)
         try require(state.pinboardID == pin.id && state.visibleItems.map(\.id) == [first])
         state.chooseBoard(nil)
-        state.addToStack(try entryItem(visible[0])); state.addToStack(try entryItem(visible[1])); state.addToStack(try entryItem(visible[0]))
-        let insertedStack = [visible[1].id, visible[0].id]
-        try require(state.stackIDs == insertedStack)
+        // 第八十一轮（CHANGELOG «Stack 保留重复项并逐行移除»）：原版队列允许相同内容重复入队，
+        // 右键移除或粘贴成功只消费当前行、保留同 ID 的其他项；第一百一十四轮再次确认
+        // «保留顺序和重复项»。旧断言按“去重”期望 [visible[1], visible[0]]，与产品现状
+        // （`ReplicaUIState.insertStackItem` 每次 addToStack 一律插入，不清同 ID）冲突。
+        state.addToStack(try entryItem(visible[0])); state.addToStack(try entryItem(visible[0])); state.addToStack(try entryItem(visible[1]))
+        let pushedStack = [visible[1].id, visible[0].id, visible[0].id]
+        try require(state.stackIDs == pushedStack)
         state.reverseStack()
+        try require(state.stackIDs == Array(pushedStack.reversed()))
         let reopened = try ClipboardStore(directoryURL: directory)
-        try require(reopened.preferences.stackItemIDs == Array(insertedStack.reversed()))
+        // 第一百四十七轮（CHANGELOG «Stack 会话关闭与队列»）：关闭 Stack 后释放本次队列，
+        // 重新打开从空队列开始；队列不再写入或从旧偏好恢复。只有方向偏好（stackReversed）
+        // 与历史内容保留（`reverseStack` 仍 toggle 并 save）。
+        try require(reopened.preferences.stackItemIDs.isEmpty)
         try require(reopened.preferences.stackReversed)
         ui.consumeStackHead()
-        try require(state.stackIDs == [visible[1].id])
+        // 队首消费只移除一项，重复入队的另一项仍在（第八十一轮）。
+        try require(state.stackIDs == [visible[0].id, visible[1].id])
         for minutes in [15, 30, 60, 180, 480] {
             let start = Date()
             state.pauseMonitoring(minutes: minutes)
@@ -264,19 +283,34 @@ struct UIInteractionHarness {
                     width: width, height: 332), display: true)
                 try await Task.sleep(for: .milliseconds(100))
                 content.layoutSubtreeIfNeeded()
-                guard let field = searchFields(in: content).first,
-                      let history = menuButtons(in: content).first(where: { $0.accessibilityLabel() == "返回剪贴板历史" }) else {
-                    throw Failure(description: "Missing active search layout controls")
+                // 产品没有「返回剪贴板历史」按钮：源码零命中，且激活态下搜索按钮 alpha 0、
+                // `PanelSearchBar.hitTest` 把点击让给输入框。搜索态真正的“返回历史”路径是
+                // 取消搜索（非空查询下 Esc 走 `cancelSearchOrPanel`），由本循环后的断言覆盖。
+                guard let field = searchFields(in: content).first else {
+                    throw Failure(description: "Missing active search field")
                 }
                 let fieldFrame = field.convert(field.bounds, to: content)
-                let historyFrame = history.convert(history.bounds, to: content)
                 let moreFrame = more.convert(more.bounds, to: content)
                 try require(abs(fieldFrame.midX - content.bounds.midX) < 1)
-                try require(abs(fieldFrame.width - max(400, (width - 16) * 0.25)) < 1)
-                try require(abs(historyFrame.minX - fieldFrame.maxX - 8) < 1)
-                try require(history.bounds.size == NSSize(width: 32, height: 32))
+                // 宽度按真实布局常量：`PanelToolbar.searchBarConstraints` 的
+                // `widthAnchor(greaterThanOrEqualTo: widthAnchor, multiplier: 0.25)` 与
+                // `greaterThanOrEqualToConstant: 400`，其中 widthAnchor 是工具栏宽度。
+                // 工具栏宽度 = 面板宽度 − 2×`ReplicaPanelView.backgroundInset`
+                // （macOS 26 起 8pt，之前 0）。旧断言固定再减 16，只在 macOS 26 成立，
+                // 本机（macOS 15，inset=0）实测 2560→640 而非 636。
+                let backgroundInset: CGFloat = {
+                    if #available(macOS 26, *) { return 8 }
+                    return 0
+                }()
+                let toolbarWidth = width - backgroundInset * 2
+                try require(abs(fieldFrame.width - max(400, toolbarWidth * 0.25)) < 1)
+                // 搜索框右侧的内部控件是筛选按钮（`SearchField.subviewConstraints`：
+                // filters.trailing = trailing − 8），旧断言用不存在的历史按钮做 8pt 间距检查。
                 let filters = field.makeFiltersButton()
-                try require(!filters.convert(filters.bounds, to: content).intersects(historyFrame))
+                let filtersFrame = filters.convert(filters.bounds, to: content)
+                try require(filtersFrame.width > 0 && filtersFrame.height > 0)
+                try require(abs(filtersFrame.maxX - (fieldFrame.maxX - 8)) < 1)
+                try require(filtersFrame.minX >= fieldFrame.minX)
                 try require(moreFrame.minX > fieldFrame.maxX)
                 for x in [CGFloat(1), more.bounds.midX, more.bounds.maxX - 1] {
                     for y in [CGFloat(1), more.bounds.midY, more.bounds.maxY - 1] {
@@ -286,6 +320,17 @@ struct UIInteractionHarness {
                 }
             }
         }
+        // 搜索态的“返回剪贴板历史”路径（替代不存在的返回按钮断言）：非空查询下 Esc 走
+        // `ReplicaUIController.cancelSearchOrPanel` 的 mode1 分支——清空查询、退出搜索，
+        // 面板保持可见（不 hidePanel）。面板已在屏幕外 present，这里只验证状态迁移。
+        state.searchVisible = true
+        state.applySearchInput(nodes: [.text("fixture")], text: "fixture", filters: [])
+        // 集合查询经 `searchQueryChanges.debounce(120ms)` 才落到 `collectionSearchQueryNodes`。
+        try await Task.sleep(for: .milliseconds(250))
+        try require(!state.isCollectionSearchQueryEmpty)
+        key(53, "", [])
+        try await Task.sleep(for: .milliseconds(250))
+        try require(state.isCollectionSearchQueryEmpty && !state.searchVisible && ui.panel.isVisible)
         for id in extraGroups { try store.removePinboard(id: id) }
         state.searchVisible = false
         try await presentOffscreen()
@@ -432,15 +477,27 @@ struct UIInteractionHarness {
         state.chooseBoard(nil)
         let windowsBeforeDeletion = Set(NSApp.windows.map(ObjectIdentifier.init))
         let emptyGroup = try store.createPinboard(name: "Empty deletion fixture")
+        let emptyGroupIndex = store.pinboards.firstIndex { $0.id == emptyGroup.id }!
         state.chooseBoard(emptyGroup.id)
         ui.removePinboard(try listTarget(emptyGroup, store: store))
         try require(!store.pinboards.contains { $0.id == emptyGroup.id })
-        try require(state.pinboardID == nil && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
+        // 03a538：删掉的分组按“相邻夹取”（min(旧位置, 剩余数-1)）落到仍存在的列表，
+        // 不会跳回历史。旧断言要求 `state.pinboardID == nil`，与产品语义冲突。
+        try require(state.pinboardID == expectedBoardAfterDeletion(indexBefore: emptyGroupIndex, store: store)
+            && state.pinboardID != nil && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
         let deleteGroup = try store.createPinboard(name: "Delete fixture")
         let retainedGroup = try store.createPinboard(name: "Retained fixture")
-        let historyID = try store.add(ClipboardItem(plainText: "delete history fixture", pinboardIDs: [deleteGroup.id]))
-        let onlyGroupID = try store.add(ClipboardItem(plainText: "delete only fixture", pinboardIDs: [deleteGroup.id], isInHistory: false))
-        let sharedID = try store.add(ClipboardItem(plainText: "delete shared fixture", pinboardIDs: [deleteGroup.id, retainedGroup.id], isInHistory: false))
+        // fixture 必须带 `pinboardOwnerID`：原生列表的“非空”判定（
+        // `ClipboardListPersistence.menuState` 的 `list == %@`）走的是 Item 的 list 关系，
+        // 只给 `pinboardIDs` 不会建立该关系，分组被判为空 → 走“空组直接删除”，
+        // `pendingPinboardDeletion` 确认分支永远不可达。
+        let historyID = try store.add(ClipboardItem(plainText: "delete history fixture", pinboardIDs: [deleteGroup.id], pinboardOwnerID: deleteGroup.id))
+        let onlyGroupID = try store.add(ClipboardItem(plainText: "delete only fixture", pinboardIDs: [deleteGroup.id], isInHistory: false, pinboardOwnerID: deleteGroup.id))
+        let sharedID = try store.add(ClipboardItem(plainText: "delete shared fixture", pinboardIDs: [deleteGroup.id, retainedGroup.id], isInHistory: false, pinboardOwnerID: retainedGroup.id))
+        // 旧值（无原生 owner）多分组条目：产品在删组后仍让它存活，只去掉被删组的归属
+        // （`ClipboardStore.removeList` 的本地投影分支 `pinboardIDs.remove(id)`）。
+        // 没有 CHANGELOG 结论，保留产品现状而不是为了变绿改成“随组删除”→ 见报告第 6 条。
+        let legacySharedID = try store.add(ClipboardItem(plainText: "legacy multi-group fixture", pinboardIDs: [deleteGroup.id, retainedGroup.id], isInHistory: false))
         state.chooseBoard(deleteGroup.id)
         ui.removePinboard(try listTarget(deleteGroup, store: store))
         try await Task.sleep(for: .milliseconds(100))
@@ -474,11 +531,17 @@ struct UIInteractionHarness {
         ui.removePinboard(try listTarget(deleteGroup, store: store))
         try deletionSQL("CREATE TRIGGER reject_group_deletion BEFORE DELETE ON ZPINBOARD BEGIN SELECT RAISE(ABORT,'synthetic group deletion failure'); END;")
         ui.confirmPinboardRemoval()
+        // 产品修复（第 8 条）：失败事务仍会投递一次列表快照，被删组在快照里消失 →
+        // 相邻夹取改选相邻列表 → `applySelectedList` 顺手 `cancelPendingDeletion()`，
+        // 把这次失败要停留的确认与错误一起清掉。修复后 pending 目标与选中列表都留在
+        // 原分组上，错误仍显示在同一个面板内确认里。
         try require(state.pendingPinboardDeletion?.pinboardValue?.id == deleteGroup.id && state.pinboardDeletionError != nil)
+        try require(state.hasPendingDeletion && ui.panel.isVisible && NSApp.modalWindow == nil)
         try require(state.pinboardID == deleteGroup.id && ui.panel.isVisible && NSApp.modalWindow == nil)
         try require(store.pinboards.contains { $0.id == deleteGroup.id } && store.items.contains { $0.id == onlyGroupID })
         try deletionSQL("DROP TRIGGER reject_group_deletion;")
         ui.cancelPinboardRemoval()
+        try require(state.pendingPinboardDeletion == nil && state.pinboardDeletionError == nil)
         state.chooseBoard(retainedGroup.id)
         ui.removePinboard(try listTarget(deleteGroup, store: store))
         key(36, "\r", [])
@@ -487,13 +550,22 @@ struct UIInteractionHarness {
         try require(store.items.contains { $0.id == historyID && $0.isInHistory && $0.pinboardIDs.isEmpty })
         try require(!store.items.contains { $0.id == onlyGroupID })
         try require(store.items.first { $0.id == sharedID }?.pinboardIDs == [retainedGroup.id])
+        // 旧值（无原生 owner）条目不会出现在 `removeList` 的 affected 里，因此仍存活，
+        // 只丢掉被删分组的归属。按观察到的产品行为锁定（无明确产品结论，见报告第 6 条）。
+        try require(store.items.first { $0.id == legacySharedID }?.pinboardIDs == [retainedGroup.id])
         let afterDeletion = try ClipboardStore(directoryURL: directory)
         try require(!afterDeletion.pinboards.contains { $0.id == deleteGroup.id })
         try require(afterDeletion.items.contains { $0.id == historyID } && !afterDeletion.items.contains { $0.id == onlyGroupID })
+        let retainedGroupIndex = store.pinboards.firstIndex { $0.id == retainedGroup.id }!
         ui.removePinboard(try listTarget(retainedGroup, store: store))
         ui.confirmPinboardRemoval()
-        try require(state.pinboardID == nil && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
+        // 03a538：同样按相邻夹取落位，不是跳回历史（旧断言要求 `state.pinboardID == nil`）。
+        try require(state.pinboardID == expectedBoardAfterDeletion(indexBefore: retainedGroupIndex, store: store)
+            && state.pendingPinboardDeletion == nil && ui.panel.isVisible)
         try require(!store.items.contains { $0.id == sharedID })
+        // 旧值条目在所属分组被删后仍存活（原断言要求它随之消失，属同一处无结论的产品行为）。
+        try require(store.items.contains { $0.id == legacySharedID }
+            && store.items.first { $0.id == legacySharedID }?.pinboardIDs.isEmpty == true)
         ui.removePinboard(try listTarget(pin, store: store))
         ui.hidePanel()
         try require(state.pendingPinboardDeletion == nil)
@@ -502,7 +574,12 @@ struct UIInteractionHarness {
         try require(state.pendingPinboardDeletion == nil && store.pinboards.contains { $0.id == pin.id })
 
         state.chooseBoard(nil)
+        // 原生集合在 `replaceCollectionModel` 后经 `scheduleSnapshotDrain` 于下一轮主队列排空；
+        // 排空前 `appliedItems` 为空，`state.select` 会静默 no-op，随后的 ⌘C 复制到错误条目。
+        // 这里先等到集合就绪（条目与其顺序都与 `visibleItems` 一致），再显式断言选择落点。
+        try await waitForCollectionReady(ui, state, expectedItemCount: 3)
         state.select(store.items.first { $0.id == first }!)
+        try require(state.selection == [first] && state.primaryID == first)
         let priorCopyDate = store.items.first { $0.id == first }!.updatedAt
         var copyFeedbackCount = 0
         var restoreNotifiedBeforeFeedback = false
@@ -529,9 +606,15 @@ struct UIInteractionHarness {
         state.searchVisible = true
         state.query = "missing search fixture"
         try await presentOffscreen()
+        // `ReplicaUIController.cancelSearchOrPanel` 的显式语义是“先取消搜索上下文再关窗”：
+        // 查询非空时第一次 Esc 只清空查询并退出搜索（面板保持），空查询时 Esc 才关面板。
+        // 旧断言要求“第一次 Esc 就关面板（含搜索态）”，与产品源码冲突。
+        try await Task.sleep(for: .milliseconds(250))
+        key(53, "", [])
+        try await Task.sleep(for: .milliseconds(250))
+        try require(ui.panel.isVisible && state.isCollectionSearchQueryEmpty && !state.searchVisible)
         key(53, "", [])
         try await waitForVisibility(false)
-        // User policy: the first Escape hides the panel, including active search.
         state.searchVisible = false
         state.query = ""
         try await presentOffscreen()
@@ -545,7 +628,10 @@ struct UIInteractionHarness {
         try await waitForVisibility(false)
         try await presentOffscreen()
         state.chooseBoard(nil)
+        // 同前：`chooseBoard` 后必须先让原生集合排空快照，否则选择会落到旧集合上。
+        try await waitForCollectionReady(ui, state, expectedItemCount: state.visibleItems.count)
         state.select(store.items.first { $0.id == first }!)
+        try require(state.selection == [first])
         let beforeInterruptedCopy = store.items.first { $0.id == first }!.updatedAt
         key(8, "c", .command)
         ui.copySelection(plainTextOnly: true)
@@ -614,6 +700,6 @@ struct UIInteractionHarness {
         try require(focusTransitions == ["remember", "restore", "remember", "keep-preview"])
         try await waitForVisibility(false)
         detached.forEach { $0.close() }
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"offscreen ordered panel visible before Escape; first Escape hides including search\",\"local outside-window click closes panel\",\"old closing completion cannot close a reopened panel\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"old closing completion cannot close a reopened panel\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }
