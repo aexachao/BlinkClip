@@ -35,7 +35,7 @@ private final class UpdateProtocol: URLProtocol {
                 return
             }
             let response = HTTPURLResponse(url: request.url!, statusCode: status,
-                httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+                httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/xml"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
@@ -50,17 +50,56 @@ struct AppUpdateHarness {
         if !value() { throw Failure(message: message) }
     }
 
-    static func release(_ version: String = "1.0.6") -> [String: Any] {
-        let name = "BlinkClip-\(version)-macos-universal.dmg"
-        return ["tag_name": "v\(version)", "draft": false, "prerelease": false,
-            "published_at": "2026-11-04T00:00:00Z", "assets": [["name": name,
-            "state": "uploaded", "size": 1024,
-            "browser_download_url": "https://github.com/aexachao/BlinkClip/releases/download/v\(version)/\(name)"]]]
+    static let feedURL = URL(string: "https://github.com/aexachao/BlinkClip/releases/latest/download/appcast.xml")!
+    static let dmgURL = "https://github.com/aexachao/BlinkClip/releases/download/v1.0.11/BlinkClip-1.0.11-macos-universal.dmg"
+
+    struct FeedItem {
+        var version = "1.0.11"
+        var shortVersion: String? = nil
+        var minimumSystem: String? = "14.0"
+        var enclosure: String? = dmgURL
     }
 
-    static func reply(_ release: [String: Any], status: Int = 200) throws {
-        UpdateProtocol.reply(try JSONSerialization.data(withJSONObject: release), status: status)
+    /// A Sparkle-shaped appcast, including the trailing signature comment the
+    /// real signed feed carries.
+    static func appcast(_ items: [FeedItem] = [FeedItem()]) -> Data {
+        let entries = items.map { item -> String in
+            var lines = [
+                "<item>",
+                "<title>BlinkClip \(item.version)</title>",
+                "<link>https://github.com/aexachao/BlinkClip/releases/tag/v\(item.version)</link>",
+                "<pubDate>Sat, 14 Nov 2026 04:47:06 +0000</pubDate>",
+                "<sparkle:version>\(item.version)</sparkle:version>",
+                "<sparkle:shortVersionString>\(item.shortVersion ?? item.version)</sparkle:shortVersionString>"
+            ]
+            if let minimum = item.minimumSystem {
+                lines.append("<sparkle:minimumSystemVersion>\(minimum)</sparkle:minimumSystemVersion>")
+            }
+            if let enclosure = item.enclosure {
+                lines.append("<enclosure url=\"\(enclosure)\" sparkle:edSignature=\"c2lnbmF0dXJl\" length=\"16301712\" type=\"application/octet-stream\"></enclosure>")
+            }
+            lines.append("</item>")
+            return lines.joined(separator: "\n")
+        }
+        let xml = """
+        <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+        IMPORTANT: This file was signed by Sparkle.
+        --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">\
+        <channel><title>BlinkClip Updates</title>\
+        <link>https://aexachao.github.io/BlinkClip/</link>\
+        <description>BlinkClip stable macOS updates</description>\
+        \(entries.joined())</channel></rss><!-- sparkle-signatures:
+        edSignature: c2lnbmF0dXJl
+        length: 1167
+        -->
+        """
+        return Data(xml.utf8)
     }
+
+    static func reply(_ data: Data, status: Int = 200) { UpdateProtocol.reply(data, status: status) }
+    static func reply(feed items: [FeedItem], status: Int = 200) { reply(appcast(items), status: status) }
+
+    @MainActor static func pause() async { try? await Task.sleep(nanoseconds: 250_000_000) }
 
     @MainActor static func main() async {
         do {
@@ -75,9 +114,9 @@ struct AppUpdateHarness {
             let session = URLSession(configuration: configuration)
             defer { session.invalidateAndCancel() }
             if CommandLine.arguments.contains("--preview") {
-                try reply(release())
-                let checker = BlinkClipUpdateChecker(currentVersion: "1.0.5", session: session)
-                let controller = BlinkClipAboutWindowController(checker: checker, installUpdate: {})
+                try reply(feed: [FeedItem(version: "1.0.11")])
+                let checker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+                let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
                 controller.showWindow(nil)
                 Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { _ in NSApp.terminate(nil) }
                 print("PREVIEW_READY")
@@ -88,14 +127,32 @@ struct AppUpdateHarness {
             }
             try await run(session: session)
             if CommandLine.arguments.contains("--live") {
-                let live = BlinkClipUpdateChecker(currentVersion: "0.0.0", session: URLSession(configuration: .ephemeral))
+                let live = BlinkClipUpdateChecker(currentVersion: "0.0.0",
+                                                  session: URLSession(configuration: .ephemeral),
+                                                  feedURL: feedURL)
                 await live.check(force: true)
                 guard case let .available(update) = live.state else {
-                    throw Failure(message: "Live GitHub release check failed: \(live.state)")
+                    throw Failure(message: "Live appcast check failed: \(live.state) / \(live.lastDiagnostic ?? "-")")
                 }
-                print("{\"live_github\":true,\"version\":\"\(update.version)\",\"download\":\"\(update.downloadURL.absoluteString)\"}")
+                let behindOne = BlinkClipUpdateChecker(currentVersion: "1.0.10",
+                                                       session: URLSession(configuration: .ephemeral),
+                                                       feedURL: feedURL)
+                await behindOne.check(force: true)
+                guard case let .available(oneBehind) = behindOne.state else {
+                    throw Failure(message: "Live appcast did not offer 1.0.11 to 1.0.10: \(behindOne.state)")
+                }
+                try check(oneBehind.version == "1.0.11", "Live appcast offered \(oneBehind.version) to 1.0.10")
+                let current = BlinkClipUpdateChecker(currentVersion: "1.0.11",
+                                                     session: URLSession(configuration: .ephemeral),
+                                                     feedURL: feedURL)
+                await current.check(force: true)
+                try check(current.state == .upToDate, "Live appcast disagrees that 1.0.11 is current: \(current.state)")
+                print("{\"live_appcast\":true,\"version\":\"\(update.version)\",\"download\":\"\(update.downloadURL.absoluteString)\"}")
             }
-            print("{\"passed\":true,\"version_comparison\":true,\"release_validation\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_controls\":true}")
+            if let index = CommandLine.arguments.firstIndex(of: "--render"), index + 1 < CommandLine.arguments.count {
+                try await render(into: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true), session: session)
+            }
+            print("{\"passed\":true,\"version_comparison\":true,\"appcast_parsing\":true,\"gentle_failures\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_controls\":true}")
         } catch {
             let result: [String: Any] = ["passed": false, "error": String(describing: error)]
             print(String(data: try! JSONSerialization.data(withJSONObject: result), encoding: .utf8)!)
@@ -104,105 +161,176 @@ struct AppUpdateHarness {
     }
 
     @MainActor static func run(session: URLSession) async throws {
-        try check(BlinkClipUpdateChecker(session: session).currentVersion == "1.0.5-dev.2",
-                  "Source version did not take precedence over the short bundle version")
-        for (older, newer) in [("1.0.9", "1.0.10"), ("1.99.99", "2.0.0"),
-            ("1.0.5-dev.2", "1.0.5-dev.10"), ("1.0.5-dev.10", "1.0.5"), ("1.0.5", "1.0.6-dev.1")] {
-            try check(BlinkClipReleaseVersion(older)! < BlinkClipReleaseVersion(newer)!, "Incorrect version order")
+        // ── numeric version ordering ─────────────────────────────────────────
+        for (older, newer) in [("1.0.9", "1.0.10"), ("1.0.10", "1.0.11"), ("1.99.99", "2.0.0"),
+            ("1.0.11", "1.0.11.1"), ("1.0.11.1", "1.0.12"), ("1.0.11.9", "1.0.12"),
+            ("1.0.5-dev.2", "1.0.5-dev.10"), ("1.0.5-dev.10", "1.0.5"),
+            ("1.0.5-alpha.9", "1.0.5-beta.1"), ("1.0.5-beta.9", "1.0.5-rc.1"),
+            ("1.0.5", "1.0.6-dev.1"), ("1.0.5-alpha.1", "1.0.5-dev.1")] {
+            try check(BlinkClipReleaseVersion(older)! < BlinkClipReleaseVersion(newer)!, "Incorrect version order: \(older) < \(newer)")
+            try check(!(BlinkClipReleaseVersion(newer)! < BlinkClipReleaseVersion(older)!), "Order is not antisymmetric: \(newer) < \(older)")
         }
-        try check(BlinkClipReleaseVersion("v1.0.5") == BlinkClipReleaseVersion("1.0.5"), "Tag prefix changed comparison")
-        for value in ["", "1.0", "1.0.5\n", "1.-1.5", "1.0.5-beta", "1.0.5-dev.", "999999999999999999999.0.0"] {
+        try check(BlinkClipReleaseVersion("v1.0.11") == BlinkClipReleaseVersion("1.0.11"), "Tag prefix changed comparison")
+        try check(BlinkClipReleaseVersion("1.0.11") == BlinkClipReleaseVersion("1.0.11.0"), "Trailing zero component changed comparison")
+        for value in ["", "1.0", "1.0.5\n", "1.-1.5", "1.0.5-beta", "1.0.5-dev.", "999999999999999999999.0.0",
+                      "1.0.11.2.3", " 1.0.11", "1.0.11 "] {
             try check(BlinkClipReleaseVersion(value) == nil, "Invalid version accepted: \(value)")
         }
-        try reply(release())
-        let checker = BlinkClipUpdateChecker(currentVersion: "1.0.5", session: session)
+
+        // ── the feed URL comes from SUFeedURL ───────────────────────────────
+        let probe = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blinkclip-feed-probe-\(UUID().uuidString).bundle", isDirectory: true)
+        try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
+        let plist: [String: Any] = ["CFBundleIdentifier": "local.blinkclip.feedprobe",
+                                    "CFBundlePackageType": "BNDL",
+                                    "SUFeedURL": feedURL.absoluteString]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: probe.appendingPathComponent("Info.plist"))
+        defer { try? FileManager.default.removeItem(at: probe) }
+        try check(Bundle(url: probe) != nil, "probe bundle not loadable")
+        try check(BlinkClipUpdateChecker.configuredFeedURL(bundle: Bundle(url: probe)!) == feedURL,
+                  "SUFeedURL from the app bundle is not the feed source")
+        try check(BlinkClipUpdateChecker.configuredFeedURL(bundle: .main) == nil,
+                  "harness bundle unexpectedly declares SUFeedURL")
+
+        // ── appcast happy path ──────────────────────────────────────────────
+        try reply(feed: [FeedItem()])
+        let checker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
         await checker.check(force: true)
-        guard case let .available(update) = checker.state else { throw Failure(message: "Missing newer release") }
-        try check(update.version == "1.0.6" && update.downloadURL.lastPathComponent == "BlinkClip-1.0.6-macos-universal.dmg",
-                  "Wrong installer selected")
+        guard case let .available(update) = checker.state else { throw Failure(message: "Missing newer appcast item: \(checker.state)") }
+        try check(update.version == "1.0.11" && update.minimumSystemVersion == "14.0", "Wrong appcast version metadata")
+        try check(update.downloadURL.absoluteString == dmgURL, "Wrong enclosure URL: \(update.downloadURL)")
         let request = UpdateProtocol.capturedRequests[0]
-        try check(request.url?.absoluteString == "https://api.github.com/repos/aexachao/BlinkClip/releases/latest"
-            && request.httpMethod == "GET" && request.httpBody == nil
-            && request.value(forHTTPHeaderField: "Authorization") == nil
-            && request.value(forHTTPHeaderField: "X-GitHub-Api-Version") == "2026-03-10", "Unexpected update request")
+        try check(request.url == feedURL && request.httpMethod == "GET" && request.httpBody == nil,
+                  "Unexpected update request: \(String(describing: request.url))")
+        try check(request.url?.host != "api.github.com", "Update check still calls the GitHub API")
+        try check(request.value(forHTTPHeaderField: "Authorization") == nil, "Update check sent credentials")
+        try check(request.value(forHTTPHeaderField: "Accept")?.contains("xml") == true, "Update check did not ask for XML")
+        try check(checker.lastDiagnostic?.contains("newest=1.0.11") == true, "Successful check left no diagnostic: \(checker.lastDiagnostic ?? "nil")")
 
-        var installations = 0
-        let controller = BlinkClipAboutWindowController(checker: checker, installUpdate: { installations += 1 })
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-        try check(controller.window?.contentView?.bounds.size == NSSize(width: 360, height: 320), "About layout changed")
-        try check(!controller.downloadButton.isHidden && controller.downloadButton.isEnabled
-            && controller.statusLabel.stringValue.contains("1.0.6"), "About omitted the newer version")
-        controller.downloadButton.performClick(nil)
-        try check(installations == 1, "Download did not start the in-app updater")
-        var canInstall = false
-        let retryDownload = BlinkClipAboutWindowController(checker: checker, installUpdate: {
-            if !canInstall { throw Failure(message: "Cannot start updater") }
-        })
-        retryDownload.download()
-        try check(retryDownload.statusLabel.textColor == .systemRed, "Download failure was hidden")
-        canInstall = true
-        retryDownload.download()
-        try check(retryDownload.statusLabel.stringValue.contains("1.0.6"), "Successful download retry kept stale error")
+        // Installed version is the current one, or newer: no update offered.
+        for installed in ["1.0.11", "1.0.12", "1.0.11.0"] {
+            let current = BlinkClipUpdateChecker(currentVersion: installed, session: session, feedURL: feedURL)
+            try reply(feed: [FeedItem()])
+            await current.check(force: true)
+            try check(current.state == .upToDate, "Installed \(installed) was offered an update: \(current.state)")
+        }
+        // Four-part and pre-release feed entries must not be misread.
+        let fourPart = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(version: "1.0.11.2", enclosure: dmgURL)])
+        await fourPart.check(force: true)
+        guard case let .available(four) = fourPart.state else { throw Failure(message: "Four-part appcast version rejected: \(fourPart.state)") }
+        try check(four.version == "1.0.11.2", "Four-part version text changed")
+        let preReleaseFeed = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(version: "1.0.12-dev.1", enclosure: dmgURL)])
+        await preReleaseFeed.check(force: true)
+        guard case .failed = preReleaseFeed.state else { throw Failure(message: "Pre-release-only feed offered an update") }
+        // The stable item wins even when a newer pre-release sits next to it.
+        let mixedFeed = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(version: "1.0.12-dev.1", enclosure: dmgURL), FeedItem()])
+        await mixedFeed.check(force: true)
+        guard case let .available(stable) = mixedFeed.state else { throw Failure(message: "Mixed feed lost its stable item: \(mixedFeed.state)") }
+        try check(stable.version == "1.0.11", "Pre-release item was offered: \(stable.version)")
+        // A newest item that needs a newer macOS falls back to one this Mac can run.
+        let fallback = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(version: "1.0.12", minimumSystem: "99.0"), FeedItem()])
+        await fallback.check(force: true)
+        guard case let .available(supported) = fallback.state else { throw Failure(message: "Applicable fallback item ignored: \(fallback.state)") }
+        try check(supported.version == "1.0.11", "Unrunnable newer item was offered: \(supported.version)")
+        // Nothing runnable at all is "up to date", not an error.
+        let tooNew = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(version: "1.0.12", minimumSystem: "99.0")])
+        await tooNew.check(force: true)
+        try check(tooNew.state == .upToDate, "Unrunnable feed was not treated as up to date: \(tooNew.state)")
 
-        try reply(release("1.0.5"))
-        await checker.check(force: true)
-        try check(checker.state == .upToDate && controller.downloadButton.isHidden, "Current version offered an update")
-        controller.download()
-        try check(installations == 1, "Stale download action started an installation")
-        try reply(release("1.0.4"))
-        await checker.check(force: true)
-        try check(checker.state == .upToDate, "Older release offered a downgrade")
-
-        for key in ["draft", "prerelease"] {
-            var invalid = release()
-            invalid[key] = true
-            try await expectFailure(invalid, checker: checker)
-        }
-        for published: Any in [NSNull(), ""] {
-            var invalid = release()
-            invalid["published_at"] = published
-            try await expectFailure(invalid, checker: checker)
-        }
-        for version in ["unknown", "1.0.6-dev.1"] {
-            var invalid = release()
-            invalid["tag_name"] = version
-            try await expectFailure(invalid, checker: checker)
-        }
-        var invalid = release()
-        invalid["assets"] = []
-        try await expectFailure(invalid, checker: checker)
-        invalid = release()
-        let asset = (invalid["assets"] as! [[String: Any]])[0]
-        invalid["assets"] = [asset, asset]
-        try await expectFailure(invalid, checker: checker)
-        for change in [["state": "new"], ["size": 0], ["browser_download_url": "https://example.com/BlinkClip.dmg"],
-                       ["browser_download_url": "http://github.com/example/other/file.dmg"],
-                       ["name": "BlinkClip-1.0.6-macos-arm64.dmg"]] as [[String: Any]] {
-            var invalid = release()
-            var asset = (invalid["assets"] as! [[String: Any]])[0]
-            asset.merge(change) { _, new in new }
-            invalid["assets"] = [asset]
-            try await expectFailure(invalid, checker: checker)
-        }
+        // ── gentle, code-free failures with diagnostics kept ────────────────
+        let gentle = SettingsLocalization.text("updates.unreachable")
         for status in [403, 404, 429, 500] {
-            try reply(release(), status: status)
-            await checker.check(force: true)
-            guard case .failed = checker.state else { throw Failure(message: "HTTP failure reported as success") }
+            let failing = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+            try reply(feed: [FeedItem()], status: status)
+            await failing.check(force: true)
+            guard case let .failed(message) = failing.state else { throw Failure(message: "HTTP \(status) reported as success") }
+            try check(message == gentle, "HTTP \(status) produced non-gentle copy: \(message)")
+            try check(!message.contains("HTTP") && !message.contains("\(status)"),
+                      "HTTP \(status) leaked into the user copy: \(message)")
+            try check(failing.lastDiagnostic?.contains("\(status)") == true,
+                      "HTTP \(status) was not preserved for diagnostics: \(failing.lastDiagnostic ?? "nil")")
         }
-        UpdateProtocol.reply(Data("invalid JSON".utf8))
-        await checker.check(force: true)
-        guard case .failed = checker.state else { throw Failure(message: "Malformed JSON accepted") }
-        try check(controller.downloadButton.isHidden && controller.checkButton.isEnabled, "Failure prevents retry")
+        try reply(Data("invalid XML".utf8))
+        let malformed = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        await malformed.check(force: true)
+        guard case let .failed(malformedMessage) = malformed.state else { throw Failure(message: "Malformed appcast accepted") }
+        try check(malformedMessage == gentle, "Malformed appcast produced non-gentle copy: \(malformedMessage)")
+        try check(malformed.lastDiagnostic != nil, "Malformed appcast left no diagnostic")
+        try reply(appcast([FeedItem(version: "", shortVersion: "")]))
+        let emptyVersion = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        await emptyVersion.check(force: true)
+        guard case .failed = emptyVersion.state else { throw Failure(message: "Item without a version accepted") }
+        let noEnclosure = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem(enclosure: nil)])
+        await noEnclosure.check(force: true)
+        guard case let .failed(noEnclosureMessage) = noEnclosure.state else { throw Failure(message: "Feed without an enclosure accepted") }
+        try check(noEnclosureMessage == SettingsLocalization.text("updates.missing-installer"),
+                  "Missing enclosure copy changed: \(noEnclosureMessage)")
         UpdateProtocol.reply(Data(), failure: URLError(.notConnectedToInternet))
-        await checker.check(force: true)
-        guard case .failed = checker.state else { throw Failure(message: "Offline check reported as success") }
-        try reply(release())
-        controller.checkButton.performClick(nil)
-        try await Task.sleep(for: .milliseconds(100))
-        guard case .available = checker.state else { throw Failure(message: "Check button did not retry") }
+        let offline = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        await offline.check(force: true)
+        guard case let .failed(offlineMessage) = offline.state else { throw Failure(message: "Offline check reported as success") }
+        try check(offlineMessage == gentle, "Offline check produced non-gentle copy: \(offlineMessage)")
+        try check(offline.lastDiagnostic != nil, "Offline check left no diagnostic")
+        // No SUFeedURL configured: no request at all, still gentle.
+        try reply(feed: [FeedItem()])
+        let noFeed = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session)
+        await noFeed.check(force: true)
+        guard case let .failed(noFeedMessage) = noFeed.state else { throw Failure(message: "Check without a feed URL reported success") }
+        try check(noFeedMessage == gentle && UpdateProtocol.capturedRequests.isEmpty,
+                  "Missing SUFeedURL was not handled locally: \(noFeedMessage)")
 
-        try reply(release())
-        let throttled = BlinkClipUpdateChecker(currentVersion: "1.0.5", session: session)
+        // ── About window ────────────────────────────────────────────────────
+        try reply(feed: [FeedItem()])
+        let aboutChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        await aboutChecker.check(force: true)
+        var sparkleChecks = 0
+        let controller = BlinkClipAboutWindowController(checker: aboutChecker, sparkleCheck: { sparkleChecks += 1 })
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        try check(controller.window?.contentView?.bounds.size == BlinkClipAboutWindowController.contentSize,
+                  "About content size changed: \(String(describing: controller.window?.contentView?.bounds.size))")
+        try check(controller.window?.contentView?.bounds.size == NSSize(width: 380, height: 420), "About window is not 380 by 420")
+        try check(!controller.checkButton.isHidden && controller.checkButton.isEnabled, "Check button unavailable")
+        try check(controller.checkButton.keyEquivalent == "\r", "Return does not start a check")
+        try check(controller.closeButton.keyEquivalent == "\u{1b}", "Escape does not close the window")
+        try check(controller.statusLabel.stringValue.contains("1.0.11"), "About omitted the newer version: \(controller.statusLabel.stringValue)")
+        try check(controller.statusLabel.textColor == .secondaryLabelColor, "Status line is not secondary colour")
+        try check(statusIsAboveButtons(controller), "Status line is not above the buttons")
+        for identifier in ["about-current-version", "about-update-status", "about-project-link",
+                           "about-release-notes-link", "about-license-link", "about-copyright"] {
+            try check(descendants(controller.window!.contentView!, of: NSView.self)
+                .contains { $0.accessibilityIdentifier() == identifier }, "About is missing \(identifier)")
+        }
+        controller.checkButton.performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        try check(sparkleChecks == 1, "Check button did not start Sparkle's update flow")
+        guard case .available = aboutChecker.state else { throw Failure(message: "Check button did not refresh the appcast summary") }
+        // A failing check shows the gentle line in secondary colour, never red.
+        let failureChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
+        try reply(feed: [FeedItem()], status: 403)
+        await failureChecker.check(force: true)
+        let failureController = BlinkClipAboutWindowController(checker: failureChecker, sparkleCheck: {})
+        try check(failureController.statusLabel.stringValue == gentle, "About does not show the gentle failure copy")
+        try check(failureController.statusLabel.textColor != .systemRed, "About paints the failure red")
+        try check(!failureController.statusLabel.stringValue.contains("403"), "About shows the status code")
+        try check(statusIsAboveButtons(failureController), "Status line moved into the body")
+        // Up to date copy.
+        try reply(feed: [FeedItem()])
+        let currentChecker = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session, feedURL: feedURL)
+        await currentChecker.check(force: true)
+        let currentController = BlinkClipAboutWindowController(checker: currentChecker, sparkleCheck: {})
+        try check(currentController.statusLabel.stringValue == SettingsLocalization.text("updates.up-to-date"),
+                  "Up-to-date copy missing: \(currentController.statusLabel.stringValue)")
+
+        // ── throttle and concurrency ────────────────────────────────────────
+        try reply(feed: [FeedItem()])
+        let throttled = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
         let date = Date(timeIntervalSince1970: 1000)
         await throttled.check(now: date)
         await throttled.check(now: date.addingTimeInterval(1))
@@ -212,21 +340,73 @@ struct AppUpdateHarness {
         await throttled.check(force: true, now: date.addingTimeInterval(6 * 60 * 60 + 1))
         try check(UpdateProtocol.capturedRequests.count == 3, "Manual check did not bypass throttle")
 
-        try reply(release())
-        let concurrent = BlinkClipUpdateChecker(currentVersion: "1.0.5", session: session)
+        try reply(feed: [FeedItem()])
+        let concurrent = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
         async let first: Void = concurrent.check(force: true)
         async let second: Void = concurrent.check(force: true)
         _ = await (first, second)
         try check(UpdateProtocol.capturedRequests.count == 1, "Concurrent requests were duplicated")
-        try reply(release())
-        let unknown = BlinkClipUpdateChecker(currentVersion: "unknown", session: session)
+        try reply(feed: [FeedItem()])
+        let unknown = BlinkClipUpdateChecker(currentVersion: "unknown", session: session, feedURL: feedURL)
         await unknown.check(force: true)
-        try check(UpdateProtocol.capturedRequests.isEmpty, "Invalid installed version reached network")
+        try check(UpdateProtocol.capturedRequests.isEmpty, "Invalid installed version reached the network")
+        guard case .failed = unknown.state else { throw Failure(message: "Invalid installed version reported success") }
     }
 
-    @MainActor static func expectFailure(_ release: [String: Any], checker: BlinkClipUpdateChecker) async throws {
-        try reply(release)
-        await checker.check(force: true)
-        guard case .failed = checker.state else { throw Failure(message: "Invalid release accepted") }
+    /// The status line belongs directly above the action row, in window coordinates.
+    @MainActor static func statusIsAboveButtons(_ controller: BlinkClipAboutWindowController) -> Bool {
+        guard let content = controller.window?.contentView else { return false }
+        content.layoutSubtreeIfNeeded()
+        let status = controller.statusLabel.convert(controller.statusLabel.bounds, to: content)
+        let button = controller.checkButton.convert(controller.checkButton.bounds, to: content)
+        return status.minY >= button.maxY
+    }
+
+    @MainActor static func descendants<T: NSView>(_ view: NSView, of type: T.Type) -> [T] {
+        let children = view.subviews.flatMap { descendants($0, of: type) }
+        return ((view as? T).map { [$0] } ?? []) + children
+    }
+
+    /// Off-screen render of the About window in both appearances for every state
+    /// the status line can show.
+    @MainActor static func render(into directory: URL, session: URLSession) async throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        struct Scenario { let name: String; let installed: String; let items: [FeedItem]; let status: Int; let failure: Error? }
+        let scenarios = [
+            Scenario(name: "latest", installed: "1.0.11", items: [FeedItem()], status: 200, failure: nil),
+            Scenario(name: "available", installed: "1.0.10", items: [FeedItem()], status: 200, failure: nil),
+            Scenario(name: "offline", installed: "1.0.11", items: [], status: 200, failure: URLError(.notConnectedToInternet))
+        ]
+        var written = 0
+        for appearance in ["light", "dark"] {
+            for scenario in scenarios {
+                let name = appearance == "light" ? NSAppearance.Name.aqua : .darkAqua
+                NSApp.appearance = NSAppearance(named: name)
+                UpdateProtocol.reply(appcast(scenario.items), status: scenario.status, failure: scenario.failure)
+                let checker = BlinkClipUpdateChecker(currentVersion: scenario.installed, session: session, feedURL: feedURL)
+                await checker.check(force: true)
+                let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+                guard let window = controller.window, let frameView = window.contentView?.superview else {
+                    throw Failure(message: "About window has no content")
+                }
+                window.appearance = NSAppearance(named: name)
+                window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+                window.orderFront(nil)
+                await pause()
+                frameView.layoutSubtreeIfNeeded()
+                guard let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
+                    throw Failure(message: "no about bitmap")
+                }
+                frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
+                let url = directory.appendingPathComponent("about-\(appearance)-\(scenario.name).png")
+                try bitmap.representation(using: .png, properties: [:])!.write(to: url)
+                written += 1
+                window.orderOut(nil)
+                window.contentView = nil
+                window.close()
+            }
+        }
+        try check(written == 6, "expected six About renders, wrote \(written)")
+        print("{\"renders\":\(written),\"directory\":\"\(directory.path)\"}")
     }
 }

@@ -22,7 +22,7 @@ struct BlinkClipOwnedResourcesHarness {
         check("active-locale", ResourceBundle.selectedLocale().identifier == (zh ? "zh-Hans" : "en"), Locale.preferredLanguages.description)
         let tableURL = ResourceBundle.bundle.bundleURL.appendingPathComponent((zh ? "zh-Hans" : "en") + ".lproj/Localizable.strings")
         let table = try PropertyListSerialization.propertyList(from: Data(contentsOf: tableURL), format: nil) as! [String: String]
-        check("table-count", table.count == 123)
+        check("table-count", table.count == 126)
         for (key, expected) in table {
             check("settings.dynamic.\(key)", SettingsLocalization.text(key) == expected, SettingsLocalization.text(key))
             check("search.dynamic.\(key)", SearchLocalization.text(key) == expected)

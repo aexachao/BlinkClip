@@ -274,6 +274,25 @@ struct ReplicaStackTable: NSViewRepresentable {
     }
 }
 
+/// 设置侧栏「关于闪贴」的入口。
+///
+/// 关于窗口既可以从应用菜单打开（`ReplicaAppDelegate.about`），也可以从设置侧栏
+/// 打开。这里保留一份共享控制器，重复点击只是把同一个窗口提到最前；Sparkle 的
+/// updater 本身是进程内单例（`BlinkClipInAppUpdater`），两条入口不会各起一个。
+@MainActor
+enum BlinkClipAboutWindow {
+    private static var controller: BlinkClipAboutWindowController?
+
+    static func present() {
+        if controller == nil {
+            controller = BlinkClipAboutWindowController(checker: BlinkClipUpdateChecker()) {
+                try BlinkClipInAppUpdater().checkForUpdates()
+            }
+        }
+        controller?.showWindow(nil)
+    }
+}
+
 @MainActor
 struct ReplicaSettingsView: View {
     @ObservedObject var state: ReplicaUIState
@@ -330,32 +349,53 @@ struct ReplicaSettingsView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $tab) {
+            List(selection: sidebarSelection) {
                 ForEach(SettingsSection.allCases) { section in
                     sidebarRow(section.title, icon: section.icon, index: section.rawValue)
                 }
+                // 「AI 工具」之后的动作行：不参与分区选中，点开关于窗口。
+                aboutRow
             }
             .listStyle(.sidebar)
             .padding(.top, sidebarTopInset)
-            // 设置窗口按平台惯例隐藏标题栏（当前分区由工具栏标题显示），产品名放在
-            // 侧栏页脚：值取自 `Localizable.strings` 的 `settingsTitle`（「闪贴设置」），
-            // 改文案会真正生效，不再走不到。
-            VStack(alignment: .leading, spacing: 8) {
-                Link(destination: URL(string: "https://github.com/aexachao/BlinkClip#readme")!) {
-                    Label(SettingsCopy.text("general.help-center"), systemImage: "questionmark.circle")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                Text(AppCopy.settingsTitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+            // 页脚只留帮助入口。原来的「闪贴设置」产品名一行已删掉：产品身份现在由
+            // 分区列表末尾的「关于闪贴」承载。
+            Link(destination: URL(string: "https://github.com/aexachao/BlinkClip#readme")!) {
+                Label(SettingsCopy.text("general.help-center"), systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("BlinkClipSettingsProductName")
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             .padding(16)
         }
+    }
+
+    /// 分区行的 tag 是分区 rawValue；这一行用一个不会被分区占用的值，绑定把它拦下来。
+    private static let aboutRowTag = 1_000
+    private static let aboutRowTitleKey = "updates.about-title"
+
+    private var aboutRow: some View {
+        Label(SettingsCopy.text(Self.aboutRowTitleKey), systemImage: "info.circle")
+            .font(.system(size: 13))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .tag(Self.aboutRowTag)
+            .accessibilityLabel(SettingsCopy.text(Self.aboutRowTitleKey))
+            .accessibilityIdentifier("BlinkClipSettingsAbout")
+    }
+
+    /// 分区选中仍然直接写进 `tab`；「关于闪贴」那一行改成打开关于窗口，不改分区，
+    /// 所以侧栏的选中态和六项顺序都不受影响。
+    private var sidebarSelection: Binding<Int?> {
+        Binding(get: { tab }, set: { value in
+            guard let value else { return }
+            if value == Self.aboutRowTag {
+                BlinkClipAboutWindow.present()
+                return
+            }
+            tab = value
+        })
     }
 
     private var sidebarTopInset: CGFloat {

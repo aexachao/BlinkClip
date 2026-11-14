@@ -273,7 +273,7 @@ import BlinkClipCapture
             }
             sheet.unlockFocus()
             let bitmap = NSBitmapImageRep(data: sheet.tiffRepresentation!)!
-            try bitmap.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(language)-\(appearance)-six-pages-top-scroll-offscreen.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(language)-\(appearance)-seven-pages-top-scroll-offscreen.png"))
         }
         }
         NSApp.appearance = NSAppearance(named: .aqua)
@@ -292,7 +292,8 @@ import BlinkClipCapture
         let beforeBody = try pixels(navigationHost, headerOnly: false)
         guard let targetHeader = screenshotHeader else { throw Failure(message: "missing screenshot reference") }
         try check(beforeHeader != targetHeader, "general and screenshot headers differ before navigation")
-        guard let navigation = descendants(navigationHost, of: NSOutlineView.self).first(where: { $0.numberOfRows == 6 }) else { throw Failure(message: "native six-row outline not found") }
+        // 六项分区 + 末尾的「关于闪贴」动作行：动作行不是分区，选中态与顺序都不变。
+        guard let navigation = descendants(navigationHost, of: NSOutlineView.self).first(where: { $0.numberOfRows == 7 }) else { throw Failure(message: "native seven-row outline not found") }
         navigation.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
         navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         let deadline = Date().addingTimeInterval(3)
@@ -311,6 +312,29 @@ import BlinkClipCapture
             try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == section.title, "native selection title \(section)")
             try check(navigationWindow.toolbar === navigationToolbar, "navigation retains toolbar")
         }
+        // 页脚已删：产品名不再作为侧栏页脚出现；「关于闪贴」变成列表里的最后一行。
+        let sidebarNodes = accessibilityTree(navigationHost)
+        try check(!sidebarNodes.contains { axID($0) == "BlinkClipSettingsProductName" },
+                  "the removed settings-footer product name is still rendered")
+        try check(sidebarNodes.contains { axID($0) == "BlinkClipSettingsAbout" }, "sidebar is missing the About BlinkClip row")
+        let aboutRowIndex = SettingsSection.allCases.count
+        try check(aboutRowIndex == 6, "About row is not the seventh row")
+        let titleBeforeAbout = (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle
+        func aboutWindows() -> [NSWindow] {
+            NSApp.windows.filter { $0.identifier?.rawValue == BlinkClipAboutWindowController.windowIdentifier && $0.isVisible }
+        }
+        navigation.selectRowIndexes(IndexSet(integer: aboutRowIndex), byExtendingSelection: false)
+        navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
+        await pause()
+        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == titleBeforeAbout,
+                  "the About row changed the selected section: \(String(describing: (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle))")
+        try check(aboutWindows().count == 1, "the About row did not open exactly one About window: \(aboutWindows().count)")
+        try check(aboutWindows().first?.contentView?.bounds.size == NSSize(width: 380, height: 420),
+                  "About window size changed: \(String(describing: aboutWindows().first?.contentView?.bounds.size))")
+        navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
+        await pause()
+        try check(aboutWindows().count == 1, "repeated About clicks opened a second window")
+        aboutWindows().forEach { $0.close() }
         navigationWindow.contentView = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: 2, permissionModel: model))
         await pause()
         try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.screenshot.title, "deep-link root replacement installs current title delegate")
@@ -324,7 +348,7 @@ import BlinkClipCapture
         try check(store.preferences.historyRetentionDays == originalRetention, "viewing pages does not change retention")
         let reopened = try ClipboardStore(directoryURL: fixture)
         try check(reopened.preferences.historyRetentionDays == originalRetention, "persisted retention unchanged")
-        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,"sections":SettingsSection.allCases.map(\.title),"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, six pages light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes. No physical mouse clicks."]
+        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,"sections":SettingsSection.allCases.map(\.title),"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))
