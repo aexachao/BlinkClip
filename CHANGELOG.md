@@ -1,5 +1,37 @@
 # 更新日志
 
+## 1.0.13 · 2026-11-14（GitHub Releases）
+
+设置页全量繁中版：本版在 1.0.12 基础上把设置页（含截图分区）文案统一改成 en / zh-Hans / zh-Hant 三语，语言判定收敛到一份实现；同时修正多选复制的剪贴板表示与 CloudKit 构建的签名授权。CloudKit 同步仍**未启用**。完整差异可用 `git diff --stat v1.0.12..HEAD` 复核。
+
+### 本地化
+
+- **设置页与截图分区完整繁中。** 155 条文案一次写全三语（en / zh-Hans / zh-Hant）：设置页 123 条（79 处调用点 + 39 条词条 + 5 条保留期内部文案，覆盖 `SettingsCopy` / `PermissionCopy` / `HistoryRetentionCopy` / `CloudKitSyncController` / `AuxiliaryViews` / `HistoryCapacityControl` / `ShortcutRecorder`），截图分区 32 条独立表（`ScreenshotSettingsCopy`：窗口标题、两条截图快捷键、控件可访问性标签、注册失败/重复/恢复默认、截图后行为与翻译分区）。侧栏六项现为「一般 / 剪貼簿與歷史記錄 / 截圖 / 快捷鍵 / 隱私與權限 / AI 工具」，权限页、保留期下拉、iCloud 行状态与确认弹窗、MCP 面板、关于入口同步三语化。
+- **语言判定只有一份。** 新增 `replica/Sources/BlinkClipCore/SettingsStrings.swift`（`SettingsLanguage` + `SettingsStrings.trilingual`）：应用内显式选择的语言优先，其次按系统首选语言；`zh-Hant` 与 `zh-TW` / `zh-HK` / `zh-MO` 一律判为繁体，`zh` / `zh-Hans` / `zh-CN` 为简体，日 / 韩 / 法 / 俄 / 越等回落英文。「任何 zh 即简体」的分支已从设置页全部删除。
+- **截图分区不再自带一套判定。** `ScreenshotSettingsCopy` 原先自己读一次 `appLanguage` 再扫一遍首选语言，现在改为调用同一个 `SettingsLanguage.resolved()`；它的 32 个 key 仍集中在同一张三语 `Entry` 表里，构造器要求三语齐全，所以不存在「某语言缺键回落英文」的分支。
+- **`ResourceBundle.selectedLocale` 走同一判定。** 繁中读者的 Core 资源键回落到英文（开发地区），不再回落简体：Core 资源包没有 `zh-Hant.lproj`，与其把简体字形当繁体给出去，不如回到英文；`zh-hant-falls-back-to-english` 断言把它钉住。
+
+### 修复
+
+- **多选复制改为单一聚合。** 面板 ⌘C 与右键「拷贝」改用与单卡片复制相同的解析写入器（`appliedSelectionItems()` + `writeToPasteboard(selectedItems:)`）：普通模式把所选条目合成一个聚合条目并附 RTF，纯文本模式写 string，文本按显示顺序换行拼接。此前的按条写入在纯文本条目上会留下空表示，多选后粘不出内容。
+- **CloudKit 签名修正。** `configure-cloudkit-signing.py` 不再把 `aps-environment` / `get-task-allow` 复制进签名（`get-task-allow` 只影响调试器挂载，却会随分发产物一起签出去），并补上 `com.apple.developer.ubiquity-kvstore-identifier`（逐字取描述文件里的值，即 `TeamIdentifierPrefix.CFBundleIdentifier`；描述文件没有该项时不补——签名授权必须是描述文件的子集）。`build-app.sh` 的 CloudKit 分支增加身份守卫：`BLINKCLIP_SIGNING_IDENTITY=-` 时直接中止，而不是构建出运行时必然连不上的产物。CloudKit **仍未启用**，账号侧容器与描述文件步骤见 `docs/CLOUDKIT_SETUP.md`。
+
+### 验证
+
+- `test-settings-localization.sh`：en / zh-Hans / zh-Hant 各 99 条断言通过；71 个键（39 条设置 + 32 条截图）三语键集一致且都解析出真实文案，zh-Hant 截图文案 31/32 与简中不同、0 条简体残留；源码闸门核对 79 处三语调用点、39 条词条，并断言两份 provider 都走同一个 resolver。
+- `test-settings-architecture.sh`：三轮（en / zh-Hans / zh-Hant），zh-Hant 一轮 284 条断言、六项繁体分区名、5 张繁中离屏渲染。
+- `test-permission-status.sh`（三语各 104 条）、`test-blinkclip-owned-resources.sh`（en 436 / ja 408 / fr 408 / zh-Hans 408 / zh-Hant 409）、`test-toolbar-upload-removal.sh`（315 条检查 / 34 张渲染）、`test-packaged-resources.sh`、`test-settings-window-focus.sh`、`test-history-retention.sh`、`test-settings-shortcut-reset.sh`、`test-shortcut-row-restore.sh`（182 条）全部通过。
+- `python3 replica/Tests/Native/test_cloudkit_signing.py`（10 项）、`python3 -m unittest discover -s scripts/tests`（16 项）通过；`swift run --package-path replica blinkclip-core-tests` 29 个用例全部通过（0 失败）。
+- 产物：ad-hoc 构建 `1.0.13`，`codesign --verify --deep --strict` 通过。
+
+### 已知限制
+
+- CloudKit 跨设备同步仍未启用：本构建不带 CloudKit 授权，也还没有账号侧容器；设置里会提示「此版本未設定 … 專屬 CloudKit 容器與開發者簽章，暫時無法連線 iCloud」。启用步骤见 `docs/CLOUDKIT_SETUP.md`。
+- 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
+- `test-ui-interaction.sh` 仍失败（harness 第 132 行等 8 处陈旧断言等待决策），本版没有为了过测试改动产品。
+- 繁中下由 Core 资源包提供、又不在设置词条表里的少量键（例如 MCP 配置正文、部分预览提示）回落英文，而不是简体。
+- 沿用 1.0.12 的其余已知限制（更新私钥轮换后旧版本只能手动下载等）。
+
 ## 1.0.12 · 2026-11-14（GitHub Releases）
 
 关于窗口与更新检查修复版：本版在 1.0.11 基础上重做「关于闪贴」窗口，把版本检查从 GitHub REST API 换成应用本来就用于 Sparkle 的签名 appcast；同时把 Apple 翻译改为默认开启，并修掉 ⌘⇧V 面板呼出时沿用上次横向滚动位置的问题。完整差异可用 `git diff --stat v1.0.11..HEAD` 复核。
