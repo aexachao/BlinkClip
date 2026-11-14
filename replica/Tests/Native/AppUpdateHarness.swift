@@ -101,6 +101,150 @@ struct AppUpdateHarness {
 
     @MainActor static func pause() async { try? await Task.sleep(nanoseconds: 250_000_000) }
 
+    // ── live feed ────────────────────────────────────────────────────────────
+    /// Raised when the live probe cannot decide anything because the network is
+    /// gone. `test-app-updates.sh` turns this into `skipped`, never a failure:
+    /// an unreachable CDN is not a product defect and must not go red.
+    struct LiveSkip: Error { let reason: String }
+
+    static func argumentValue(_ name: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: name),
+              index + 1 < CommandLine.arguments.count else { return nil }
+        return CommandLine.arguments[index + 1]
+    }
+
+    static func printSkipped(_ reason: String) {
+        print("skipped: \(reason)")
+        let payload: [String: Any] = ["live_appcast": "skipped", "reason": reason]
+        print(String(data: (try? JSONSerialization.data(withJSONObject: payload)) ?? Data(), encoding: .utf8) ?? "{}")
+    }
+
+    /// The live expectations come from the script, which reads the real
+    /// appcast. No version is written down here: a new release bumps the feed,
+    /// and the assertions follow it.
+    static func liveArguments() throws -> (feed: URL, version: BlinkClipReleaseVersion, installed: BlinkClipReleaseVersion?) {
+        guard let versionText = argumentValue("--live-version") else {
+            throw Failure(message: "--live needs --live-version <version>; run replica/scripts/test-app-updates.sh --live")
+        }
+        guard let version = BlinkClipReleaseVersion(versionText) else {
+            throw Failure(message: "--live-version is not a release version: \(versionText)")
+        }
+        let feedText = argumentValue("--live-feed") ?? feedURL.absoluteString
+        guard let feed = URL(string: feedText) else {
+            throw Failure(message: "--live-feed is not a URL: \(feedText)")
+        }
+        var installed: BlinkClipReleaseVersion?
+        if let installedText = argumentValue("--live-installed") {
+            guard let parsed = BlinkClipReleaseVersion(installedText) else {
+                throw Failure(message: "--live-installed is not a release version: \(installedText)")
+            }
+            installed = parsed
+        }
+        return (feed, version, installed)
+    }
+
+    /// A raw fetch of the feed, used only to tell "the network is gone" (skip)
+    /// from "the feed answers but the product cannot read it" (a real failure).
+    @MainActor static func feedProbe(_ url: URL) async -> (reachable: Bool, detail: String) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            guard let http = response as? HTTPURLResponse else { return (false, "no HTTP response") }
+            guard http.statusCode == 200 else { return (false, "HTTP \(http.statusCode)") }
+            guard !data.isEmpty else { return (false, "the feed answered with an empty body") }
+            return (true, "HTTP 200, \(data.count) bytes")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    @MainActor static func liveChecker(installed: String, feed: URL) async -> BlinkClipUpdateChecker {
+        let checker = BlinkClipUpdateChecker(currentVersion: installed,
+                                             session: URLSession(configuration: .ephemeral),
+                                             feedURL: feed)
+        await checker.check(force: true)
+        return checker
+    }
+
+    /// A failed check against a feed that still answers is a product defect;
+    /// against a feed that does not answer it is the network, which is a skip.
+    @MainActor static func refine(_ checker: BlinkClipUpdateChecker, feed: URL) async throws {
+        guard case let .failed(reason) = checker.state else { return }
+        let probe = await feedProbe(feed)
+        guard probe.reachable else { throw LiveSkip(reason: "appcast unreachable: \(probe.detail)") }
+        let diagnostic = checker.lastDiagnostic.map { " (diagnostic: \($0))" } ?? ""
+        throw Failure(message: "the appcast answers (\(probe.detail)) but the product cannot read it: \(reason)\(diagnostic)")
+    }
+
+    @MainActor static func assertUpToDateAbout(_ checker: BlinkClipUpdateChecker, installed: String) throws {
+        let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+        try check(controller.statusLabel.stringValue == SettingsLocalization.text("updates.up-to-date"),
+                  "About disagrees that \(installed) is current: \(controller.statusLabel.stringValue)")
+    }
+
+    /// `--live`: compare the installed version against the version the real
+    /// appcast serves right now.
+    @MainActor static func liveCheck(feed: URL, feedVersion: BlinkClipReleaseVersion,
+                                     installed: BlinkClipReleaseVersion?) async throws {
+        guard let scheme = feed.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+            throw Failure(message: "the live feed is not an http(s) URL: \(feed.absoluteString)")
+        }
+        let probe = await feedProbe(feed)
+        guard probe.reachable else { throw LiveSkip(reason: "appcast unreachable: \(probe.detail)") }
+
+        // An install that already runs the live version must read as current.
+        let atLive = await liveChecker(installed: feedVersion.text, feed: feed)
+        try await refine(atLive, feed: feed)
+        if case let .available(update) = atLive.state {
+            throw LiveSkip(reason: "the appcast advanced to \(update.version) during the run; \(feedVersion.text) was read a moment ago")
+        }
+        try check(atLive.state == .upToDate,
+                  "installed \(feedVersion.text) was not reported as up to date: \(atLive.state)")
+        try assertUpToDateAbout(atLive, installed: feedVersion.text)
+
+        // The compared install: one patch below the feed, or --live-installed.
+        var reported = "up-to-date"
+        if let installed {
+            let comparison = await liveChecker(installed: installed.text, feed: feed)
+            try await refine(comparison, feed: feed)
+            if installed < feedVersion {
+                reported = "available"
+                guard case let .available(update) = comparison.state else {
+                    if case .upToDate = comparison.state {
+                        throw Failure(message: "the live appcast (\(feedVersion.text)) was not offered to the older install \(installed.text)")
+                    }
+                    throw Failure(message: "the live check for installed \(installed.text) ended in \(comparison.state)")
+                }
+                guard BlinkClipReleaseVersion(update.version) == feedVersion else {
+                    throw LiveSkip(reason: "the appcast offered \(update.version) to \(installed.text), not the \(feedVersion.text) read a moment ago")
+                }
+                try check(update.downloadURL.scheme?.lowercased() == "https",
+                          "the live enclosure is not https: \(update.downloadURL)")
+                try check(update.downloadURL.pathExtension.lowercased() == "dmg",
+                          "the live enclosure is not a DMG: \(update.downloadURL)")
+                let controller = BlinkClipAboutWindowController(checker: comparison, sparkleCheck: {})
+                try check(controller.statusLabel.stringValue.contains(update.version),
+                          "About does not mention the live version \(update.version): \(controller.statusLabel.stringValue)")
+            } else {
+                if case let .available(update) = comparison.state,
+                   let offered = BlinkClipReleaseVersion(update.version), offered > feedVersion {
+                    throw LiveSkip(reason: "the appcast advanced to \(update.version) while the run expected \(feedVersion.text) to be newest")
+                }
+                try check(comparison.state == .upToDate,
+                          "installed \(installed.text) was offered an update by the live appcast: \(comparison.state)")
+                try assertUpToDateAbout(comparison, installed: installed.text)
+            }
+        }
+        let payload: [String: Any] = ["live_appcast": true,
+                                      "feed": feed.absoluteString,
+                                      "feed_version": feedVersion.text,
+                                      "installed": installed?.text ?? feedVersion.text,
+                                      "expectation": reported]
+        print(String(data: (try? JSONSerialization.data(withJSONObject: payload)) ?? Data(), encoding: .utf8) ?? "{}")
+    }
+
     @MainActor static func main() async {
         do {
             let app = NSApplication.shared
@@ -127,27 +271,14 @@ struct AppUpdateHarness {
             }
             try await run(session: session)
             if CommandLine.arguments.contains("--live") {
-                let live = BlinkClipUpdateChecker(currentVersion: "0.0.0",
-                                                  session: URLSession(configuration: .ephemeral),
-                                                  feedURL: feedURL)
-                await live.check(force: true)
-                guard case let .available(update) = live.state else {
-                    throw Failure(message: "Live appcast check failed: \(live.state) / \(live.lastDiagnostic ?? "-")")
+                // All expected versions come from the feed the script just read,
+                // so a new release cannot turn this mode red.
+                let live = try liveArguments()
+                do {
+                    try await liveCheck(feed: live.feed, feedVersion: live.version, installed: live.installed)
+                } catch let skip as LiveSkip {
+                    printSkipped(skip.reason)
                 }
-                let behindOne = BlinkClipUpdateChecker(currentVersion: "1.0.10",
-                                                       session: URLSession(configuration: .ephemeral),
-                                                       feedURL: feedURL)
-                await behindOne.check(force: true)
-                guard case let .available(oneBehind) = behindOne.state else {
-                    throw Failure(message: "Live appcast did not offer 1.0.11 to 1.0.10: \(behindOne.state)")
-                }
-                try check(oneBehind.version == "1.0.11", "Live appcast offered \(oneBehind.version) to 1.0.10")
-                let current = BlinkClipUpdateChecker(currentVersion: "1.0.11",
-                                                     session: URLSession(configuration: .ephemeral),
-                                                     feedURL: feedURL)
-                await current.check(force: true)
-                try check(current.state == .upToDate, "Live appcast disagrees that 1.0.11 is current: \(current.state)")
-                print("{\"live_appcast\":true,\"version\":\"\(update.version)\",\"download\":\"\(update.downloadURL.absoluteString)\"}")
             }
             if let index = CommandLine.arguments.firstIndex(of: "--render"), index + 1 < CommandLine.arguments.count {
                 try await render(into: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true), session: session)

@@ -11,6 +11,7 @@
 - `SURequireSignedFeed` 和 `SUVerifyUpdateBeforeExtraction` 开启，更新源及安装包验证成功后才能解包和安装。发布脚本也会使用嵌入公钥验证归档签名，阻止错误私钥发布。
 - 私钥通过 `BLINKCLIP_UPDATE_PRIVATE_KEY` Actions Secret 提供，是 Base64 编码的 32 字节 Ed25519 seed。签名工具从标准输入接收私钥，私钥不放入命令行、应用或仓库。
 - Sparkle 二进制框架及签名工具固定版本和 SHA-256。框架中的符号链接、更新辅助程序及原始许可随应用打包。
+- 本地核对线上一致性：`bash replica/scripts/test-app-updates.sh --live`。该测试从 feed 的 `sparkle:version` 现取最新版并推导前一个版本，因此每次发版不需要改测试；网络不可用或加 `--offline` 时只打印 `skipped`，不算失败。
 
 应用启动时不会自动安装更新。打开“关于闪贴”会异步读取版本摘要，六小时内复用结果。用户点击“下载并安装”后由 Sparkle 显示更新过程。安装前的正常退出会经过已有 `applicationShouldTerminate` 数据保存逻辑，保存失败时取消退出。
 

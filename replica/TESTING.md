@@ -23,6 +23,20 @@ ARTIFACT_TASK_DIR=$(mktemp -d) bash replica/scripts/test-copy-restore.sh
 
 构建脚本（`replica/scripts/build-app.sh`）在未设置 `ARTIFACT_TASK_DIR` 时使用仓库内默认临时目录。
 
+## 应用内更新测试
+
+`test-app-updates.sh` 默认只跑离屏夹具（合成 appcast、关于窗口、限流与失败文案）；`--live` 额外对照线上 appcast 校验一次：
+
+```bash
+bash replica/scripts/test-app-updates.sh                            # 离屏夹具
+bash replica/scripts/test-app-updates.sh --live                     # 期望值从线上 appcast 现取
+bash replica/scripts/test-app-updates.sh --live --installed 1.0.10  # 指定比较用的安装版本
+bash replica/scripts/test-app-updates.sh --live --offline           # 强制跳过线上探针
+bash replica/scripts/test-app-updates.sh --render                   # 另存关于窗口截图（默认 $TMPDIR/blinkclip-about-renders）
+```
+
+`--live` 不写任何版本号：线上最新版取 feed 的 `sparkle:version`，「可更新」用例默认用它的前一个 patch，比较按数值逐段进行。网络不可用（或 `--offline`）时打印 `skipped` 并返回 0，不算失败；feed 有应答却读不出版本才判失败。
+
 ## 测试组成
 
 - `replica/Tests/BlinkClipCoreTests/`：核心单元测试（`ClipboardStoreTests.swift` 等），由 `blinkclip-core-tests` 运行。
