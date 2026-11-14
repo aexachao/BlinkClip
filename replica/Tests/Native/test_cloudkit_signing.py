@@ -56,6 +56,21 @@ class CloudKitSigningTests(unittest.TestCase):
         self.profile['Entitlements']['com.apple.developer.icloud-services'] = ['CloudDocuments']
         with self.assertRaises(ValueError): self.validate()
 
+    def test_kvstore_identifier_copied_verbatim(self):
+        self.profile['Entitlements']['com.apple.developer.ubiquity-kvstore-identifier'] = 'TESTTEAM01.local.blinkclip.tests'
+        self.assertEqual(self.validate()['com.apple.developer.ubiquity-kvstore-identifier'], 'TESTTEAM01.local.blinkclip.tests')
+
+    def test_kvstore_identifier_omitted_when_profile_lacks_it(self):
+        self.assertNotIn('com.apple.developer.ubiquity-kvstore-identifier', self.validate())
+
+    def test_debugger_attachments_never_signed(self):
+        # 开发描述文件会带 get-task-allow；发布签名里出现它等于允许调试器挂载，
+        # 与 Assets/BlinkClip.entitlements 的取舍冲突，因此必须显式丢弃。
+        self.profile['Entitlements'].update({'get-task-allow': True, 'com.apple.security.get-task-allow': True})
+        result = self.validate()
+        self.assertNotIn('get-task-allow', result)
+        self.assertNotIn('com.apple.security.get-task-allow', result)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -37,9 +37,18 @@ def validate_profile(profile, bundle_id, container, environment):
         'com.apple.developer.icloud-services': ['CloudKit'],
         'com.apple.developer.icloud-container-environment': environment,
     }
-    for key in ('com.apple.developer.aps-environment', 'aps-environment', 'get-task-allow', 'com.apple.security.get-task-allow'):
+    # Apple 生成的 iCloud 授权块把 KV 存储标识与容器成对下发，值就是
+    # TeamIdentifierPrefix.CFBundleIdentifier；改成别的写法会让
+    # NSUbiquitousKeyValueStore 与容器授权不一致，因此逐字保留。
+    # 描述文件没有这项能力时不补：签名里的授权必须是描述文件授权的子集。
+    kvstore = entitlements.get('com.apple.developer.ubiquity-kvstore-identifier')
+    if isinstance(kvstore, str) and kvstore:
+        result['com.apple.developer.ubiquity-kvstore-identifier'] = kvstore
+    for key in ('com.apple.developer.aps-environment', 'aps-environment'):
         if key in entitlements:
             result[key] = entitlements[key]
+    # get-task-allow 只影响调试器挂载，却会随签名进入分发版；sign-app.py 已把它
+    # 从嵌套可执行文件里剔除，主程序必须同样剔除，所以这里显式丢弃而不是复制。
     return result
 
 

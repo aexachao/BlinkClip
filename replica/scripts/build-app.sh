@@ -260,6 +260,12 @@ if [[ -n "${BLINKCLIP_CLOUDKIT_PROFILE:-}${BLINKCLIP_CLOUDKIT_CONTAINER:-}" ]]; 
   : "${BLINKCLIP_CLOUDKIT_PROFILE:?需要自有描述文件路径}"
   : "${BLINKCLIP_CLOUDKIT_CONTAINER:?需要自有 CloudKit 容器标识}"
   : "${BLINKCLIP_SIGNING_IDENTITY:?需要本机有效 Apple 签名身份}"
+  # ad-hoc 签名无法携带描述文件授权的 iCloud 能力，构建出来也连不上 CloudKit；
+  # 与其等到运行时才失败，不如在这里直接说明。
+  if [[ "$BLINKCLIP_SIGNING_IDENTITY" == - ]]; then
+    printf '%s\n' 'CloudKit 构建需要真实 Apple 签名身份（BLINKCLIP_SIGNING_IDENTITY 不能为 -）：ad-hoc 签名带不了描述文件授权的 iCloud 能力。' >&2
+    exit 1
+  fi
   python3 "$replica_root/scripts/configure-cloudkit-signing.py" \
     --profile "$BLINKCLIP_CLOUDKIT_PROFILE" --bundle "$bundle" --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
     --environment "${BLINKCLIP_CLOUDKIT_ENVIRONMENT:-Development}" --output "$staging/cloudkit-entitlements.plist"
