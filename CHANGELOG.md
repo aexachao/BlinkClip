@@ -1,5 +1,33 @@
 # 更新日志
 
+## 1.0.14 · 2026-11-14（GitHub Releases）
+
+文本预览崩溃修复版：本版在 1.0.13 基础上修掉两个真实产品缺陷——纯文本条目预览的无限递归（栈溢出崩溃）与删除分组失败时确认状态被清空；同时把 `test-ui-interaction` 的 8 处陈旧断言与产品实际语义对齐，该脚本恢复绿色。CloudKit 同步仍**未启用**。完整差异可用 `git diff --stat v1.0.13..HEAD` 复核。
+
+### 修复
+
+- **文本预览不再栈溢出。** `ReplicaPreviewAdapter.swift` 里 `makeReplicaPreview` 调用的同名重载 `makeReplicaTextPreview(state:item:input:)` 接受的 `item` 是非可选 `ClipboardItem`，而它末行又把同一个非可选 `item` 传回同名重载——精确匹配到自己，形成无限递归，真正带可选 `item` 的私有实现永远调不到。因此任何走 `makeReplicaPreview` 的纯文本（含富文本）条目预览都会 `EXC_BAD_ACCESS` 崩溃，不只是测试环境。现在把私有实现更名为 `makeReplicaTextPreviewBody`，两处调用点（`:10`、`:111`）改为调用它，重载不再自我匹配；对外行为与调用点参数均未改变。
+- **删除分组失败时保留可重试的确认状态。** `confirmPinboardRemoval` 的成功路径此前就正常，失败路径却会丢失状态：失败事务同样投递一次列表快照，被删分组在快照里已消失，随后 `reconcileTabListSelection` 按 03a538 的「相邻夹取」改选相邻列表，而 `ReplicaUIState.applySelectedList` 会顺手 `cancelPendingDeletion()`——于是面板内确认与 `pendingPinboardDeletion` 在 `catch` 之前就被清掉，错误文案失去承载处（确认 UI 直接消失）。现在 `catch` 里先 `chooseList(identifier:)` 恢复原列表（该调用内部会清 pending，故顺序不可颠倒），再恢复 pending 目标与错误，失败后确认面板、错误与选中列表都停在原分组上，可以继续重试；成功路径一行未改。
+
+### 测试
+
+- **`test-ui-interaction.sh` 由红转绿。** 8 处断言改为与产品现有语义一致，而不是为了过测试改产品：①Stack 保留重复项、逐行消费（CHANGELOG 第 81/114 轮），断言不再假设去重；②队列不再写入偏好，重开从空队列开始（第 147 轮）；③删除源码中不存在的「返回剪贴板历史」按钮断言，改测真实返回路径（非空查询下 Esc 退出搜索、面板保持，空查询才关窗）；④搜索框宽度按真实布局常量 `max(400, 工具栏宽 × 0.25)` 计算（旧断言硬编码再减 16，只在 macOS 26 成立），并把「历史按钮 8pt 间距」改成搜索框内筛选按钮的真实约束；⑤⑥删组后按相邻夹取落到相邻列表（03a538），不再假设跳回历史；⑦删除测试 fixture 缺 `pinboardOwnerID` 导致非空组确认分支不可达的问题；⑧失败删除的确认态与错误保留（对应上面的产品修复）。另外 3 处连带发现也按产品语义修正：搜索态 Esc 语义、`chooseBoard` 后需等原生集合快照排空再 `select`、无 owner 的多分组旧值条目在删组后仍存活（按观察到的现状锁定，无产品结论）。
+- 未删除仍有效的断言，净增「失败后取消清理」「选择落点」「集合就绪等待」等更强断言；harness 自报的 `checks` 列表同步更新，不再声称「第一次 Esc 关面板（含搜索态）」。
+
+### 验证
+
+- `test-ui-interaction.sh` 连续 3 次 `EXIT=0`，最后一条报告为 `{"status":"passed","passed":true,...}`。
+- `test-copy-restore.sh`、`test-pasteboard-write-feedback.sh`、`test-feedback-shortcuts.sh`、`test-toolbar-upload-removal.sh`、`test-settings-architecture.sh`、`test-settings-localization.sh`、`test-panel-scroll.sh`、`test-packaged-resources.sh`、`test-blinkclip-owned-resources.sh`、`test-permission-status.sh`、`test-settings-window-focus.sh` 全部 `EXIT=0`。
+- `python3 replica/Tests/Native/test_cloudkit_signing.py`、`python3 replica/scripts/test-release-changelog.py`、`python3 -m unittest discover -s scripts/tests` 通过；`swift run --package-path replica blinkclip-core-tests` 29 个用例全部通过（0 失败）。
+- 产物：ad-hoc 构建 `1.0.14`，`codesign --verify --deep --strict` 通过。
+
+### 已知限制
+
+- CloudKit 跨设备同步仍未启用：本构建不带 CloudKit 授权，也还没有账号侧容器；设置里会提示「此版本未設定 … 專屬 CloudKit 容器與開發者簽章，暫時無法連線 iCloud」。启用步骤见 `docs/CLOUDKIT_SETUP.md`。
+- 跨应用直接粘贴未完全验证，未对所有目标应用逐一实测。
+- Sparkle 更新密钥已轮换，旧版本只能手动下载新版本后重新安装。
+- 延续 1.0.13 的其余已知限制。
+
 ## 1.0.13 · 2026-11-14（GitHub Releases）
 
 设置页全量繁中版：本版在 1.0.12 基础上把设置页（含截图分区）文案统一改成 en / zh-Hans / zh-Hant 三语，语言判定收敛到一份实现；同时修正多选复制的剪贴板表示与 CloudKit 构建的签名授权。CloudKit 同步仍**未启用**。完整差异可用 `git diff --stat v1.0.12..HEAD` 复核。
