@@ -103,14 +103,25 @@ def asset_names(version):
     return names
 
 
+# A level-two heading starts the next entry; "###" subsections stay inside the current one.
+CHANGELOG_HEADING = re.compile(r"^##(?!#)(?:\s|$)")
+# Separators allowed between the version and the rest of the title: " - ", " · ", " | ",
+# an en/em dash, any whitespace, a colon/comma, a bracketed date, or nothing at all.
+# A hyphen-minus only separates when it is not the start of a prerelease suffix ("1.0.10-dev.1"),
+# and the lookahead keeps "1.0.10" from matching "1.0.100".
+CHANGELOG_SEPARATOR = r"(?:$|[\s·|,，:：（(]|[–—]|-(?![\w.]))"
+
+
 def changelog_entry(version):
+    """Return the release notes for version, tolerating the title separators we actually use."""
+    heading = re.compile(r"^##(?!#)\s+" + re.escape(version) + CHANGELOG_SEPARATOR)
     lines = (ROOT / "CHANGELOG.md").read_text().splitlines()
     entry = None
     for line in lines:
-        if line.startswith("## "):
+        if CHANGELOG_HEADING.match(line):
             if entry is not None:
                 break
-            if line.startswith("## " + version + " - "):
+            if heading.match(line):
                 entry = []
         elif entry is not None:
             entry.append(line)

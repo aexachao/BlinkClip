@@ -31,6 +31,7 @@ jobs:
         run: |
           python3 replica/scripts/test-release-packaging.py
           python3 replica/scripts/test-update-feed.py
+          python3 replica/scripts/test-release-plan.py
       - id: version
         name: Determine whether the package version changed
         env:
