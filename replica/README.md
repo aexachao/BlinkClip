@@ -32,7 +32,7 @@
 
 详见[同步说明与验证范围](../docs/ICLOUD_SYNC.md)。专项隔离测试脚本为 `replica/scripts/test-icloud-sync.sh`；只有显式添加 `--live-icloud` 才会向真实 iCloud Drive 写入独立合成测试文件。测试和演示数据目录不会启动应用自动同步。
 
-另有面向已签名构建的 CloudKit 高级选项：需要自有签名与容器配置，真实 CloudKit 云端传输尚未完成验证，不能称已完成同步。详见 [CloudKit 迁移与测试](../docs/CLOUDKIT_MIGRATION.md)。
+面向已签名构建的 CloudKit 已接通自有容器：1.0.15 本地候选构建具备 Production 授权，Development 与 Production 单机双客户端真实服务测试已通过；物理双机与断网重连仍待验收。配置、构建及验证见 [CloudKit 操作手册](../docs/CLOUDKIT_SETUP.md)。
 
 ## 构建运行
 
@@ -73,6 +73,6 @@ bash replica/scripts/build-app.sh release universal
 
 完整 Core suite 在旧 / 新工程均因 SQLite `RAISE ABORT` 触发 CoreData fatal（exit 133），未通过，不能以定向测试代替全组结果。MCP 定向 fixture 自验 13/13 的结果仅覆盖其边界，不代表整个 Core suite 通过；最新证据见 [TESTING](TESTING.md)。
 
-当前没有实现 iCloud 账号 / 订阅服务，也未验证所有菜单、拖放目标和系统权限组合。跨应用直接粘贴、CloudKit 真实同步、录屏入口与多显示器长截图仍需独立验收；不能标记为全功能或逐像素一比一通过。核心测试使用独立原生可执行 runner，不依赖 XCTest，仍执行真实持久化、AppKit 具名剪贴板和多个操作系统进程。详细覆盖见 [TESTING.md](TESTING.md)。
+当前未验证所有菜单、拖放目标和系统权限组合。CloudKit 已完成单机双客户端真实开发/生产服务验收，物理双机、物理断网、跨应用直接粘贴、录屏入口与多显示器长截图仍需独立验收；不能标记为全功能或逐像素一比一通过。核心测试使用独立原生可执行 runner，不依赖 XCTest，仍执行真实持久化、AppKit 具名剪贴板和多个操作系统进程。详细覆盖见 [TESTING.md](TESTING.md)。
 
 统一快捷键的生产模型 / 会话回归与实际页面验收分别记账。`validate.sh` / `regress-local.sh` 的默认路径及迁移前置条件不作为本轮受管验收示例；运行前必须按各组脚本实际支持的参数配置外部 scratch、应用和证据目录。专项验证只代表其实际覆盖的行为，不表示全量迁移或全部 UI 通过。

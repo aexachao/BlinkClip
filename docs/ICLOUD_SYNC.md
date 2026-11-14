@@ -2,7 +2,7 @@
 
 免费开发者路径下的可选同步功能，无需 Apple Developer 付费会员或原厂账号，也不使用原版 Paste 的 CloudKit 容器。会占用你自己的 iCloud 存储空间；已发布的 1.0.0 不含此功能。
 
-这是独立的文件同步，**不是原版 CloudKit 同步的复刻**。用户已选择此方式作为主要入口，原版 CloudKit 代码保留供自有签名构建使用，见 [CloudKit 迁移与测试](CLOUDKIT_MIGRATION.md)。本页的检查及 File Provider 上传证据只适用于文件同步，不能计入 CloudKit 验收。
+这是独立的文件同步。具备有效 CloudKit 授权的 1.0.15 本地候选构建在设置中优先请求 CloudKit 同步；既有 Drive 同步保持原状态，无授权构建继续使用 Drive。两条路径互斥，配置见 [CloudKit 配置与验收](CLOUDKIT_SETUP.md)。本页的检查及 File Provider 上传证据只适用于文件同步，不能计入 CloudKit 验收。
 
 ## 开启与使用
 

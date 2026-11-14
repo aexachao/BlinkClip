@@ -44,7 +44,7 @@
 ### 同步
 
 - iCloud Drive 文件同步为可选项，**默认关闭**，在「设置 → 通用」开启后自动使用 `iCloud Drive/BlinkClip`，同一 Apple ID 的多台 Mac 可同步历史与分组。
-- 另有面向已签名构建的 CloudKit 高级选项，真实云端测试尚未完成。
+- 已签名的 1.0.15 本地候选版接通自有 CloudKit；开发与生产环境均通过单机双客户端真实服务测试，物理双机仍待验收。见 [CloudKit 配置与验收](docs/CLOUDKIT_SETUP.md)。
 
 ## 下载与安装
 
@@ -52,7 +52,7 @@
 2. 打开 DMG，把 `BlinkClip.app` 拖入 `Applications`，再从应用程序启动。
 3. 首次使用时按引导授予必要的系统权限；跨应用直接粘贴需要 macOS 辅助功能权限。
 
-1.0.10 已通过 GitHub Releases 公开发布：安装包经 Developer ID 签名并通过 Apple 公证，`macos-universal` 包同时支持 Intel 与 Apple 芯片。下载与校验信息见[最新发布页](https://github.com/aexachao/BlinkClip/releases/latest)。
+稳定版本通过 GitHub Releases 公开发布：安装包经 Developer ID 签名并通过 Apple 公证，`macos-universal` 包同时支持 Intel 与 Apple 芯片。下载与校验信息见[最新发布页](https://github.com/aexachao/BlinkClip/releases/latest)。本地 1.0.15 CloudKit 候选包与线上发布分开验收。
 
 应用内更新由 Sparkle 提供：在「关于 BlinkClip」中检查更新，确认后下载并安装已签名的完整 DMG。详见[自动更新](#自动更新)。
 
@@ -123,7 +123,7 @@ npm run build:dmg
 ## 已知限制
 
 - 跨应用直接粘贴尚未完成全面验证，不能保证在所有应用的光标位置正确插入。
-- CloudKit 真实云端同步尚未完成测试；iCloud Drive 文件同步的跨设备完整验收仍在进行。
+- CloudKit 已通过单机真实云服务测试；物理双机、真实断网重连与 iCloud Drive 文件同步的跨设备完整验收仍待完成。
 - 录屏入口存在，是否可用尚未验证。
 - 暂无 iPhone / iPad 应用。
 - 当前源码版本 1.0.10；各安装包的实际功能以对应 Release 说明为准。
