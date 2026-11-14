@@ -35,7 +35,9 @@ trap '"$app/Contents/MacOS/harness" cleanup "$test_out/cleanup.json" > "$test_ou
 python3 - "$app/Contents/MacOS/harness" "$test_out" <<'PY'
 import pathlib, subprocess, sys
 executable, out = sys.argv[1], pathlib.Path(sys.argv[2])
-for mode in ('settings-write', 'settings-read', 'integration'):
+# 每个 mode 都是独立进程：`defaults-reopen` 必须看到 `defaults-unset` 写下的显式 false，
+# `settings-read` 必须看到 `settings-write` 写下的 true，所以顺序不能调换。
+for mode in ('defaults-unset', 'defaults-reopen', 'settings-write', 'settings-read', 'integration'):
     with (out / (mode + '.log')).open('w') as log:
         try:
             result = subprocess.run([executable, mode, str(out / (mode + '.json'))],

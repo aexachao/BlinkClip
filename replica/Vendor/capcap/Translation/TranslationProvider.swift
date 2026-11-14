@@ -302,6 +302,34 @@ enum TranslationConfigStore {
         "translation.\(kind.rawValue).enabled"
     }
 
+    /// 键**从未被写入**时的开关缺省值；`nil` 表示沿用上游语义（没写过就是关）。
+    ///
+    /// BlinkClip 需要「Apple 翻译」开箱可用（截图 OCR 后直接翻译，不需要 API key），
+    /// 所以这里注入一条缺省策略：只有 Apple 翻译在系统支持时视为开。
+    /// 做成注入点而不是写死分支的原因：
+    /// 1) `isEnabled` 是唯一的读取点，OCR/翻译面板的 `usableKinds()` 与设置页开关同源，
+    ///    不会出现「开关显示开、面板却说没有可用翻译服务」的矛盾；
+    /// 2) 显式写入过的值（含用户关掉的 `false`）永远优先，缺省值只补「从未设置」这一种情况；
+    /// 3) harness 可以清空它复现上游的「默认关」，也可以模拟另一种缺省策略。
+    static var defaultEnabledProvider: ((TranslationProviderKind) -> Bool)? = { kind in
+        kind.isAppleTranslation && TranslationConfigStore.isAvailable(kind)
+    }
+
+    /// 系统可用性的可注入视图；`nil` 表示直接用 `kind.isAvailableOnCurrentSystem`。
+    /// 只给测试用来模拟「没有 Translation framework 的系统」（macOS 14），
+    /// 生产路径不设置它，因此真实判定仍只有枚举里的那一个 `#available`。
+    static var availabilityOverride: ((TranslationProviderKind) -> Bool)?
+
+    static func isAvailable(_ kind: TranslationProviderKind) -> Bool {
+        availabilityOverride?(kind) ?? kind.isAvailableOnCurrentSystem
+    }
+
+    /// 键从未写过时的缺省状态。可用性是必要条件：不可用的供应商「默认开」没有意义，
+    /// 只会让设置页出现一个即便打开也只能报错的开关。
+    static func isDefaultEnabled(_ kind: TranslationProviderKind) -> Bool {
+        (defaultEnabledProvider?(kind) ?? false) && isAvailable(kind)
+    }
+
     static func load(_ kind: TranslationProviderKind) -> TranslationConfig {
         guard let data = UserDefaults.standard.data(forKey: configKey(for: kind)),
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
@@ -333,8 +361,11 @@ enum TranslationConfigStore {
 
     static func isEnabled(_ kind: TranslationProviderKind) -> Bool {
         let key = enabledKey(for: kind)
-        if UserDefaults.standard.object(forKey: key) == nil {
-            return false
+        guard UserDefaults.standard.object(forKey: key) != nil else {
+            // 从未写入 → 缺省策略（BlinkClip 只给 Apple 翻译注入了「缺省开」）。
+            // 读取本身不落盘：一旦 `setEnabled` 写过 true/false，这里读到的就是真实值，
+            // 不会再回到缺省值，所以「用户关掉又被启动时重新打开」不会发生。
+            return isDefaultEnabled(kind)
         }
         return UserDefaults.standard.bool(forKey: key)
     }
@@ -346,7 +377,7 @@ enum TranslationConfigStore {
 
     /// True when the saved config has the fields a request needs.
     static func isConfigured(_ kind: TranslationProviderKind) -> Bool {
-        if kind.isAppleTranslation { return kind.isAvailableOnCurrentSystem }
+        if kind.isAppleTranslation { return isAvailable(kind) }
         let cfg = load(kind)
         if kind.isAPIKeyRequired {
             guard !cfg.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
@@ -359,7 +390,7 @@ enum TranslationConfigStore {
 
     /// Enabled AND configured — the providers shown in the OCR panel.
     static func isUsable(_ kind: TranslationProviderKind) -> Bool {
-        kind.isAvailableOnCurrentSystem && isEnabled(kind) && isConfigured(kind)
+        isAvailable(kind) && isEnabled(kind) && isConfigured(kind)
     }
 
     static func orderedKinds() -> [TranslationProviderKind] {
@@ -369,14 +400,14 @@ enum TranslationConfigStore {
 
         for raw in saved {
             guard let kind = TranslationProviderKind(rawValue: raw),
-                  kind.isAvailableOnCurrentSystem,
+                  isAvailable(kind),
                   !seen.contains(kind) else { continue }
             result.append(kind)
             seen.insert(kind)
         }
 
         for kind in TranslationProviderKind.allCases
-            where kind.isAvailableOnCurrentSystem && !seen.contains(kind) {
+            where isAvailable(kind) && !seen.contains(kind) {
             result.append(kind)
             seen.insert(kind)
         }

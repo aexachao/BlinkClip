@@ -7,12 +7,18 @@
 //
 // 不新增键：BlinkClip 侧只做开关和可用性路由，配置本身仍归 capcap 的 TranslationConfigStore 管，
 // 这样 OCR/翻译面板（`OCRTranslatePanel` → `usableKinds()`）看到的是同一份状态。
+//
+// 默认值：这个键**从未被写过**时算「开」（macOS 15+ 才有意义，见 `isAppleTranslationAvailableOnSystem`）。
+// 缺省策略本身放在 `TranslationConfigStore.defaultEnabledProvider`（唯一读取点），
+// 本文件不写任何缺省状态，因此读开关不会顺手把键落盘：
+// 用户显式关掉之后 `translation.apple.enabled == false`，下次启动读到的仍是 false。
 
 import Foundation
 
 public enum TranslationSettingsBridge {
     /// 对应 `translation.apple.enabled`。写入后 `TranslationConfigStore.setEnabled`
     /// 会 post `.translationConfigDidChange`，长驻的 OCR 面板据此刷新供应商列表。
+    /// 读到的是「用户写入过的值」，用户从未设置过时由缺省策略给出 true。
     public static var appleTranslationEnabled: Bool {
         get { TranslationConfigStore.isEnabled(.apple) }
         set { TranslationConfigStore.setEnabled(newValue, for: .apple) }
@@ -20,8 +26,9 @@ public enum TranslationSettingsBridge {
 
     /// Apple 的 Translation framework 只有 macOS 15+ 才有。
     /// 为 false 时设置面板要把这一行禁用（而不是让用户打开一个永远不生效的开关）。
+    /// 走 store 的读口而不是直接问枚举，是为了与 `usableKinds()` 用同一份可用性判定。
     public static var isAppleTranslationAvailableOnSystem: Bool {
-        TranslationProviderKind.apple.isAvailableOnCurrentSystem
+        TranslationConfigStore.isAvailable(.apple)
     }
 
     /// 与 `OCRTranslatePanel.runTranslation` 的判定同源：

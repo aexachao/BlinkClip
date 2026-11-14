@@ -32,6 +32,10 @@ struct TranslationIntegrationHarness {
         app.setActivationPolicy(.accessory)
         Task { @MainActor in
             switch mode {
+            case "defaults-unset":
+                runDefaultSemantics()
+            case "defaults-reopen":
+                runDefaultReopen()
             case "settings-write":
                 UserDefaults.standard.removePersistentDomain(forName: bundleID)
                 for kind in TranslationProviderKind.allCases {
@@ -69,7 +73,8 @@ struct TranslationIntegrationHarness {
                     "OCR input is generated text on an image; no screen capture, user content, TCC change or remote keyed API.",
                     "Only en and zh-Hans already-installed Apple models are used; no prepareTranslation/download call.",
                     "Missing-provider failure and pending real-provider cancellation are checked separately from successful translation.",
-                    "Settings adapter destination is tested with a spy; visible ReplicaUIController navigation belongs to the separate UI verification."
+                    "Settings adapter destination is tested with a spy; visible ReplicaUIController navigation belongs to the separate UI verification.",
+                    "Default-on semantics are read-only: an unset translation.apple.enabled key never becomes a stored value, so an explicit false from the user always survives a restart. System-unavailable is simulated through the store's availability override, never by changing the real #available gate."
                 ]
             ]
             if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
@@ -80,8 +85,89 @@ struct TranslationIntegrationHarness {
         app.run()
     }
 
+    /// 「从未设置过」的缺省语义：Apple 翻译在系统支持时按「开」读，且读取不落盘。
+    /// 这个模式自带一份空域，随后显式写入 false，交给下一个进程（`defaults-reopen`）验证重启后仍是关。
+    static func runDefaultSemantics() {
+        guard let bundleID = Bundle.main.bundleIdentifier else {
+            record("default-mode-bundle-identity", false)
+            return
+        }
+        UserDefaults.standard.removePersistentDomain(forName: bundleID)
+        UserDefaults.standard.synchronize()
+        let available = TranslationSettingsBridge.isAppleTranslationAvailableOnSystem
+        let read = TranslationSettingsBridge.appleTranslationEnabled
+        let kinds = TranslationConfigStore.usableKinds()
+
+        record("default-unset-reads-enabled", read == available, ["read": read, "systemAvailable": available])
+        if #available(macOS 15.0, *) {
+            record("default-unset-enabled-on-macos15", read)
+        }
+        // 读取只做读适配，不得顺手把键写进 UserDefaults：写过之后就无法区分
+        // 「用户显式关掉」与「缺省值」，重启就可能把用户的 false 覆盖回 true。
+        record("default-unset-writes-nothing",
+               UserDefaults.standard.object(forKey: "translation.apple.enabled") == nil)
+        // 设置页开关（bridge）、OCR 面板（usableKinds）与 store 必须看到同一个值。
+        record("default-unset-consistent-across-consumers",
+               TranslationConfigStore.isEnabled(.apple) == TranslationSettingsBridge.appleTranslationEnabled
+               && TranslationConfigStore.isUsable(.apple) == !kinds.isEmpty
+               && TranslationSettingsBridge.hasUsableTranslationProvider == !kinds.isEmpty
+               && kinds == (TranslationSettingsBridge.appleTranslationEnabled ? [.apple] : []),
+               ["usableKinds": kinds.map(\.rawValue)])
+
+        // 缺省策略是可注入的：清空它即回到上游「默认关」，恢复后又是 true。
+        let policy = TranslationConfigStore.defaultEnabledProvider
+        TranslationConfigStore.defaultEnabledProvider = nil
+        record("default-policy-injection-clears-to-opt-in",
+               !TranslationSettingsBridge.appleTranslationEnabled
+               && TranslationConfigStore.usableKinds().isEmpty
+               && !TranslationSettingsBridge.hasUsableTranslationProvider)
+        TranslationConfigStore.defaultEnabledProvider = policy
+        record("default-policy-injection-restores", TranslationSettingsBridge.appleTranslationEnabled)
+
+        // 系统不支持（模拟 macOS 14）：缺省值不能把不可用的供应商算成可用。
+        TranslationConfigStore.availabilityOverride = { $0.isAppleTranslation ? false : $0.isAvailableOnCurrentSystem }
+        record("default-unset-unavailable-system-not-usable",
+               !TranslationSettingsBridge.isAppleTranslationAvailableOnSystem
+               && !TranslationSettingsBridge.appleTranslationEnabled
+               && !TranslationConfigStore.isEnabled(.apple)
+               && !TranslationConfigStore.isUsable(.apple)
+               && TranslationConfigStore.usableKinds().isEmpty
+               && !TranslationSettingsBridge.hasUsableTranslationProvider)
+        TranslationConfigStore.availabilityOverride = nil
+        record("availability-override-restored", TranslationSettingsBridge.isAppleTranslationAvailableOnSystem)
+
+        // 显式 true / 显式 false：写过的值永远优先。
+        TranslationSettingsBridge.appleTranslationEnabled = true
+        record("explicit-true-enabled",
+               TranslationSettingsBridge.appleTranslationEnabled
+               && TranslationConfigStore.isEnabled(.apple)
+               && UserDefaults.standard.bool(forKey: "translation.apple.enabled")
+               && TranslationConfigStore.usableKinds() == (available ? [.apple] : []))
+        TranslationSettingsBridge.appleTranslationEnabled = false
+        UserDefaults.standard.synchronize()
+        record("explicit-false-disables",
+               !TranslationSettingsBridge.appleTranslationEnabled
+               && !TranslationConfigStore.isEnabled(.apple)
+               && TranslationConfigStore.usableKinds().isEmpty
+               && UserDefaults.standard.object(forKey: "translation.apple.enabled") != nil)
+    }
+
+    /// 新进程读取上一个进程写下的显式 false：必须仍然是关，缺省 true 不能重新打开它。
+    static func runDefaultReopen() {
+        record("explicit-false-survives-restart",
+               UserDefaults.standard.object(forKey: "translation.apple.enabled") != nil
+               && !TranslationSettingsBridge.appleTranslationEnabled
+               && !TranslationConfigStore.isEnabled(.apple)
+               && TranslationConfigStore.usableKinds().isEmpty
+               && !TranslationSettingsBridge.hasUsableTranslationProvider,
+               ["storedKeys": UserDefaults.standard.persistentDomain(forName: Bundle.main.bundleIdentifier ?? "")?.keys
+                              .filter { $0.hasPrefix("translation.") }.sorted() ?? []])
+    }
+
     static func runIntegration() async {
-        record("fresh-process-disabled-route", !TranslationSettingsBridge.appleTranslationEnabled
+        // 先把路由显式关掉：本模式不依赖前一个进程留下的键状态。
+        TranslationSettingsBridge.appleTranslationEnabled = false
+        record("explicit-disable-leaves-no-route", !TranslationSettingsBridge.appleTranslationEnabled
                && !TranslationSettingsBridge.hasUsableTranslationProvider
                && TranslationConfigStore.usableKinds().isEmpty)
         var notifications = 0
