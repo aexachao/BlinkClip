@@ -7,7 +7,7 @@ import BlinkClipCore
 func makeReplicaNativePreview(state: ReplicaUIState, input: ClipboardRestoreItem) -> ItemPreviewView {
     let rawType = input.previewRawType()
     if rawType == 5 {
-        return makeReplicaTextPreview(state: state, item: nil, input: input)
+        return makeReplicaTextPreviewBody(state: state, item: nil, input: input)
     }
     if rawType == 2 {
         let content = ReplicaColorPreviewContent(state: state, item: nil, input: input)
@@ -105,12 +105,15 @@ func makeReplicaTextPreview(state: ReplicaUIState, item: ClipboardItem,
     if let rawType = input?.previewRawType() { isText = rawType == 5 }
     else { isText = item.kind == .text || item.kind == .richText }
     guard isText else { return nil }
-    return makeReplicaTextPreview(state: state, item: item, input: input)
+    // 这里必须调用下方的私有实现：同名重载里 `item` 非可选的那一版就是本函数自己，
+    // 传非可选 `item` 时会精确匹配到自己 → 无限递归（栈溢出 EXC_BAD_ACCESS）。
+    // 私有实现移动 `item` 为可选，改成不同标签后重载不再自我匹配。
+    return makeReplicaTextPreviewBody(state: state, item: item, input: input)
 }
 
 @MainActor
-private func makeReplicaTextPreview(state: ReplicaUIState, item: ClipboardItem?,
-                                    input: ClipboardRestoreItem?) -> ItemPreviewView {
+private func makeReplicaTextPreviewBody(state: ReplicaUIState, item: ClipboardItem?,
+                                        input: ClipboardRestoreItem?) -> ItemPreviewView {
     let content = ReplicaInlineTextPreviewContent(state: state, item: item, input: input)
     let header = ReplicaInlinePreviewHeader(state: state, item: item, input: input)
     let editorHeader = ReplicaInlinePreviewEditorHeader(document: content.document)

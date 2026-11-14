@@ -1901,7 +1901,14 @@ final class ReplicaUIController {
             cancelPinboardRemoval()
             // The native List snapshot chooses the adjacent surviving list.
         } catch {
-            // Keep failures in the same confirmation rather than opening an alert.
+            // 失败事务同样会投递一次列表快照：被删分组在快照里已消失，03a538 的相邻夹取
+            // 于是改选相邻列表，`ReplicaUIState.applySelectedList` 顺手 `cancelPendingDeletion()`，
+            // 把这次失败要停留的确认面板（以及 pending 目标）清掉，错误就没有承载处了。
+            // 失败路径不删除任何数据，因此这里恢复原列表与 pending 目标，让错误仍显示在
+            // 同一个面板内确认里；成功路径完全不变。
+            // 先改选（其内部会清 pending），再恢复 pending 与错误，顺序不可颠倒。
+            state.chooseList(identifier: target.identifier)
+            state.pendingPinboardDeletion = target
             state.pinboardDeletionError = error.localizedDescription
         }
     }
