@@ -22,6 +22,7 @@ shim="$test_build/BundleModuleShim.swift"
 printf '%s\n' 'import Foundation' 'extension Bundle { static var module: Bundle { Bundle.main } }' > "$shim"
 sources=("$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift"
          "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift"
+         "$replica_root/Sources/BlinkClip/UI/ReplicaToastCopy.swift"
          "$replica_root/Tests/Native/SettingsLocalizationHarness.swift")
 shasum -a 256 "${sources[@]}" "${core_sources[@]}" > "$test_out/production-inputs.sha256"
 xcrun swiftc -swift-version 5 -target "$target" -module-cache-path "$test_build/module-cache" \
@@ -73,12 +74,18 @@ assert all(run['passed'] for run in runs.values()), {k: v['passed'] for k, v in 
 # 每种语言至少 100 条检查：进程语言 + 语言判定 + 三语查表 + 6 个分区标题 +
 # 52 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题、Z3b 新增
 # 「外观与语言」组的 8 条）+ 截图表的 copy-table/title/2 个无障碍标签/停用提示 +
-# 33 条截图文案（W2 新增截图成功 toast）。
+# 32 条截图文案 + 6 条 toast 文案（T2：截图成功 toast 从设置表移到 toast 表，
+# 复制/暂停/继续/截图四条 toast 的文案现在只有一个来源）。
 assert all(len(run['cases']) >= 100 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
 
 def resolved(run):
-    """33 条截图文案：resolved.<key>。"""
+    """32 条截图文案：resolved.<key>。"""
     return {case['case']: case['value'] for case in run['cases'] if str(case['case']).startswith('resolved.')}
+
+def toast_copy(run):
+    """5 条 toast 文案：copy-resolved-<key>。"""
+    return {case['case'].split('copy-resolved-', 1)[1]: case['value'] for case in run['cases']
+            if str(case['case']).startswith('copy-resolved-')}
 
 def values(run, prefixes):
     return {case['case']: case['value'] for case in run['cases']
@@ -86,21 +93,72 @@ def values(run, prefixes):
 
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
-# 52 条设置文案 + 33 条截图文案，三语同键集。
-assert len(keys['en']) == 85, f'unexpected key count: {len(keys["en"])}'
+# 52 条设置文案 + 32 条截图文案 + 5 条 toast 文案，三语同键集。
+assert len(keys['en']) == 89, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
     assert runs[language]['settingsKeyCount'] == 52, (language, runs[language]['settingsKeyCount'])
-    assert runs[language]['screenshotKeyCount'] == 33, (language, runs[language]['screenshotKeyCount'])
+    assert runs[language]['screenshotKeyCount'] == 32, (language, runs[language]['screenshotKeyCount'])
+    assert runs[language]['toastKeyCount'] == 5, (language, runs[language]['toastKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
 assert resolved_cases['en'] == resolved_cases['zh-Hans'] == resolved_cases['zh-Hant'], 'resolved case set differs per language'
 # 每个键在每种语言下都必须解析出真实文案，不能回落成 key 本身，也不能缺值。
 for language in languages:
     vals = resolved(runs[language])
-    assert len(vals) == 33, f'{language}: {len(vals)} screenshot keys resolved'
+    assert len(vals) == 32, f'{language}: {len(vals)} screenshot keys resolved'
     assert len(set(vals.values())) > 1, f'{language}: copy collapsed'
     for name, value in vals.items():
         assert value and not value.startswith('screenshot.') and not value.startswith('shortcuts.'), f'{language}: {name} fell back to its raw key'
         assert not (value == name.split('resolved.', 1)[1]), f'{language}: {name} resolved to its own key'
+
+# --- toast 表 5 键：复制 / 暂停 / 继续 / 截图（文案全部单行含义）---------------
+# 四条 toast 的文案只有一个来源。这里逐语言核对「真的翻过」，并钉住单行结构：
+# 暂停（有定时）的整条文案里不能有换行，时间只出现一次。
+def toast_cases(run):
+    """copy-* 用例：copy-<key>（逐语言写死的期望）与 copy-paste-paused-until-format。"""
+    return {str(case['case']): case['value'] for case in run['cases']
+            if str(case['case']).startswith('copy-')}
+
+for language in languages:
+    copy = toast_copy(runs[language])
+    cases = toast_cases(runs[language])
+    assert len(copy) == 5, f'{language}: {len(copy)} toast keys resolved'
+    for name, value in copy.items():
+        assert value and not value.startswith('toast.'), f'{language}: {name} fell back to its raw key'
+    paused_line = cases['copy-paste-paused-until-format']
+    assert '\n' not in paused_line, paused_line
+    assert paused_line.count('14:30') == 1, paused_line
+    assert cases['copy-pause-single-line'], f'{language}: pause toast copy is not a single line'
+
+toast_hans, toast_hant = toast_copy(runs['zh-Hans']), toast_copy(runs['zh-Hant'])
+paused_hans = toast_cases(runs['zh-Hans'])['copy-paste-paused-until-format']
+paused_hant = toast_cases(runs['zh-Hant'])['copy-paste-paused-until-format']
+paused_en = toast_cases(runs['en'])['copy-paste-paused-until-format']
+assert toast_hant != toast_hans, 'zh-Hant toast copy is identical to zh-Hans'
+assert paused_en == 'Capture paused · Until 14:30', paused_en
+assert paused_hans == '已暂停采集 · 至 14:30', paused_hans
+assert paused_hant == '已暫停擷取 · 至 14:30', paused_hant
+assert toast_hans['toast.paste-paused'] == '已暂停采集', toast_hans
+assert toast_hant['toast.paste-paused'] == '已暫停擷取', toast_hant
+assert toast_hans['toast.paste-resumed'] == '已恢复采集', toast_hans
+assert toast_hant['toast.paste-resumed'] == '已恢復擷取', toast_hant
+assert toast_hans['toast.screenshot.copied'] == '已复制截图', toast_hans
+assert toast_hant['toast.screenshot.copied'] == '截圖已複製', toast_hant
+assert toast_hans['toast.copied'] == '已复制', toast_hans
+assert toast_hant['toast.copied'] == '已複製', toast_hant
+# 同一句话不得出现两遍：暂停单句文案里「已暂停采集」只出现一次。
+assert paused_hans.count('已暂停采集') == 1, paused_hans
+assert paused_hant.count('已暫停擷取') == 1, paused_hant
+# 简中表里出现过的差异词，繁中表里必须换成台湾用语（繁体 toast 不得残留简体）。
+TOAST_SIMPLIFIED_ONLY = ['剪贴板', '设置', '恢复', '复制', '截图', '暂停', '记录', '采集']
+toast_hant_blob = ' '.join(list(toast_hant.values()) + [paused_hant])
+toast_hans_blob = ' '.join(list(toast_hans.values()) + [paused_hans])
+leftovers = sorted({term for term in TOAST_SIMPLIFIED_ONLY if term in toast_hant_blob})
+assert not leftovers, leftovers
+for term in TOAST_SIMPLIFIED_ONLY:
+    if term in toast_hans_blob:
+        assert term not in toast_hant_blob, f'{term} survived in zh-Hant toast copy'
+toast_en_blob = ' '.join(list(toast_copy(runs['en']).values()) + [paused_en])
+assert not any('\u4e00' <= ch <= '\u9fff' for ch in toast_en_blob), toast_en_blob
 
 # --- 每个进程按自己的语言选表，任何 zh* 都不再统一落到简中 --------------------
 expected = {'en': 'en', 'zh-Hans': 'zh-Hans', 'zh-Hant': 'zh-Hant'}
@@ -117,7 +175,7 @@ for language in languages:
 # 截图表不再是“只有一张中文表”的已知差距。
 assert not runs['zh-Hant']['knownGaps'], runs['zh-Hant']['knownGaps']
 
-# --- 截图表 33 键：简繁必须真的不同，且繁中不得残留简体写法 -------------------
+# --- 截图表 32 键：简繁必须真的不同，且繁中不得残留简体写法 -------------------
 hans, hant = resolved(runs['zh-Hans']), resolved(runs['zh-Hant'])
 assert hant != hans, 'zh-Hant screenshot copy is identical to zh-Hans'
 differing = sorted(name for name in hant if hant[name] != hans[name])
@@ -247,7 +305,7 @@ raw = (root / 'Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift').read_text()
 source = '\n'.join(line.split('//', 1)[0] for line in raw.splitlines())
 checks = {
     # 三语写在同一个 Entry 里：结构上不可能出现「某语言缺键」再回落英文的分支。
-    'single-three-language-entry-table': raw.count(': Entry(') == 33 and 'private struct Entry' in source,
+    'single-three-language-entry-table': raw.count(': Entry(') == 32 and 'private struct Entry' in source,
     'no-per-language-key-fallback': 'english[' not in source and '?? english' not in source,
     'traditional-table-present': 'case zhHant = "zh-Hant"' in source and 'tableIdentifier' in source,
     # 语言判定收敛：本文件不再自己读偏好、扫首选语言，只调用 Core 的同一份判定。
@@ -255,6 +313,19 @@ checks = {
     'no-local-language-detection': 'UserDefaults' not in source and 'Locale.preferredLanguages' not in source
                                    and 'hasPrefix("zh")' not in source,
 }
+# T2：toast 文案表（`ReplicaToastCopy`）是四条 toast 的唯一来源，结构上必须
+# 三语齐全，且语言判定同样交给 Core——不能自己判一套。
+toast_raw = (root / 'Sources/BlinkClip/UI/ReplicaToastCopy.swift').read_text()
+toast_source = '\n'.join(line.split('//', 1)[0] for line in toast_raw.splitlines())
+toast_checks = {
+    'toast-single-three-language-entry-table': toast_raw.count(': Entry(') == 5,
+    'toast-key-set-in-one-place': 'enum Key: String, CaseIterable' in toast_source,
+    'toast-language-resolved-by-core': 'SettingsLanguage.resolved()' in toast_source,
+    'toast-no-local-language-detection': 'UserDefaults' not in toast_source
+                                        and 'preferredLanguages' not in toast_source
+                                        and 'hasPrefix("zh")' not in toast_source,
+}
+checks.update(toast_checks)
 assert all(checks.values()), checks
 (out / 'copy-table-structure.json').write_text(json.dumps({'passed': True, 'checks': checks}, indent=2) + '\n')
 print(f'Copy-table structure: {len(checks)} checks passed')

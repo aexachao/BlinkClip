@@ -4,11 +4,14 @@ import BlinkClipCore
 // Compiles the production copy providers unchanged. Each language runs in a
 // separate process so Foundation's preferred-language cache matches app startup.
 //
-// Two providers are covered here, and both are trilingual now:
+// Three providers are covered here, and all three are trilingual:
 //  * `SettingsCopy` — the settings chrome's own trilingual table.
-//  * `ScreenshotSettingsCopy` — its own 33-key table, also three languages, and
+//  * `ScreenshotSettingsCopy` — its own 32-key table, also three languages, and
 //    it takes the current language from the same `SettingsLanguage` resolver, so
 //    the screenshot pane and the rest of the settings page can never disagree.
+//  * `ReplicaToastCopy` — the toast lines (copied / paused / resumed / screenshot
+//    copied + the inline "direct paste" hint). It resolves through the same
+//    resolver, so a Traditional system no longer sees English toast text.
 // Expected strings are written out here per language instead of being read back
 // from the production table, so a table that silently loses a translation fails.
 @main
@@ -72,13 +75,12 @@ struct SettingsLocalizationHarness {
             record("settings.\(key)", !value.isEmpty && value != key, value)
         }
 
-        // --- screenshot provider: 33 keys, one table per language ------------
+        // --- screenshot provider: 32 keys, one table per language ------------
         let expectedTable: String
         let expectedTitle: String
         let expectedRegionLabel: String
         let expectedFullScreenLabel: String
         let expectedDisabledHelp: String
-        let expectedCopiedToast: String
         switch language {
         case "zh-Hans":
             expectedTable = "zh-Hans"
@@ -86,21 +88,18 @@ struct SettingsLocalizationHarness {
             expectedRegionLabel = "区域截图快捷键"
             expectedFullScreenLabel = "全屏截图快捷键"
             expectedDisabledHelp = "本次运行已停用全局快捷键。"
-            expectedCopiedToast = "已复制截图"
         case "zh-Hant":
             expectedTable = "zh-Hant"
             expectedTitle = "設定"
             expectedRegionLabel = "區域截圖快捷鍵"
             expectedFullScreenLabel = "全螢幕截圖快捷鍵"
             expectedDisabledHelp = "本次執行已停用全域快捷鍵。"
-            expectedCopiedToast = "截圖已複製"
         default:
             expectedTable = "en"
             expectedTitle = "Settings"
             expectedRegionLabel = "Region capture shortcut"
             expectedFullScreenLabel = "Full-screen capture shortcut"
             expectedDisabledHelp = "Global shortcuts are disabled for this run."
-            expectedCopiedToast = "Screenshot copied"
         }
         // The screenshot pane resolves its language through the same resolver
         // as the rest of the settings page, so both must agree in one process.
@@ -120,12 +119,57 @@ struct SettingsLocalizationHarness {
         }
         let disabledHelp = ScreenshotSettingsCopy.text(.hotKeysDisabledForRun)
         record("disabled-run-help", disabledHelp == expectedDisabledHelp, disabledHelp)
-        // W2：截图成功 toast 的文案也必须逐语言写对，不能只靠「非空」放行。
-        let copiedToast = ScreenshotSettingsCopy.text(.screenshotCopiedToast)
-        record("screenshot-copied-toast", copiedToast == expectedCopiedToast, copiedToast)
         for key in ScreenshotSettingsCopy.Key.allCases {
             let value = ScreenshotSettingsCopy.text(key)
             record("resolved." + key.rawValue, !value.isEmpty && value != key.rawValue, value)
+        }
+
+        // --- toast copy: 5 keys x 3 languages ---------------------------------
+        // 四种 toast 的文案只有一个来源（`ReplicaToastCopy`）。这里逐语言写死期望值，
+        // 表里少一条翻译或写错一种语言都会失败，而不是只靠「非空」放行。
+        let expectedToast: [ReplicaToastCopy.Key: String]
+        switch language {
+        case "zh-Hans":
+            expectedToast = [
+                .copied: "已复制",
+                .pastePaused: "已暂停采集",
+                .pastePausedUntil: "已暂停采集 · 至 14:30",
+                .pasteResumed: "已恢复采集",
+                .screenshotCopied: "已复制截图",
+            ]
+        case "zh-Hant":
+            expectedToast = [
+                .copied: "已複製",
+                .pastePaused: "已暫停擷取",
+                .pastePausedUntil: "已暫停擷取 · 至 14:30",
+                .pasteResumed: "已恢復擷取",
+                .screenshotCopied: "截圖已複製",
+            ]
+        default:
+            expectedToast = [
+                .copied: "Copied",
+                .pastePaused: "Capture paused",
+                .pastePausedUntil: "Capture paused · Until 14:30",
+                .pasteResumed: "Capture resumed",
+                .screenshotCopied: "Screenshot copied",
+            ]
+        }
+        record("toast-language-matches-settings", ReplicaToastCopy.language == settingsLanguage,
+               ReplicaToastCopy.language.rawValue)
+        record("toast-copy-table", ReplicaToastCopy.tableIdentifier == expectedTable,
+               ReplicaToastCopy.tableIdentifier)
+        let pausedUntil = ReplicaToastCopy.pastePaused(until: "14:30")
+        record("copy-paste-paused-until-format", pausedUntil == expectedToast[.pastePausedUntil], pausedUntil)
+        // 时钟并进同一行：整条文案里必须没有换行，且时间只出现一次（旧版是两行/两遍）。
+        record("copy-pause-single-line", !pausedUntil.contains("\n") && pausedUntil.components(separatedBy: "14:30").count - 1 == 1,
+               pausedUntil)
+        for key in ReplicaToastCopy.Key.allCases {
+            let value = ReplicaToastCopy.text(key)
+            // 「…· 至 %@」是一条格式串，真正的文案由上面 `pastePaused(until:)` 逐语言核对。
+            if key != .pastePausedUntil {
+                record("copy-" + key.rawValue, value == expectedToast[key], value)
+            }
+            record("copy-resolved-" + key.rawValue, !value.isEmpty && value != key.rawValue, value)
         }
 
         let passed = cases.allSatisfy { $0["passed"] as? Bool == true }
@@ -133,9 +177,12 @@ struct SettingsLocalizationHarness {
             "language": language, "passed": passed, "cases": cases,
             "settingsLanguage": settingsLanguage.rawValue,
             "screenshotLanguage": ScreenshotSettingsCopy.language.rawValue,
-            "keys": (SettingsCopy.termKeys.map { "settings." + $0 } + ScreenshotSettingsCopy.Key.allCases.map(\.rawValue)).sorted(),
+            "keys": (SettingsCopy.termKeys.map { "settings." + $0 }
+                     + ScreenshotSettingsCopy.Key.allCases.map(\.rawValue)
+                     + ReplicaToastCopy.Key.allCases.map(\.rawValue)).sorted(),
             "settingsKeyCount": SettingsCopy.termKeys.count,
             "screenshotKeyCount": ScreenshotSettingsCopy.Key.allCases.count,
+            "toastKeyCount": ReplicaToastCopy.Key.allCases.count,
             "copyTable": table,
             "knownGaps": [],
             "boundaries": ["Production Foundation copy providers only; app/UI not launched.",

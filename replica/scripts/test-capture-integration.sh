@@ -28,10 +28,69 @@ compile_native_test_harness capture-integration \
   "$replica_root/Sources/BlinkClip/Screenshot/ScreenshotWindowHider.swift" \
   "$replica_root/Sources/BlinkClip/Screenshot/ScreenshotHistoryBridge.swift" \
   "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" \
-  "$replica_root/Sources/BlinkClip/UI/ReplicaCopiedOSD.swift"
+  "$replica_root/Sources/BlinkClip/UI/ReplicaCopiedOSD.swift" \
+  "$replica_root/Sources/BlinkClip/UI/ReplicaToastCopy.swift" \
+  "$replica_root/Sources/BlinkClip/UI/ReplicaToast.swift"
 # Each invocation needs an empty Store, including repeats inside one guarded task.
 export CAPTURE_STORE_ROOT="$ARTIFACT_TASK_DIR/build/store-$(uuidgen)"
 "$test_harness" > "$ARTIFACT_TASK_DIR/out/result.json"
 cat "$ARTIFACT_TASK_DIR/out/result.json"
 du -sh "$ARTIFACT_TASK_DIR"
 df -h /System/Volumes/Data
+
+# --- T2 源码门：四条 toast 必须是同一个组件 -------------------------------------
+python3 - "$replica_root" "$ARTIFACT_TASK_DIR/out" <<'PY'
+import json, pathlib, re, sys
+root, out = map(pathlib.Path, sys.argv[1:])
+ui = root / 'Sources/BlinkClip/UI'
+toast = (ui / 'ReplicaToast.swift').read_text()
+facade = (ui / 'ReplicaCopiedOSD.swift').read_text()
+coordinator = (root / 'Sources/BlinkClip/Screenshot/ScreenshotCoordinator.swift').read_text()
+copy_table = (ui / 'ReplicaToastCopy.swift').read_text()
+
+
+def code(text):
+    """去掉行注释：注释里可以提到窗口类名，那不是实现。"""
+    return '\n'.join(line.split('//', 1)[0] for line in text.splitlines())
+
+
+# 轻提示只有一个窗口子类：除了主面板/堆叠面板，就只剩 toast 盘面。
+panel_subclasses = []
+for path in sorted((root / 'Sources/BlinkClip').rglob('*.swift')):
+    for name in re.findall(r'^\s*(?:final\s+)?class\s+(\w+)\s*:\s*(?:NS)?Panel', code(path.read_text()), re.M):
+        panel_subclasses.append(f'{path.name}:{name}')
+checks = {
+    # 轻提示只有一个窗口子类：`ReplicaToastPanel`；门面（`ReplicaCopiedOSD`）一个都不建。
+    'single-toast-panel-class': [name for name in panel_subclasses if name.startswith('ReplicaToast')]
+                                == ['ReplicaToast.swift:ReplicaToastPanel']
+                                and not [name for name in panel_subclasses if name.startswith('ReplicaCopiedOSD')],
+    # 四条 toast 的入口都走同一个 present，没有任何一条自己建窗口。
+    'facade-creates-no-window': 'NSWindow(' not in code(facade) and 'NSPanel(' not in code(facade)
+                                and 'NSHostingView' not in code(facade),
+    'four-toasts-share-one-presenter':
+        re.findall(r'ReplicaToast\.shared\.present', code(facade)) and
+        len(re.findall(r'ReplicaToast\.shared\.present', code(facade))) == 4,
+    'screenshot-toast-uses-same-entry': 'ReplicaCopiedOSD.showScreenshotCopied()' in coordinator,
+    # 停止「同一句话两遍」：暂停 toast 只有一处文案来源，没有副标题参数。
+    'pause-toast-has-no-subtitle': 'subtitle' not in code(facade),
+    'single-trilingual-copy-table': copy_table.count(': Entry(') == 5 and 'private struct Entry' in copy_table,
+    # 图标语义只靠符号：四类 toast 都是无底衬的线条符号，不许出现 .circle 变体。
+    'toast-symbols-are-bare': sorted(re.findall(r'symbolName: "([^"]+)"', code(facade)))
+                              == ['arrow.clockwise', 'checkmark', 'checkmark', 'pause']
+                              and not [name for name in re.findall(r'symbolName: "([^"]+)"', code(facade))
+                                       if '.circle' in name or 'fill' in name],
+    # 不入图：写入口被钉死，且上屏前后各钉一次。
+    'sharing-type-is-pinned': 'override var sharingType' in code(toast)
+                              and code(toast).count('toast.sharingType = .none') >= 2,
+    # 位置/时长是规范里的数字，不是各处随手写。
+    'toast-geometry-constants': all(name in code(toast) for name in
+                                    ('bottomInset: CGFloat = 120', 'holdDuration: TimeInterval = 1.3',
+                                     'fadeDuration: TimeInterval = 0.2', 'panelSize = NSSize(width: 128, height: 128)',
+                                     'cornerRadius: CGFloat = 16', 'iconPointSize: CGFloat = 42',
+                                     'iconTextSpacing: CGFloat = 16', 'textPointSize: CGFloat = 14',
+                                     'textLineSpacing: CGFloat = 2')),
+}
+(out / 'toast-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
+assert all(checks.values()), checks
+print(f'Toast source gate: {len(checks)} checks passed (one component for all four toasts)')
+PY

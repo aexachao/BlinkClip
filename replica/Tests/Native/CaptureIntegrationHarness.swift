@@ -2,6 +2,7 @@
 // Settings, CaptureEntry, HistoryManagerBridge, Coordinator, HistoryBridge and
 // ClipboardStore are compiled unchanged; this file contains no routing replica.
 import AppKit
+import CoreGraphics
 import Foundation
 
 #if CAPTURE_BOUNDARY
@@ -293,35 +294,201 @@ enum ReplicaBrand {
         try require(saved.kind == .image && saved.plainText == nil && Set(saved.payloads.keys) == ["public.png"], "completion creates PNG image record in real Store")
         try require(pb.data(forType: .png) == saved.payloads["public.png"], "completion writes same PNG via real Store to private pasteboard")
 
-        // --- W2：截图成功 toast -------------------------------------------------
+        // --- T2：统一 toast（复制 / 暂停 / 继续 / 截图已复制）----------------------
         // 成功 = 落库 + 写剪贴板都成功；失败分支只 beep，不弹这条。
-        let toast = ReplicaCaptureToast.shared
-        let toastCopy = ScreenshotSettingsCopy.text(.screenshotCopiedToast)
-        try require(ReplicaCaptureToast.holdDuration >= 1.2 && ReplicaCaptureToast.holdDuration <= 1.5,
+        let toast = ReplicaToast.shared
+        let toastCopy = ReplicaToastCopy.text(.screenshotCopied)
+        try require(ReplicaToast.holdDuration >= 1.2 && ReplicaToast.holdDuration <= 1.5,
                     "toast hold time stays inside the 1.2–1.5s band")
+        try require(abs(ReplicaToast.fadeDuration - 0.2) < 0.001,
+                    "toast fade is 0.2s for every toast")
         try require(toast.isVisible, "successful screenshot presents the copied toast")
-        try require(toast.currentTitle == toastCopy && !toastCopy.isEmpty
-                    && toastCopy != ScreenshotSettingsCopy.Key.screenshotCopiedToast.rawValue,
-                    "toast text is the copied-screenshot copy from the trilingual table")
+        try require(toast.currentText == toastCopy && !toastCopy.isEmpty
+                    && toastCopy != ReplicaToastCopy.Key.screenshotCopied.rawValue,
+                    "screenshot toast text is the trilingual screenshot-copied copy")
         try require(toast.isVisible && toast.presentationCount == 1, "the first successful screenshot presents exactly one toast")
+
+        /// 窗口服务器看到的共享状态：0 = 任何截屏/录屏都抓不到这块窗口。
+        func windowServerSharingState(_ window: NSWindow?) -> Int? {
+            guard let window else { return nil }
+            let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(window.windowNumber))
+                as? [[String: Any]] ?? []
+            return list.first?[kCGWindowSharingState as String] as? Int
+        }
+        /// 统一的 200×200pt 盘面：固定尺寸、圆角 20、上图下字、整块居中、只有一行文案区。
+        func requireToastBox(_ window: NSWindow?, _ what: String) throws {
+            guard let window, let view = window.contentView as? ReplicaToastView else {
+                throw Failure.assertion("\(what): content view is not the shared ReplicaToastView")
+            }
+            let size = window.frame.size
+            try require(size == ReplicaToastView.panelSize,
+                        "\(what): the plate is exactly 128×128pt, got \(size)")
+            try require(view.bounds.size == ReplicaToastView.panelSize,
+                        "\(what): the plate view fills 128×128pt, got \(view.bounds.size)")
+            try require(abs((view.layer?.cornerRadius ?? 0) - ReplicaToastView.cornerRadius) <= 0.01,
+                        "\(what): corner radius is 16pt")
+            try require(view.copyNodeCount == 1, "\(what): only one copy node, no second line of small text")
+            try require(!view.copyText.contains("\n"), "\(what): copy carries no line break")
+            try require(view.renderedLineCount >= 1 && view.renderedLineCount <= 2,
+                        "\(what): the copy really renders in 1–2 lines, got \(view.renderedLineCount)")
+            try require(view.maximumTextLines == 2, "\(what): the copy may wrap to at most two lines")
+            try require(abs(view.textFontSize - 14) <= 0.01, "\(what): the copy is 14pt, got \(view.textFontSize)")
+            try require(view.textAlignment == NSTextAlignment.center.rawValue,
+                        "\(what): the copy is centred, alignment=\(view.textAlignment)")
+            try require(abs(view.textLineSpacing2 - 2) <= 0.01,
+                        "\(what): the copy uses 2pt line spacing, got \(view.textLineSpacing2)")
+            let icon = view.iconFrame, text = view.textFrame
+            try require(icon.width >= 40 && icon.width <= 44 && icon.height >= 40 && icon.height <= 44,
+                        "\(what): the symbol slot is in the 40–44pt band, got \(icon.size)")
+            try require(abs(icon.width - 42) <= 0.5, "\(what): the symbol slot is 42pt wide")
+            try require(icon.minY > text.maxY, "\(what): the symbol sits above the copy (vertical layout)")
+            try require(abs(icon.minY - text.maxY - ReplicaToastView.iconTextSpacing) <= 0.5,
+                        "\(what): icon-to-copy spacing is the fixed 24pt")
+            try require(abs(icon.midX - text.midX) <= 0.5 && abs(icon.midX - view.bounds.midX) <= 0.5,
+                        "\(what): symbol and copy share the plate's horizontal centre")
+            // 配色规范：图标与文案都是白色，底板两套系统外观下都是深色。
+            try require(view.iconColor == .white, "\(what): the symbol is white")
+            try require(view.copyColor == .white, "\(what): the copy is white")
+            try require(view.backingAppearance == .vibrantDark,
+                        "\(what): the plate keeps the dark HUD appearance in any system appearance")
+            // 整块内容在盘内垂直居中：上下留白差 ≤0.5pt。
+            let topGap = view.bounds.height - icon.maxY
+            let bottomGap = text.minY
+            try require(abs(topGap - bottomGap) <= 0.5,
+                        "\(what): the content block is centred vertically (top \(topGap) vs bottom \(bottomGap))")
+        }
+        /// 底部居中：不压 Dock、离可用区域底边 120pt、水平居中。
+        func requireBottomPlacement(_ window: NSWindow?, _ what: String) throws {
+            guard let window, let screen = NSScreen.main else {
+                throw Failure.assertion("\(what): toast window or screen missing")
+            }
+            let frame = window.frame
+            let visible = screen.visibleFrame
+            try require(frame.minY >= visible.minY - 0.5,
+                        "\(what): toast sits above the Dock (frame.minY \(frame.minY) >= visibleFrame.minY \(visible.minY))")
+            try require(abs(frame.minY - (visible.minY + ReplicaToast.bottomInset)) <= 1,
+                        "\(what): toast bottom is 120pt above the usable bottom edge")
+            try require(frame.minY - visible.minY <= 150,
+                        "\(what): toast stays within 150pt of the bottom of the usable area")
+            try require(frame.midY < screen.frame.midY, "\(what): toast is in the bottom half of the screen")
+            try require(abs(frame.midX - visible.midX) <= 1, "\(what): toast is horizontally centred")
+        }
+
         let toastWindow = toast.window
+        try require(toastWindow is ReplicaToastPanel, "screenshot toast uses the shared toast panel class")
         try require(toastWindow?.ignoresMouseEvents == true, "toast ignores mouse events so it never takes focus")
         try require(toastWindow?.canBecomeKey == false && toastWindow?.canBecomeMain == false,
                     "toast can never become key or main")
-        try require(toastWindow.map({ $0.sharingType == NSWindow.SharingType.none }) == true,
-                    "toast is excluded from screen capture via sharingType")
+        try require(toastWindow?.sharingType == NSWindow.SharingType.none,
+                    "toast reports sharingType .none")
+        // 出货件此前实测到 1：`WindowSharingPolicy` 在 didExpose/didUpdate 上把每个窗口
+        // 改回 `.readOnly`。这里按窗口服务器的事实断言，而不是只信 NSWindow 属性。
+        // 新窗口要等窗口服务器完成一次合成才会出现在 CGWindowList 里。
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let sharingBeforePolicy = windowServerSharingState(toastWindow)
+        try require(sharingBeforePolicy == 0,
+                    "window server reports CGWindowSharingState == 0 (toast cannot be captured), got \(sharingBeforePolicy.map(String.init) ?? "missing")")
+        // 复现策略写入：允许读（.readOnly）也必须落回 .none。
+        toastWindow?.sharingType = .readOnly
+        try require(toastWindow?.sharingType == NSWindow.SharingType.none,
+                    "an external sharingType write cannot turn the toast back into a capturable window")
+        try require(windowServerSharingState(toastWindow) == 0,
+                    "CGWindowSharingState stays 0 after the screen-sharing policy writes .readOnly")
         // capcap 的编辑器浮层是 `.screenSaver + 3/+4`；toast 必须比它们更高一级。
         try require((toastWindow?.level.rawValue ?? 0) > NSWindow.Level.screenSaver.rawValue + 4,
                     "toast sits above the screenshot editor overlay windows")
-        if let screen = NSScreen.main, let frame = toastWindow?.frame {
-            try require(abs(frame.midX - screen.frame.midX) <= 1,
-                        "toast is horizontally centred on the screen")
-            let topGap = screen.visibleFrame.maxY - frame.maxY
-            try require(topGap >= 0 && topGap <= 40,
-                        "toast sits at the top of the screen, below the menu bar")
+        try require(toast.currentSymbolName == "checkmark", "screenshot toast uses the bare checkmark symbol")
+        let screenshotSymbol = toast.currentSymbolName
+        try requireToastBox(toastWindow, "screenshot toast")
+        try requireBottomPlacement(toastWindow, "screenshot toast")
+        let plateHeight = toastWindow?.frame.height ?? 0
+        let singleLineTextHeight = (toastWindow?.contentView as? ReplicaToastView)?.textFrame.height ?? 0
+
+        // 暂停（无定时）：只有一句「已暂停记录剪贴板」，没有第二行复述。
+        ReplicaCopiedOSD.showPaused(resumeDate: nil)
+        try require(toast.currentText == ReplicaToastCopy.text(.pastePaused),
+                    "pause toast without a timer is the single paused line")
+        try require(!(toast.currentText ?? "").contains("·"),
+                    "pause toast without a timer adds no trailing time fragment")
+        try require(toast.currentSymbolName == "pause", "pause toast uses the pause symbol")
+        try require(toast.window === toastWindow && toastWindow is ReplicaToastPanel,
+                    "pause toast reuses the same shared panel class and instance")
+        try require(toastWindow?.ignoresMouseEvents == true, "pause toast is not clickable")
+        try requireToastBox(toastWindow, "pause toast")
+        try requireBottomPlacement(toastWindow, "pause toast")
+
+        // 暂停（有定时）：时间并进同一句，不拆成第二行小字。
+        var components = DateComponents()
+        components.hour = 14
+        components.minute = 30
+        let resumeAt = Calendar.current.date(from: components) ?? Date()
+        ReplicaCopiedOSD.showPaused(resumeDate: resumeAt)
+        let pausedUntilCopy = ReplicaToastCopy.pastePaused(until: "14:30")
+        try require(toast.currentText == pausedUntilCopy,
+                    "pause toast with a timer merges the resume time into the same copy")
+        try require((toast.currentText ?? "").components(separatedBy: "14:30").count == 2,
+                    "the resume time appears exactly once in the pause toast")
+        try require(pausedUntilCopy.components(separatedBy: ReplicaToastCopy.text(.pastePaused)).count == 2,
+                    "the paused sentence itself is present exactly once")
+        try requireToastBox(toastWindow, "pause toast with timer")
+        try requireBottomPlacement(toastWindow, "pause toast with timer")
+
+        // 继续：同样 200×200、同位置、同窗口。
+        ReplicaCopiedOSD.showResumed()
+        try require(toast.currentText == ReplicaToastCopy.text(.pasteResumed),
+                    "resume toast is the single resumed line")
+        try require(toast.currentSymbolName == "arrow.clockwise", "resume toast uses the resume symbol")
+        try require(toast.window === toastWindow, "resume toast reuses the same window")
+        try requireToastBox(toastWindow, "resume toast")
+        try requireBottomPlacement(toastWindow, "resume toast")
+
+        // 复制（无动作）：不可点；图标与截图 toast 是同一个裸对勾。
+        ReplicaCopiedOSD.showCopied()
+        try require(toast.currentText == ReplicaToastCopy.text(.copied), "copy toast uses the copied line")
+        try require(toast.currentSymbolName == "checkmark" && toast.currentSymbolName == screenshotSymbol,
+                    "the copied and screenshot-copied toasts share the exact same symbol")
+        try require(!toast.isInteractive, "copy toast without an action is not clickable")
+        try require(toastWindow?.ignoresMouseEvents == true, "a copy toast without an action ignores mouse events")
+        try requireToastBox(toastWindow, "copy toast")
+        try requireBottomPlacement(toastWindow, "copy toast")
+
+        // 复制（可点）：整块可点，且不再多一行「点击启用直接粘贴」的小字。
+        var directPasteEnabled = false
+        ReplicaCopiedOSD.showCopied(enableDirectPaste: { directPasteEnabled = true })
+        try require(toast.currentText == ReplicaToastCopy.text(.copied), "actionable copy toast keeps the copied line")
+        try require(toast.isInteractive, "the direct-paste toast is clickable as a whole")
+        try require(toastWindow?.ignoresMouseEvents == false, "the clickable toast accepts mouse events")
+        try require(toastWindow?.frame.height == plateHeight,
+                    "the actionable toast adds no second line of copy")
+        try requireToastBox(toastWindow, "actionable copy toast")
+        try requireBottomPlacement(toastWindow, "actionable copy toast")
+        if let view = toast.window?.contentView as? ReplicaToastView,
+           let event = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 5, y: 5),
+                                          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: toastWindow?.windowNumber ?? 0, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 1) {
+            view.mouseDown(with: event)
         }
-        // 连续截图：上一颗 toast 必须在新截图抓屏前收起——这就是「toast 不入成图」的保证
-        // （H1 的排除集合只含这次会话自有的遮罩/HUD，toast 不在其中）。
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        try require(directPasteEnabled, "clicking anywhere on the plate runs the direct-paste action")
+        try require(windowServerSharingState(toastWindow) == 0,
+                    "every toast keeps CGWindowSharingState == 0")
+
+        // 盘面固定：文案变长也只换行，不改变窗口尺寸。
+        toast.present(.init(symbolName: "checkmark", text: String(repeating: "Wide ", count: 40)))
+        try require(toastWindow?.frame.size == ReplicaToastView.panelSize,
+                    "a very long copy keeps the fixed 128×128pt plate")
+        try requireToastBox(toastWindow, "long-copy toast")
+        if let view = toast.window?.contentView as? ReplicaToastView {
+            try require(view.textFrame.height > singleLineTextHeight * 1.5,
+                        "the wrapped copy really occupies two lines inside the plate (\(view.textFrame.height) vs \(singleLineTextHeight))")
+            try require(abs(view.iconFrame.minY - view.textFrame.maxY - ReplicaToastView.iconTextSpacing) <= 0.5,
+                        "icon-to-copy spacing stays 16pt when the copy wraps")
+        }
+        let presentationsBeforeCapture = toast.presentationCount
+
+        // 连续截图：上一颗 toast 必须在新截图抓屏前收起——这是「toast 不进成图」的兜底
+        // （真正的保证是 sharingType 恒为 .none）。
         var toastVisibleAtCaptureEntry: Bool?
         CaptureProbe.onCaptureEntry = { toastVisibleAtCaptureEntry = toast.isVisible }
         coordinator.startRegionCapture()
@@ -330,13 +497,15 @@ enum ReplicaBrand {
         try require(toastVisibleAtCaptureEntry == false,
                     "a new capture hides the visible toast before the screen is snapshotted")
         CaptureProbe.complete(image)
-        try require(toast.isVisible && toast.presentationCount == 2 && toast.window === toastWindow,
+        try require(toast.isVisible && toast.presentationCount == presentationsBeforeCapture + 1
+                    && toast.window === toastWindow,
                     "a second quick screenshot reuses and resets the same toast instead of stacking")
+        try require(toast.currentText == toastCopy, "the screenshot toast comes back with its own copy")
         try require(NSApp.windows.filter { $0 === toast.window }.count == 1,
-                    "only one toast window exists for two consecutive screenshots")
-        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaCaptureToast.holdDuration - 0.15))
+                    "only one toast window exists no matter how many toasts were shown")
+        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaToast.holdDuration - 0.15))
         try require(toast.isVisible, "toast is still visible just before the hold elapses")
-        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaCaptureToast.fadeDuration + 0.45))
+        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaToast.fadeDuration + 0.45))
         try require(!toast.isVisible, "toast disappears after hold + fade")
         let bridge = ScreenshotHistoryBridge(store: store)
         try require(bridge.blinkclipImageEntries().count == 1 && bridge.blinkclipImage(forLocator: bridge.blinkclipImageEntries()[0].locator) != nil,
@@ -498,7 +667,7 @@ enum ReplicaBrand {
                 "reopened": repeatedReopened.items.first { $0.id == saved.id }!.updatedAt.timeIntervalSince1970],
             "no_op_revision_unchanged": beforeNoOpRevision == afterNoOpRevision,
             "sync_apply_explicit_date": syncDate.timeIntervalSince1970,
-            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard", "ScreenshotWindowHider panel hide-before-capture and restore", "ReplicaCaptureToast screenshot-copied toast (window level/geometry/sharingType/hold and fade/reuse)"],
+            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard", "ScreenshotWindowHider panel hide-before-capture and restore", "ReplicaToast shared 128x128 toast for copy/pause/resume/screenshot (window class/level/bottom geometry/CGWindowSharingState/centred content/reuse/action)"],
             "doubles": ["capcap OverlayWindowController/ScreenCapturer/ImageEditLauncher", "GlobalHotKey Carbon registration", "ScreenshotFocusRestorer", "ReplicaBrand constant"],
             "not_run": ["screen capture/editor internals", "real global Carbon delivery", "UI confirm-versus-save dispatch", "actual overlay draft internals", "focus restoration", "toast pixels inside a real captured image (asserted via hide-before-capture + sharingType)"]]
         print(String(data: try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
