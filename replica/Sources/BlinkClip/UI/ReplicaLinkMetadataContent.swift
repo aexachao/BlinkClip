@@ -39,7 +39,8 @@ struct ReplicaLinkMetadataContent: View {
                 }
                 Text(linkPreviewsEnabled ? LinkDisplay.formattedURL(metadata.url) : metadata.url.absoluteString)
                     .font(Font(NSFont.preferredFont(forTextStyle: .callout, options: [:])))
-                    .foregroundStyle(Color(nsColor: ToolbarAppearance.secondaryForeground()))
+                    // 链接卡 footer 走脚注 token：浅色 50% 黑只有 4.07:1，达不到 AA 小字 4.5:1。
+                    .foregroundStyle(Color(nsColor: FooterAppearance.secondaryForeground()))
                     .lineLimit(linkPreviewsEnabled ? (metadata.name == nil ? 2 : 1) : nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

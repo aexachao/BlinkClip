@@ -50,8 +50,21 @@ enum CompactTextCardAppearance {
     }
 
     /// 卡片脚注（「N 个字符」/ 渐隐带）的次要前景色。
+    ///
+    /// 走 `FooterAppearance`：浅色 footer 小字需要 ≥4.5:1，而工具栏那个 50% 黑
+    /// 压在白底上只有 3.95:1（U5 实测 4.0:1）。再叠一层 `contrastSafe`：正文卡的
+    /// 脚注底色来自来源内容（富文本可带浅灰/中间调底色），常规白底/深底原样返回
+    /// token，只有被底色压到 5:1 以下时才继续加深。
     static func secondaryForeground(on background: NSColor, ambient: NSAppearance) -> NSColor {
-        resolved(ToolbarAppearance.secondaryForeground(), on: background, ambient: ambient)
+        let isLight = isLightBackground(background, in: ambient)
+        let side = NSAppearance(named: isLight ? .aqua : .darkAqua) ?? ambient
+        var base = FooterAppearance.secondaryForeground()
+        var resolvedBackground = background
+        side.performAsCurrentDrawingAppearance {
+            base = base.usingColorSpace(.deviceRGB) ?? base
+            resolvedBackground = background.usingColorSpace(.deviceRGB) ?? background
+        }
+        return FooterAppearance.contrastSafe(base, over: resolvedBackground)
     }
 }
 
@@ -113,7 +126,7 @@ final class CompactTextFooterView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        textLabel.textColor = ToolbarAppearance.secondaryForeground()
+        textLabel.textColor = FooterAppearance.secondaryForeground()
         textLabel.alignment = .center
         textLabel.font = NSFont.preferredFont(forTextStyle: .callout, options: [:])
         for view in [opaqueView, fadingView, textLabel] as [NSView] {

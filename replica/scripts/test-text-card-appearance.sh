@@ -2,6 +2,8 @@
 # 防回归：文本卡片外观四态矩阵（P1 白底白字缺陷）。
 # {创建时浅,创建时深} × {当前浅,当前深}，断言正文前景/卡片底色对比度 ≥ 4.5:1，
 # footer 带色等于当前外观下的卡片底色；缺陷回归时跨外观的两态必然失败。
+# P5 追加：两处 footer 小字（文本卡「N 个字符」、链接卡 URL）按 WCAG AA 小字
+# 要求浅深两外观都 ≥ 4.5:1（修复前浅色 4.00:1）。
 set -euo pipefail
 replica_root="$(cd "$(dirname "$0")/.." && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/blinkclip-text-card-appearance.XXXXXX")"
@@ -29,4 +31,20 @@ if report.get('passed') is not True:
 states = report.get('matrix', [])
 if len(states) != 4:
     raise SystemExit(f'expected a 4-state matrix, got {len(states)}')
+minimum = report.get('footerContrastMinimum', 4.5)
+for state in states:
+    if state['footerTextContrast'] < minimum:
+        raise SystemExit('text-card footer contrast %.2f:1 below %.1f:1 (%s -> %s)'
+                         % (state['footerTextContrast'], minimum, state['created'], state['current']))
+for footer in report.get('linkCardFooter', []):
+    if footer['textContrast'] < minimum:
+        raise SystemExit('link-card footer contrast %.2f:1 below %.1f:1 (%s)'
+                         % (footer['textContrast'], minimum, footer['side']))
+for footer in report.get('sourceToneFooter', []):
+    if footer['footerTextContrast'] < minimum:
+        raise SystemExit('source-tone text-card footer contrast %.2f:1 below %.1f:1 (%s)'
+                         % (footer['footerTextContrast'], minimum, footer['current']))
+link_sides = sorted(footer['side'] for footer in report.get('linkCardFooter', []))
+if link_sides != ['dark', 'light']:
+    raise SystemExit(f'expected link-card footer samples for light and dark, got {link_sides}')
 PY

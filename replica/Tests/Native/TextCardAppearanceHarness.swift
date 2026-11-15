@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import BlinkClipCore
+import SwiftUI
 
 /// 防回归：文本卡片外观四态矩阵。
 ///
@@ -15,6 +16,10 @@ import BlinkClipCore
 /// 四态，全部要求正文前景与卡片底色的对比度 ≥ 4.5:1、footer 带色等于当前外观下
 /// 的卡片底色，并且真的渲染出了可见的文字像素（不是白底白字的 0 像素）。
 /// 修复前四态里「创建时与当前不一致」的两态必然失败，修复后四态全绿。
+///
+/// P5 追加：两处 footer 的小字（文本卡「N 个字符」、链接卡 URL）也按 WCAG AA
+/// 小字要求 ≥ 4.5:1。浅色 50% 黑压在白底上只有 3.95:1（U5 真机实测 4.0:1 /
+/// 链接卡 4.07:1），所以这两条断言是一起立的闸门；浅/深两个外观都要过。
 @main
 struct TextCardAppearanceHarness {
     struct Failure: Error, CustomStringConvertible { let description: String }
@@ -53,10 +58,30 @@ struct TextCardAppearanceHarness {
         var footerTextSide: String
     }
 
+    struct LinkFooterReport {
+        var side: Side
+        var band: String
+        var textPixels: Int
+        var textContrast: Double
+        var textSide: String
+    }
+
     static var checks = 0
     static func check(_ condition: Bool, _ message: @autoclosure () -> String) throws {
         checks += 1
         guard condition else { throw Failure(description: message()) }
+    }
+
+    /// footer 小字对比度不立刻抛出：先让四态（和链接卡浅/深）全渲染完，把完整
+    /// 表格汇报出来，最后统一以非零退出码失败。这样修前修后拿到的是同一张表。
+    static var footerViolations: [String] = []
+
+    static func recordFooterContrast(_ label: String, side: Side, contrast: Double,
+                                     band: String, pixels: Int) {
+        guard contrast < 4.5 else { return }
+        footerViolations.append(String(
+            format: "%@ footer text contrast %.2f:1 below 4.5:1 (%@ side, band %@, %d text pixels)",
+            label, contrast, side.rawValue, band, pixels))
     }
 
     // MARK: - 颜色工具（WCAG 2.x 相对亮度与对比度）
@@ -161,6 +186,15 @@ struct TextCardAppearanceHarness {
         return AttributedString(source)
     }
 
+    /// 来源自带浅灰底（中间调）：`background(for:)` 会原样采用来源底色，脚注不
+    /// 再压在白底上，所以这里验证 footer 文字色会跟着底色加深，仍 ≥4.5:1。
+    static func midToneSourceText() -> AttributedString {
+        let source = NSMutableAttributedString(string: "粘贴来的浅灰底文本块\n保留了来源自带的底色")
+        source.addAttribute(.backgroundColor, value: NSColor(white: 0.82, alpha: 1),
+                            range: NSRange(location: 0, length: source.length))
+        return AttributedString(source)
+    }
+
     /// 生产里传给 footer 的 `fadingColor` 就是 `background(for:)` 原样返回的语义色
     /// （纯文本时是动态系统色），不是 harness 解析后的静态值；脚注必须拿它才能
     /// 随外观重解析。这里保持生产契约。
@@ -185,7 +219,7 @@ struct TextCardAppearanceHarness {
     // MARK: - 四态矩阵
 
     @MainActor
-    static func runState(created: Side, current: Side, text: AttributedString,
+    static func runState(created: Side, current: Side, text: AttributedString, tag: String = "",
                          evidence: URL?) throws -> StateReport {
         let window = makeWindow(created)
         defer { window.orderOut(nil); window.contentView = nil; window.close() }
@@ -258,7 +292,7 @@ struct TextCardAppearanceHarness {
         try check(bodyPixels >= 200, "body text did not render visibly (dark/light pixels = \(bodyPixels))")
         try check(strongPixels >= 100, "body text has no 4.5:1 pixels (strong pixels = \(strongPixels))")
         try check(bodyPixelContrast >= 4.5, String(format: "rendered body contrast %.2f:1 below 4.5:1", bodyPixelContrast))
-        try save(contentRep, "body-\(created.rawValue)-to-\(current.rawValue)", evidence)
+        try save(contentRep, "body-\(tag)\(created.rawValue)-to-\(current.rawValue)", evidence)
 
         // 3) footer 带色必须等于当前外观下的卡片底色
         let footerRep = try render(footer)
@@ -272,8 +306,9 @@ struct TextCardAppearanceHarness {
         try check(footerText.pixels >= 30, "footer character count did not render (\(footerText.pixels) pixels)")
         let expectedTextSide = luminance(expectedBackground) > 0.5 ? "darker" : "brighter"
         try check(footerText.side == expectedTextSide, "footer text side \(footerText.side) does not match band \(hex(band))")
-        try check(footerText.contrast >= 2.5, String(format: "footer text contrast %.2f:1 below 2.5:1", footerText.contrast))
-        try save(footerRep, "footer-\(created.rawValue)-to-\(current.rawValue)", evidence)
+        recordFooterContrast(tag.isEmpty ? "text-card" : "text-card-\(tag)", side: current,
+                             contrast: footerText.contrast, band: hex(band), pixels: footerText.pixels)
+        try save(footerRep, "footer-\(tag)\(created.rawValue)-to-\(current.rawValue)", evidence)
 
         return StateReport(created: created, current: current,
                            cardBackground: hex(expectedBackground), bodyForeground: hex(foreground),
@@ -303,13 +338,14 @@ struct TextCardAppearanceHarness {
                    b: samples.reduce(0) { $0 + $1.b } / count)
     }
 
-    static func footerTextSample(_ rep: NSBitmapImageRep, band: RGB)
+    static func footerTextSample(_ rep: NSBitmapImageRep, band: RGB, rowsFromBottom: Int = 36)
         -> (pixels: Int, contrast: Double, side: String) {
         var pixels = 0
         var best = 0.0
         var bestPixel = band
         let xRange = (rep.pixelsWide / 5)..<(rep.pixelsWide * 4 / 5)
-        for y in (rep.pixelsHigh - 36)..<rep.pixelsHigh {
+        let firstRow = max(0, rep.pixelsHigh - rowsFromBottom)
+        for y in firstRow..<rep.pixelsHigh {
             for x in xRange {
                 guard let color = rep.colorAt(x: x, y: y), color.alphaComponent > 0.5 else { continue }
                 let pixel = rgb(color)
@@ -320,6 +356,60 @@ struct TextCardAppearanceHarness {
         }
         let side = luminance(bestPixel) < luminance(band) ? "darker" : "brighter"
         return (pixels, best, side)
+    }
+
+    /// 链接卡 footer 的底色：URL 行所在的实心底块。文字左对齐、右侧留白，
+    /// 所以取右下角一小块（底部 10pt 内边距里）做底色采样，避开文字本身。
+    static func footerBlockSample(_ rep: NSBitmapImageRep) -> RGB {
+        var samples: [RGB] = []
+        let firstRow = max(0, rep.pixelsHigh - 26)
+        for y in firstRow..<max(firstRow, rep.pixelsHigh - 6) {
+            for x in (rep.pixelsWide - 40)..<(rep.pixelsWide - 6) where x >= 0 && x < rep.pixelsWide {
+                if let color = rep.colorAt(x: x, y: y) { samples.append(rgb(color)) }
+            }
+        }
+        guard !samples.isEmpty else { return RGB(r: 0, g: 0, b: 0) }
+        let count = Double(samples.count)
+        return RGB(r: samples.reduce(0) { $0 + $1.r } / count,
+                   g: samples.reduce(0) { $0 + $1.g } / count,
+                   b: samples.reduce(0) { $0 + $1.b } / count)
+    }
+
+    // MARK: - 链接卡 footer（URL 小字）
+
+    /// 面板里链接卡的正文是 `ReplicaLinkMetadataContent`：URL 小字压在
+    /// `LinkPreviewSurface.startingColor`（浅色纯白 / 深色窗口底）上。这里把真视图
+    /// 放进离屏窗口、按目标外观渲染，再按 WCAG 采样，和文本卡 footer 同一口径。
+    @MainActor
+    static func runLinkFooter(side: Side, evidence: URL?) throws -> LinkFooterReport {
+        let window = makeWindow(side)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        guard let container = window.contentView else { throw Failure(description: "missing container") }
+        guard let url = URL(string: "https://example.com/articles/2026/p5-footer-contrast-verification") else {
+            throw Failure(description: "cannot build the link footer fixture URL")
+        }
+        let host = NSHostingView(rootView: ReplicaLinkMetadataContent(
+            metadata: LinkPreviewMetadata(url: url, name: nil),
+            compact: false, linkPreviewsEnabled: true, cardSizeClass: 1))
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        container.addSubview(host)
+        // SwiftUI 的首次布局/绘制在离屏窗口里不是同步的，给足一个泵的时间。
+        pump(0.5)
+        container.layoutSubtreeIfNeeded()
+
+        let rep = try render(host)
+        let band = footerBlockSample(rep)
+        let text = footerTextSample(rep, band: band, rowsFromBottom: 70)
+        try check(text.pixels >= 30, "link footer URL did not render (\(text.pixels) pixels)")
+        let expectedTextSide = luminance(band) > 0.5 ? "darker" : "brighter"
+        try check(text.side == expectedTextSide,
+                  "link footer text side \(text.side) does not match band \(hex(band))")
+        recordFooterContrast("link-card", side: side, contrast: text.contrast, band: hex(band),
+                             pixels: text.pixels)
+        try save(rep, "link-footer-\(side.rawValue)", evidence)
+        return LinkFooterReport(side: side, band: hex(band), textPixels: text.pixels,
+                                textContrast: text.contrast, textSide: text.side)
     }
 
     // MARK: - 来源自带深色底：两种当前外观都要维持还原语义
@@ -385,6 +475,16 @@ struct TextCardAppearanceHarness {
                 }
             }
             let darkSource = try runDarkSource()
+            var sourceTone: [StateReport] = []
+            for current in Side.allCases {
+                sourceTone.append(try runState(created: .light, current: current,
+                                               text: midToneSourceText(), tag: "source-tone-",
+                                               evidence: evidence))
+            }
+            var linkFooters: [LinkFooterReport] = []
+            for side in Side.allCases {
+                linkFooters.append(try runLinkFooter(side: side, evidence: evidence))
+            }
 
             let rows = matrix.map { [
                 "created": $0.created.rawValue, "current": $0.current.rawValue,
@@ -396,17 +496,35 @@ struct TextCardAppearanceHarness {
                 "footerTextPixels": $0.footerTextPixels, "footerTextContrast": $0.footerTextContrast,
                 "footerTextSide": $0.footerTextSide
             ] as [String: Any] }
+            let sourceToneRows = sourceTone.map { [
+                "created": $0.created.rawValue, "current": $0.current.rawValue,
+                "cardBackground": $0.cardBackground, "bodyContrast": $0.bodyContrast,
+                "footerBand": $0.footerBand, "footerTextPixels": $0.footerTextPixels,
+                "footerTextContrast": $0.footerTextContrast, "footerTextSide": $0.footerTextSide
+            ] as [String: Any] }
+            let linkRows = linkFooters.map { [
+                "side": $0.side.rawValue, "band": $0.band, "textPixels": $0.textPixels,
+                "textContrast": $0.textContrast, "textSide": $0.textSide
+            ] as [String: Any] }
             let report: [String: Any] = [
-                "passed": true,
+                "passed": footerViolations.isEmpty,
                 "checks": checks,
                 "matrix": rows,
+                "linkCardFooter": linkRows,
+                "sourceToneFooter": sourceToneRows,
+                "footerContrastMinimum": 4.5,
+                "footerViolations": footerViolations,
                 "sourceDarkBackground": darkSource,
-                "note": "防回归：{创建时浅,创建时深} × {当前浅,当前深}；修复前跨外观的两态必然白底白字/带色冻结。"
+                "note": "防回归：{创建时浅,创建时深} × {当前浅,当前深}；修复前跨外观的两态必然白底白字/带色冻结。两处 footer 小字（文本卡「N 个字符」/链接卡 URL）浅深两外观均需 ≥ 4.5:1。"
             ]
             let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             print(String(data: data, encoding: .utf8)!)
             if let evidence {
                 try data.write(to: evidence.appendingPathComponent("four-state.json"))
+            }
+            if !footerViolations.isEmpty {
+                for violation in footerViolations { print("FAIL: \(violation)") }
+                exit(1)
             }
         } catch {
             print("FAIL: \(error)")

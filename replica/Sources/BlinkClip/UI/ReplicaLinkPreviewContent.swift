@@ -39,7 +39,7 @@ final class ReplicaLinkPreviewContent: NSView, PreviewEditableContent, NSTextVie
         textView.autoresizingMask = .width
         textView.delegate = self
         urlLabel.font = SearchAppearance.bodyFont()
-        urlLabel.textColor = ToolbarAppearance.secondaryForeground()
+        urlLabel.textColor = FooterAppearance.secondaryForeground()
         urlLabel.isEditable = false
         urlLabel.isSelectable = false
         urlLabel.isBordered = false
