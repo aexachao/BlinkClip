@@ -11,8 +11,9 @@
 - 保留闪贴 / BlinkClip 名称、应用图标、菜单栏标志。（用户已选品牌）
 
 ## 内容归属
-- 通用：登录启动、后台运行、提示音、iCloud 同步、自动检查更新。（用户确认）
-- 通用页按职责分组：**启动与运行**（登录时启动、保持后台服务运行）/ **同步与更新**（iCloud 同步、自动检查更新）/ **声音**（播放操作提示音）；单张卡不超过 2 项时合并，超过则分组，组内保留分隔线、组间只留 20pt 间距不加 Divider。验收：三个 `settingsSectionTitle` + 三张卡、`Divider()` 只出现在组内、三语键齐全。（2026-11-15 用户反馈；源码 `AuxiliaryViews.swift` 的 `general`、`SettingsCopy.swift`；断言 `SettingsArchitectureHarness.swift`、`test-settings-architecture.sh` 的通用页分组门）
+- 通用：登录启动、后台运行、主题、语言、提示音、iCloud 同步、自动检查更新。（用户确认）
+- 通用页按职责分组：**启动与运行**（登录时启动、保持后台服务运行）/ **外观与语言**（主题、语言）/ **同步与更新**（iCloud 同步、自动检查更新）/ **声音**（播放操作提示音）；单张卡不超过 2 项时合并，超过则分组，组内保留分隔线、组间只留 20pt 间距不加 Divider。验收：四个 `settingsSectionTitle` + 四张卡、「外观与语言」夹在「启动与运行」与「同步与更新」之间、`Divider()` 只出现在组内、三语键齐全。（2026-11-15 用户反馈；源码 `AuxiliaryViews.swift` 的 `general`、`SettingsCopy.swift`；断言 `SettingsArchitectureHarness.swift`、`test-settings-architecture.sh` 的通用页分组门）
+- 外观与语言组：**主题**（跟随系统 / 浅色 / 深色）写既有 `preferences.appearance`，**语言**（跟随系统 / 简体中文 / 繁體中文 / English）写 `appLanguage` 键（跟随系统 = 删除该键）；两行都是菜单 `Picker` + 标题/说明两行文字，行内控件与文字块同一条中线（≤0.5pt）。切换即时生效并持久化：主题写完偏好立刻跑同一份 `ReplicaUIController.applyAppearance()`，设置窗、底部面板、编辑器与预览窗同时换外观；语言发 `blinkclip.languageDidChange`，已打开的设置页重算文案（分区标题、侧栏、工具栏标题、窗口标题一起改），语言名按语言自称显示不翻译，说明写清「界面语言；部分系统弹窗仍跟随系统语言」。重启后两行回显仍与存储一致。（2026-11-15 用户要求；源码 `AuxiliaryViews.swift` 的 `appearanceThemeRow` / `appearanceLanguageRow`、`SettingsAppearanceLanguage.swift`、`ReplicaUIController.applyAppearance()` / `refreshSettingsWindowTitle()`；断言 `SettingsArchitectureHarness.verifyAppearanceLanguageRows`、`test-settings-architecture.sh`、`test-settings-localization.sh`；实测见 `evidence/patches/z3b-report.md`）
 - 剪贴板与历史：粘贴方式、纯文本粘贴、历史保留时间、清空历史。（用户确认）
 - 截图：截图后的操作、翻译。（用户确认）
 - 快捷键：全部功能快捷键集中管理。（用户确认）
@@ -116,3 +117,4 @@ A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立�
 - 2026-11-15 X1a：撤销页面级垂直居中（六页顶对齐 16pt、可滚动），补「行内控件与文字块垂直居中 ≤0.5pt」与「通用页按职责分三组」两条规范。
 - 2026-11-15 Z1：卡片内容垂直居中（上下留白差 ≤0.5pt）。行高改成「内容 + 上下对称内边距」（`SettingsRowMetrics`），卡片里的复选框/页脚说明/按钮行/保留期网格自带留白（`SettingsCardBlock`）；补 `assertCardCentring` 逐卡断言与源码门。
 - 2026-11-15 Z3a：关于改为设置页内容区的第七页，独立关于窗口与其展示路径删除；「状态行 + 检查更新」整体移到链接/许可之上，页面只剩一个主按钮；`.blinkClipOpenAbout` 补上生产观察者，三个入口落到同一页。「关于页几何」按新形态改写，并记下「图标墨迹不能当布局证据」这条工程约束。
+- 2026-11-15 Z3b：通用页新增「外观与语言」组（主题、语言）；主题写 `preferences.appearance` 并立刻应用，语言写 `appLanguage` 并发同名通知让整页重算。通用页分组由三组变四组，逐卡居中断言按卡片身份重新点名（原三张仍在严格名单），另加说明文字卡 1.5pt 降部上限与行内选择器对齐 ≤0.5pt。

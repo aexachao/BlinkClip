@@ -71,8 +71,9 @@ languages = ['en', 'zh-Hans', 'zh-Hant']
 runs = {language: json.loads((out / f'{language}.json').read_text()) for language in languages}
 assert all(run['passed'] for run in runs.values()), {k: v['passed'] for k, v in runs.items()}
 # 每种语言至少 100 条检查：进程语言 + 语言判定 + 三语查表 + 6 个分区标题 +
-# 44 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题）+ 截图表的
-# copy-table/title/2 个无障碍标签/停用提示 + 32 条截图文案。
+# 52 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题、Z3b 新增
+# 「外观与语言」组的 8 条）+ 截图表的 copy-table/title/2 个无障碍标签/停用提示 +
+# 32 条截图文案。
 assert all(len(run['cases']) >= 100 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
 
 def resolved(run):
@@ -85,10 +86,10 @@ def values(run, prefixes):
 
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
-# 44 条设置文案 + 32 条截图文案，三语同键集。
-assert len(keys['en']) == 76, f'unexpected key count: {len(keys["en"])}'
+# 52 条设置文案 + 32 条截图文案，三语同键集。
+assert len(keys['en']) == 84, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
-    assert runs[language]['settingsKeyCount'] == 44, (language, runs[language]['settingsKeyCount'])
+    assert runs[language]['settingsKeyCount'] == 52, (language, runs[language]['settingsKeyCount'])
     assert runs[language]['screenshotKeyCount'] == 32, (language, runs[language]['screenshotKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
 assert resolved_cases['en'] == resolved_cases['zh-Hans'] == resolved_cases['zh-Hant'], 'resolved case set differs per language'
@@ -156,7 +157,7 @@ assert '截图' in sections['zh-Hans'].values(), sections['zh-Hans']
 
 # --- the whole settings table is Traditional under zh-Hant --------------------
 settings = {language: values(runs[language], ['settings.']) for language in languages}
-assert len(settings['zh-Hant']) == 44, len(settings['zh-Hant'])
+assert len(settings['zh-Hant']) == 52, len(settings['zh-Hant'])
 assert set(settings['zh-Hant']) == set(settings['zh-Hans']) == set(settings['en']), 'settings key sets differ'
 # 10 known Simplified/Traditional divergences: no Simplified-only spelling may
 # survive anywhere in the zh-Hant settings copy.
@@ -171,12 +172,14 @@ section_leftovers = {term: [name for name, value in sections['zh-Hant'].items() 
 assert not any(section_leftovers.values()), section_leftovers
 # The bill of materials: every term actually differs between zh-Hans and zh-Hant
 # unless the wording is identical in both scripts.
-IDENTICAL = {'完成', '取消', '播放操作提示音', 'AI 工具'}
+# 「深色」在简繁两体里写法相同（这不是漏翻），所以它进白名单。
+IDENTICAL = {'完成', '取消', '播放操作提示音', 'AI 工具', '深色'}
 same = {name for name in settings['zh-Hant']
         if settings['zh-Hant'][name] == settings['zh-Hans'][name]}
 assert same <= {f'settings.{key}' for key in ('settings.mcp.connection-sheet.done',
                                               'general.action.cancel',
-                                              'settings.sound-effects.title')}, same
+                                              'settings.sound-effects.title',
+                                              'settings.appearance.theme.dark')}, same
 for name in settings['zh-Hant']:
     assert settings['zh-Hant'][name] not in IDENTICAL or settings['zh-Hant'][name] == settings['zh-Hans'][name]
 # Spot-check the terms the report calls out, so a silent revert cannot pass.
@@ -189,6 +192,12 @@ spot = {
     'settings.settings.general.startup-section.title': '啟動與執行',
     'settings.settings.general.sync-section.title': '同步與更新',
     'settings.settings.general.sound-section.title': '聲音',
+    # Z3b：外观与语言组四条的繁体写法（「深色」简繁同形，单独用白名单放行）。
+    'settings.settings.general.appearance-section.title': '外觀與語言',
+    'settings.settings.appearance.theme.title': '主題',
+    'settings.settings.appearance.theme.subtitle': '選「跟隨系統」時隨 macOS 外觀切換。',
+    'settings.settings.appearance.language.subtitle': '介面語言；部分系統對話框仍跟隨系統語言。',
+    'settings.settings.appearance.follow-system': '跟隨系統',
     'settings.updates.about-title': '關於閃貼',
 }
 for name, value in spot.items():
@@ -330,7 +339,9 @@ assert len(calls['SettingsCopy']) >= 6, len(calls['SettingsCopy'])
 SETTINGS_HELPERS = ['SettingsCopy.swift', 'ScreenshotSettingsCopy.swift', 'PermissionStatusView.swift',
                     'CloudKitSyncController.swift', 'AuxiliaryViews.swift', 'HistoryCapacityControl.swift',
                     'HistoryRetentionCopy.swift', 'ShortcutRecorder.swift', 'SettingsShortcutRowRestore.swift',
-                    'SettingsWindowFocusRestore.swift']
+                    'SettingsWindowFocusRestore.swift',
+                    # Z3b：外观与语言的两个选项类型与写入口（主题/语言的文案都从这张表取）。
+                    'SettingsAppearanceLanguage.swift']
 by_name = {p.name: p for p in files}
 
 def code(text):
@@ -341,7 +352,10 @@ for name in SETTINGS_HELPERS:
     assert 'hasPrefix("zh")' not in source, f'{name}: blanket "any zh" branch is back'
     assert 'bilingual(' not in source, f'{name}: bilingual provider is back'
     assert 'preferredLanguages' not in source, f'{name}: language is resolved locally again'
-    assert 'SettingsLanguage' not in source or name in ('SettingsCopy.swift', 'ScreenshotSettingsCopy.swift'), name
+    # 这两个文件要用 Core 的同一份判定/键名（`SettingsLanguage.resolved()` /
+    # `.preferenceKey`），但都不自己扫首选语言——所以只放行它们持有枚举与键名。
+    assert 'SettingsLanguage' not in source or name in ('SettingsCopy.swift', 'ScreenshotSettingsCopy.swift',
+                                                       'SettingsAppearanceLanguage.swift'), name
 # Both settings copy providers must go through the one shared resolver: no pane
 # of the settings page may resolve its own language.
 for name in ('SettingsCopy.swift', 'ScreenshotSettingsCopy.swift'):
@@ -365,7 +379,7 @@ for name in SETTINGS_HELPERS + ['SettingsShortcutReset.swift']:
 used |= set(re.findall(r'aboutRowTitleKey\s*=\s*"([^"]+)"', by_name['AuxiliaryViews.swift'].read_text()))
 assert used == terms, ('settings keys outside the trilingual table', sorted(used - terms),
                        'unused terms', sorted(terms - used))
-assert len(terms) == 44, len(terms)
+assert len(terms) == 52, len(terms)
 
 # Inventory of the remaining blanket "any zh" branches outside the settings
 # copy: none of them is settings-page copy. AppBrand picks the Chinese app name,

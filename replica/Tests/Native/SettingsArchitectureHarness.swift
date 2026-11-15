@@ -446,10 +446,27 @@ import BlinkClipCapture
     }
 
     /// 必须逐卡达标的七张卡（任务口径）：通用三组、剪贴板两张、隐私的权限卡、AI 状态卡。
+    ///
+    /// Z3b 在通用页插入了「外观与语言」卡，它排在原来的第 1 张之前，所以这里按
+    /// **卡片身份**重新点名：原来的三张（启动与运行 / 同步与更新 / 声音）仍然在
+    /// 严格名单里，一张都没少，覆盖没有放宽。新卡是说明文字卡，另由两条断言单独
+    /// 覆盖：`cardCentringCaptionLimit` 的 1.5pt 上限，以及 `checkRowAlignment`
+    /// 之外的行内选择器对齐（≤0.5pt，见 `verifyAppearanceLanguageRows`）。
     @MainActor static var cardCentringRequired: [(section: SettingsSection, card: Int)] {
-        [(.general, 0), (.general, 1), (.general, 2),
+        [(.general, 0), (.general, 2), (.general, 3),
          (.clipboard, 0), (.clipboard, 1),
          (.privacy, 0), (.ai, 0)]
+    }
+
+    /// 说明文字卡（末行是 11pt 说明）的墨迹带上限。
+    ///
+    /// 墨迹带量的是渲染像素：末行文字的降部（g / j / p / q / y）比汉字和
+    /// 无降部的行低约 1.5pt，所以这类卡的「上下留白相等」只能到 1.5pt。
+    /// 截图页的「Apple 翻译」卡本来就是这个值（实测 light 18.25 / 16.75）；
+    /// 用 0.5pt 会把同一份对称布局按语言判成失败。这里逐卡点名，不替代
+    /// 七张严格卡的 0.5pt 口径。
+    @MainActor static var cardCentringCaptionLimit: [(section: SettingsSection, card: Int)] {
+        [(.general, 1)]
     }
 
     /// 每张卡的内容墨迹带在卡片里垂直居中：卡顶→首行墨迹顶与末行墨迹底→卡底
@@ -479,6 +496,17 @@ import BlinkClipCapture
             }
             try check(delta <= limit,
                       "\(appearance) \(key) card #\(index) content is not centred: top \(row["topGap"] ?? "?") bottom \(row["bottomGap"] ?? "?") delta \(delta)pt")
+        }
+        // 说明文字卡：末行降部带来的 1.5pt 已知差异（逐卡点名）。
+        for (section, index) in cardCentringCaptionLimit {
+            let key = "\(appearance)-\(section.rawValue)"
+            guard let row = (cardCentringGeometry[key] ?? []).indices.contains(index)
+                    ? (cardCentringGeometry[key] ?? [])[index] : nil,
+                  let delta = row["delta"] as? Double else {
+                throw Failure(message: "\(appearance) \(key) card #\(index) has no measured delta")
+            }
+            try check(delta <= 1.5,
+                      "\(appearance) \(key) caption card #\(index) ink band is \(delta)pt off centre: top \(row["topGap"] ?? "?") bottom \(row["bottomGap"] ?? "?")")
         }
         for key in cardCentringGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
             for row in cardCentringGeometry[key] ?? [] {
@@ -657,6 +685,272 @@ import BlinkClipCapture
             "switchCenter": Double((dotCenter * 100).rounded() / 100),
             "delta": Double((abs(dotCenter - status.midY) * 100).rounded() / 100),
         ]]
+    }
+
+    // MARK: - 「外观与语言」组（主题 + 语言）
+
+    /// 「通用 → 外观与语言」：两行、两个菜单选择器，主题写 `preferences.appearance`，
+    /// 语言写 `appLanguage`。
+    ///
+    /// 三层断言，全部在**出货的** `ReplicaSettingsView` 上量：
+    /// 1) 位置：这一组夹在「启动与运行」与「同步与更新」之间（同页按 y 排序）；
+    /// 2) 回显：选择器显示的就是存储里的值，改存储后重开仍是同一项；
+    /// 3) 即时生效：语言换掉之后**同一个已经渲染的**页面立刻按新语言重算文案
+    ///    （分区标题、侧栏、「外观与语言」组标题与工具栏标题一起变），
+    ///    选「跟随系统」等于删掉 `appLanguage` 键。
+    @MainActor static func verifyAppearanceLanguageRows(state: ReplicaUIState, model: PermissionStatusModel,
+                                                        out: URL, language: String) async throws {
+        guard let domain = Bundle.main.bundleIdentifier, domain.hasPrefix("local.blinkclip.regression.") else {
+            throw Failure(message: "isolated test app domain required")
+        }
+        func makeHost() -> NSHostingView<AnyView> {
+            let root = AnyView(ReplicaSettingsView(state: state,
+                                                  initialTab: SettingsSection.general.rawValue,
+                                                  permissionModel: model)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            let host = NSHostingView(rootView: root)
+            let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600),
+                                                styleMask: [.titled, .closable, .fullSizeContentView],
+                                                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.titlebarAppearsTransparent = false
+            window.toolbarStyle = .unified
+            window.setFrame(NSRect(x: -5000, y: -5000, width: 648, height: 600), display: false)
+            window.contentView = host
+            window.orderFront(nil)
+            return host
+        }
+        func close(_ host: NSView) {
+            host.window?.orderOut(nil)
+            host.window?.contentView = nil
+            host.window?.close()
+        }
+        /// 行文字块（标题 + 说明）的并集帧：标题按文案找，说明按标识符找。
+        func textBlock(_ host: NSView, title: String, detail: String) -> NSRect? {
+            let tree = accessibilityTree(host)
+            guard let titleFrame = tree.filter({ node in
+                axRole(node) == "AXStaticText" && axText(node) == title
+            }).map({ axFrame($0) }).filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else { return nil }
+            guard let detailFrame = tree.filter({ axID($0) == detail }).map({ axFrame($0) })
+                .filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else { return nil }
+            return titleFrame.union(detailFrame)
+        }
+        func popups(_ host: NSView) -> [NSPopUpButton] {
+            descendants(host, of: NSPopUpButton.self)
+                .filter { !$0.isHidden && $0.frame.height > 10 }
+                // 窗口坐标 y 向上：这一页里靠上的那个是「主题」。
+                .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+        }
+        func sectionTitleFrames(_ host: NSView) -> [NSRect] {
+            accessibilityTree(host).filter { axID($0) == "settings.section-title" }
+                .map { axFrame($0) }.filter { $0.width > 10 }
+                .sorted { $0.maxY > $1.maxY }
+        }
+
+        try check(SettingsAppearanceChoice.allCases == [.system, .light, .dark],
+                  "theme options are not 跟随系统/浅色/深色: \(SettingsAppearanceChoice.allCases)")
+        try check(SettingsAppLanguageChoice.allCases == [.system, .zhHans, .zhHant, .en],
+                  "language options are not 跟随系统/简体中文/繁體中文/English: \(SettingsAppLanguageChoice.allCases)")
+        try check(SettingsAppearanceChoice(stored: "system").storedValue == "system"
+                  && SettingsAppearanceChoice(stored: "light").storedValue == "light"
+                  && SettingsAppearanceChoice(stored: "dark").storedValue == "dark",
+                  "theme choices do not use the existing preferences.appearance values")
+        try check(SettingsAppLanguageChoice.zhHans.storedValue == "zh"
+                  && SettingsAppLanguageChoice.zhHant.storedValue == "zh-Hant"
+                  && SettingsAppLanguageChoice.en.storedValue == "en"
+                  && SettingsAppLanguageChoice.system.storedValue == nil,
+                  "language choices do not use the appLanguage raw values (跟随系统 = no key)")
+        // 语言名按自称显示，不随界面语言翻译。
+        try check(SettingsAppLanguageChoice.zhHans.title == "简体中文"
+                  && SettingsAppLanguageChoice.zhHant.title == "繁體中文"
+                  && SettingsAppLanguageChoice.en.title == "English",
+                  "language names must be the languages' own names")
+
+        let originalAppearance = state.store.preferences.appearance
+        let originalLanguage = UserDefaults.standard.string(forKey: SettingsLanguage.preferenceKey)
+        defer {
+            state.store.preferences.appearance = originalAppearance
+            try? state.store.save()
+            if let originalLanguage {
+                UserDefaults.standard.set(originalLanguage, forKey: SettingsLanguage.preferenceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SettingsLanguage.preferenceKey)
+            }
+            NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
+            print("appearance-language: state restored")
+        }
+
+        let host = makeHost()
+        defer { close(host) }
+        await pause()
+        host.layoutSubtreeIfNeeded()
+
+        // 1) 位置：启动与运行 → 外观与语言 → 同步与更新 → 声音。
+        let titles = [SettingsCopy.text("settings.general.startup-section.title"),
+                      SettingsCopy.text("settings.general.appearance-section.title"),
+                      SettingsCopy.text("settings.general.sync-section.title"),
+                      SettingsCopy.text("settings.general.sound-section.title")]
+        let titleFrames = sectionTitleFrames(host)
+        try check(titleFrames.count == titles.count,
+                  "general page has \(titleFrames.count) section titles, expected \(titles.count)")
+        for (index, title) in titles.enumerated() {
+            try check(treeHasText(host, title), "general page is missing the section title: \(title)")
+        }
+        if let appearanceFrame = accessibleTextFrame(host, text: titles[1]),
+           let startupFrame = accessibleTextFrame(host, text: titles[0]),
+           let syncFrame = accessibleTextFrame(host, text: titles[2]) {
+            try check(appearanceFrame.maxY < startupFrame.minY,
+                      "「外观与语言」is not below「启动与运行」: \(appearanceFrame) vs \(startupFrame)")
+            try check(appearanceFrame.minY > syncFrame.maxY,
+                      "「外观与语言」is not above「同步与更新」: \(appearanceFrame) vs \(syncFrame)")
+        } else {
+            throw Failure(message: "could not measure the three group titles around 外观与语言")
+        }
+
+        // 两行文字与两个选择器都在，且选择器中心与文字块中心对齐（≤0.5pt）。
+        let rows: [(title: String, detail: String)] = [
+            (SettingsCopy.text("settings.appearance.theme.title"), "settings.appearance.theme.subtitle"),
+            (SettingsCopy.text("settings.appearance.language.title"), "settings.appearance.language.subtitle"),
+        ]
+        let controls = popups(host)
+        try check(controls.count == 2, "外观与语言 has \(controls.count) pickers, expected 2")
+        // 行内对齐按**选择器的无障碍帧**量（与开关行同一条口径）：SwiftUI 的布局帧
+        // 才是行里被居中的那个框，NSPopUpButton 自己的 bounds 含着色器内缩。
+        let pickerNodes = accessibilityTree(host)
+            .filter { node in
+                ["settings.appearance.theme.picker", "settings.appearance.language.picker"].contains(axID(node))
+            }
+            .map { (frame: axFrame($0), role: axRole($0)) }
+            .filter { $0.frame.width > 10 && $0.frame.height > 8 }
+            .sorted { $0.frame.maxY > $1.frame.maxY }
+        try check(pickerNodes.count == 2,
+                  "外观与语言 exposes \(pickerNodes.count) pickers to accessibility, expected 2")
+        for picker in pickerNodes {
+            try check(["AXPopUpButton", "AXMenuButton", "AXButton"].contains(picker.role),
+                      "外观与语言 picker role is \(picker.role), expected a pop-up button")
+        }
+        var measured: [[String: Any]] = []
+        for (index, row) in rows.enumerated() {
+            guard let block = textBlock(host, title: row.title, detail: row.detail) else {
+                throw Failure(message: "外观与语言 row \(row.title) is missing its title or subtitle")
+            }
+            try check(treeHasText(host, row.title), "外观与语言 row title is not rendered: \(row.title)")
+            let control = pickerNodes[index].frame
+            let delta = abs(block.midY - control.midY)
+            measured.append(["row": row.title, "control": pickerNodes[index].role,
+                             "textCenter": Double((block.midY * 100).rounded() / 100),
+                             "controlCenter": Double((control.midY * 100).rounded() / 100),
+                             "delta": Double((delta * 100).rounded() / 100)])
+            try check(delta <= 0.5,
+                      "外观与语言 row \(row.title) picker centre \(control.midY) is \(delta)pt off its text block centre \(block.midY)")
+        }
+        rowAlignmentGeometry["\(language)-appearance-language"] = measured
+
+        // 2) 主题回显：写 store 的存量字符串，重开页面选择器就显示对应项；落盘后重开 store 仍在。
+        for choice in SettingsAppearanceChoice.allCases {
+            state.store.preferences.appearance = choice.storedValue
+            try state.store.save()
+            let reopenedHost = makeHost()
+            await pause()
+            reopenedHost.layoutSubtreeIfNeeded()
+            let reopened = popups(reopenedHost)
+            try check(reopened.count == 2, "theme echo page lost a picker")
+            try check(reopened[0].titleOfSelectedItem == choice.title,
+                      "theme picker does not echo \(choice.storedValue): \(String(describing: reopened[0].titleOfSelectedItem))")
+            if choice == .dark {
+                try writePNG(reopenedHost.window?.contentView?.superview ?? reopenedHost,
+                             name: "z3b-\(language)-general-theme-dark-echo", out: out)
+            }
+            close(reopenedHost)
+            let reread = try ClipboardStore(directoryURL: state.store.directoryURL)
+            try check(reread.preferences.appearance == choice.storedValue,
+                      "theme \(choice.storedValue) did not survive reopening the store")
+        }
+        state.store.preferences.appearance = originalAppearance
+        try state.store.save()
+
+        // 3) 语言即时刷新：写键 + 发通知（生产 `apply()` 的同一条路径），
+        //    已经渲染的页面必须按新语言重算文案，并持久化到重启也能读到的键上。
+        let target: SettingsAppLanguageChoice = SettingsCopy.language == .zhHant ? .en : .zhHant
+        target.apply()
+        await pause()
+        host.layoutSubtreeIfNeeded()
+        try check(treeHasText(host, SettingsCopy.text("settings.general.appearance-section.title")),
+                  "the open page did not refresh to \(target.rawValue): \(SettingsCopy.text("settings.general.appearance-section.title"))")
+        try check(SettingsSection.general.title == (target == .en ? "General" : "一般"),
+                  "section titles did not refresh to \(target.rawValue): \(SettingsSection.general.title)")
+        try check(UserDefaults.standard.string(forKey: SettingsLanguage.preferenceKey) == target.storedValue,
+                  "changing the language did not persist appLanguage = \(target.storedValue ?? "nil")")
+        let refreshed = popups(host)
+        try check(refreshed.count == 2 && refreshed[1].titleOfSelectedItem == target.title,
+                  "language picker does not echo \(target.rawValue): \(refreshed.map { $0.titleOfSelectedItem ?? "?" })")
+        if let themeFrame = host.window?.contentView?.superview,
+           let nativeTitle = descendants(themeFrame, of: NSTextField.self)
+            .first(where: { $0.accessibilityIdentifier() == "BlinkClipSettingsPaneTitle" }) {
+            try check(nativeTitle.stringValue == SettingsSection.general.title,
+                      "toolbar title did not follow the language change: \(nativeTitle.stringValue)")
+        } else {
+            throw Failure(message: "settings page lost its native toolbar title")
+        }
+        try writePNG(host.window?.contentView?.superview ?? host,
+                     name: "z3b-\(language)-general-language-\(target.rawValue)", out: out)
+        // 「跟随系统」= 删键，页面回到进程语言。
+        SettingsAppLanguageChoice.system.apply()
+        await pause()
+        try check(UserDefaults.standard.object(forKey: SettingsLanguage.preferenceKey) == nil,
+                  "choosing 跟随系统 did not remove the appLanguage key")
+        try check(SettingsCopy.language == (language == "zh-Hant" ? .zhHant : language == "zh-Hans" ? .zhHans : .en),
+                  "after 跟随系统 the page does not resolve the process language: \(SettingsCopy.language.rawValue)")
+        try check(popups(host).count == 2 && popups(host)[1].titleOfSelectedItem == SettingsAppLanguageChoice.system.title,
+                  "language picker does not echo 跟随系统 after removing the key")
+        // 写工具本身：scratch 域里写入 / 删除，并发出同名的通知。
+        let scratchName = "z3b-appearance-language-\(UUID().uuidString)"
+        let scratch = UserDefaults(suiteName: scratchName)!
+        defer { scratch.removePersistentDomain(forName: scratchName) }
+        let center = NotificationCenter()
+        var posted = 0
+        let token = center.addObserver(forName: .appLanguageDidChange, object: nil, queue: nil) { _ in posted += 1 }
+        defer { center.removeObserver(token) }
+        try check(SettingsAppLanguageChoice.current(defaults: scratch) == .system, "an empty suite is not 跟随系统")
+        SettingsAppLanguageChoice.zhHant.apply(defaults: scratch, notificationCenter: center)
+        try check(scratch.string(forKey: SettingsLanguage.preferenceKey) == "zh-Hant"
+                  && SettingsAppLanguageChoice.current(defaults: scratch) == .zhHant,
+                  "保存 繁體中文 did not write appLanguage = zh-Hant")
+        SettingsAppLanguageChoice.zhHans.apply(defaults: scratch, notificationCenter: center)
+        try check(SettingsAppLanguageChoice.current(defaults: scratch) == .zhHans, "保存 简体中文 did not round-trip")
+        SettingsAppLanguageChoice.en.apply(defaults: scratch, notificationCenter: center)
+        try check(SettingsAppLanguageChoice.current(defaults: scratch) == .en, "保存 English did not round-trip")
+        SettingsAppLanguageChoice.system.apply(defaults: scratch, notificationCenter: center)
+        try check(scratch.string(forKey: SettingsLanguage.preferenceKey) == nil
+                  && SettingsAppLanguageChoice.current(defaults: scratch) == .system,
+                  "跟随系统 did not删除 the appLanguage key")
+        try check(posted == 4, "语言写入没有每次都发出 appLanguageDidChange: \(posted)")
+        // 不认识的存量值（例如设置页没有表的 ja）显示「跟随系统」，但不回写。
+        scratch.set("ja", forKey: SettingsLanguage.preferenceKey)
+        try check(SettingsAppLanguageChoice.current(defaults: scratch) == .system,
+                  "an unsupported stored language is not shown as 跟随系统")
+        try check(scratch.string(forKey: SettingsLanguage.preferenceKey) == "ja",
+                  "opening the page rewrote the stored language")
+        print("appearance-language: \(measured.count) rows, theme \(originalAppearance) restored, language key restored")
+    }
+
+    /// 页面上某段文字（任一无障碍取值）的帧，用于量分组标题的相对顺序。
+    @MainActor static func accessibleTextFrame(_ host: NSView, text: String) -> NSRect? {
+        func values(_ node: NSObject) -> [String] {
+            var result: [String] = []
+            for attribute in [NSAccessibility.Attribute.value, .title, .description] {
+                if let value = node.accessibilityAttributeValue(attribute) as? String { result.append(value) }
+            }
+            for name in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+                let selector = NSSelectorFromString(name)
+                if node.responds(to: selector),
+                   let value = node.perform(selector)?.takeUnretainedValue() as? String { result.append(value) }
+            }
+            return result
+        }
+        return accessibilityTree(host).filter { values($0).contains(text) }
+            .map { axFrame($0) }.filter { $0.width > 2 && $0.height > 2 }
+            .max(by: { $0.width < $1.width })
     }
 
     // MARK: - P7「自动检查更新」
@@ -1697,6 +1991,7 @@ import BlinkClipCapture
         try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.screenshot.title, "reopen preserves title and delegate")
         navigationWindow.orderOut(nil); navigationWindow.contentView = nil; navigationWindow.close()
         if runID == "1" {
+            try await verifyAppearanceLanguageRows(state: state, model: model, out: out, language: language)
             try await verifyAutomaticUpdateToggle(state: state, model: model, out: out, language: language)
             try await verifyRefreshFeedback(state: state, out: out, language: language)
             try await verifyDangerFooter(state: state, out: out, language: language)

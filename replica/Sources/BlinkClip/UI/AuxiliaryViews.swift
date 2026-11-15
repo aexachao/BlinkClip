@@ -323,6 +323,9 @@ struct ReplicaSettingsView: View {
     // （`SUEnableAutomaticChecks` / `SPUUpdater.automaticallyChecksForUpdates`），
     // 所以重开设置窗、重启应用都保持同值，不另存一份偏好。
     @State private var automaticUpdates = BlinkClipInAppUpdater.automaticallyChecksForUpdates
+    // 「外观与语言 → 语言」：`appLanguage` 键不在 store 里（属于应用级偏好），
+    // 用这份 @State 做即时回显；换语言后重读存储，顺便让整页按新语言重算文案。
+    @State private var languageChoice = SettingsAppLanguageChoice.current()
 
     init(state: ReplicaUIState, initialTab: Int = 0, permissionModel: PermissionStatusModel? = nil,
          aboutModel: BlinkClipAboutModel? = nil) {
@@ -352,6 +355,16 @@ struct ReplicaSettingsView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: BlinkClipScreenshotSettings.registrationDidChange)) { _ in
                 screenshotHotKeyRegistrations = BlinkClipScreenshotSettings.lastRegistration
+            }
+            // 设置页文案不是绑定值：`SettingsCopy.text` 每次求值都按当前语言取表，
+            // 换语言后必须让根视图重算一次才会刷新（侧栏、分区标题、工具栏标题都在
+            // 同一次 body 求值里重排）。这里回读存储写进 `@State`，既校准选择器回显，
+            // 也把整个设置页重新渲染一遍。
+            .onReceive(NotificationCenter.default.publisher(for: .appLanguageDidChange)) { _ in
+                languageChoice = SettingsAppLanguageChoice.current()
+                // 工具栏里的分区标题由 SwiftUI 重算；窗口自己的 title 只在建窗时
+                // 写过一次，这里跟着换，窗口菜单与读屏也不会留在旧语言。
+                state.controller?.refreshSettingsWindowTitle()
             }
     }
 
@@ -533,12 +546,13 @@ struct ReplicaSettingsView: View {
         state.perform { try state.store.save() }
     }
 
-    /// 通用页：按职责拆成三组小标题卡片，与剪贴板等页的
+    /// 通用页：按职责拆成四组小标题卡片，与剪贴板等页的
     /// `settingsSectionTitle` + `settingsCard` 模式一致。
     ///
-    /// 「启动与运行」是应用生命周期，「同步与更新」是后台数据与网络行为，
-    /// 「声音」是纯本地反馈：一张卡最多两项，超过就分组，避免单卡里塞五种
-    /// 不同性质的行为。组内保留分隔线，组间只用 20pt 间距，不再加 Divider。
+    /// 「启动与运行」是应用生命周期，「外观与语言」是界面本身的样子，
+    /// 「同步与更新」是后台数据与网络行为，「声音」是纯本地反馈：一张卡最多两项，
+    /// 超过就分组，避免单卡里塞五种不同性质的行为。组内保留分隔线，组间只用
+    /// 20pt 间距，不再加 Divider。
     private var general: some View {
         SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
@@ -556,6 +570,14 @@ struct ReplicaSettingsView: View {
                                        }),
                                        identifier: "settings.run-in-background.toggle")
                         .onReceive(BackgroundService.enabledChanges) { backgroundEnabled = $0 }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(SettingsCopy.text("settings.general.appearance-section.title"))
+                    settingsCard {
+                        appearanceThemeRow
+                        Divider()
+                        appearanceLanguageRow
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -584,6 +606,79 @@ struct ReplicaSettingsView: View {
                 }
             }
         }
+    }
+
+    /// 「主题」行：写既有 `preferences.appearance`，立刻落盘并立刻应用。
+    ///
+    /// `WindowAppearancePreferenceObservation` 监听 store 的变化，但它把 UI 工作推到
+    /// 下一轮 runloop；这里在写完偏好后直接调一次同一份 `applyAppearance()`，用户
+    /// 点完选择器就能看到设置窗、底部面板和编辑器一起换外观。重启后由同一份偏好恢复。
+    private var appearanceThemeRow: some View {
+        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
+                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
+            Text(SettingsCopy.text("settings.appearance.theme.title"))
+            Text(SettingsCopy.text("settings.appearance.theme.subtitle"))
+                .font(.caption).settingsSecondaryText()
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.appearance.theme.subtitle")
+        } trailing: {
+            Picker(SettingsCopy.text("settings.appearance.theme.title"),
+                   selection: appearanceChoiceBinding) {
+                ForEach(SettingsAppearanceChoice.allCases, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            // `.menu` 而不是 `.segmented`：这一行右侧要和开关行同一个位置，
+            // 且三档名字在 440pt 内容列里排成菜单更省地方（与截图页的写法一致）。
+            // `.small` 与卡片里的 `.mini` 开关是同一套视觉尺寸：默认尺寸的菜单
+            // 按钮放在 13pt 正文旁边显得偏大。
+            .pickerStyle(.menu).labelsHidden().controlSize(.small).fixedSize()
+            .accessibilityIdentifier("settings.appearance.theme.picker")
+        }
+    }
+
+    /// 「语言」行：写 `appLanguage` 键（跟随系统 = 删键）并发 `.appLanguageDidChange`。
+    ///
+    /// 设置页自己的文案要跟着换，所以这一行还必须让根视图重算（见 `body` 里的
+    /// `.onReceive`）；语言名按自称显示，不随界面语言翻译。
+    private var appearanceLanguageRow: some View {
+        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
+                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
+            Text(SettingsCopy.text("settings.appearance.language.title"))
+            Text(SettingsCopy.text("settings.appearance.language.subtitle"))
+                .font(.caption).settingsSecondaryText()
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.appearance.language.subtitle")
+        } trailing: {
+            Picker(SettingsCopy.text("settings.appearance.language.title"),
+                   selection: languageChoiceBinding) {
+                ForEach(SettingsAppLanguageChoice.allCases, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            .pickerStyle(.menu).labelsHidden().controlSize(.small).fixedSize()
+            .accessibilityIdentifier("settings.appearance.language.picker")
+        }
+    }
+
+    /// 主题选择：store 里存的是字符串，选择器按选项枚举回显。
+    private var appearanceChoiceBinding: Binding<SettingsAppearanceChoice> {
+        Binding(get: { SettingsAppearanceChoice(stored: state.store.preferences.appearance) },
+                set: { choice in
+                    guard state.store.preferences.appearance != choice.storedValue else { return }
+                    state.store.preferences.appearance = choice.storedValue
+                    state.perform { try state.store.save() }
+                    state.controller?.applyAppearance()
+                })
+    }
+
+    private var languageChoiceBinding: Binding<SettingsAppLanguageChoice> {
+        Binding(get: { languageChoice }, set: { choice in
+            languageChoice = choice
+            // 存储值没变也照发一次：`apply()` 会把「跟随系统」落实成删键，
+            // 并把已经打开的设置页刷新一遍。
+            choice.apply()
+        })
     }
 
     /// 「自动检查更新」：打开写入 Sparkle 自己的 `SUEnableAutomaticChecks`

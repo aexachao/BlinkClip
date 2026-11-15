@@ -101,10 +101,20 @@ enum SettingsCopy {
         "general.help-center": ("帮助与指南", "說明與指南", "Help & Guides"),
         "replica.settings.privacy.saved-link-preview.title": ("已保存的预览图", "已儲存的預覽圖", "Saved Preview Images"),
         "replica.settings.privacy.saved-link-preview.subtitle": ("显示记录中已经保存的链接预览。", "顯示記錄中已經儲存的連結預覽。", "Display link previews already stored with your items."),
-        // 通用页按职责拆成三组：启动与运行 / 同步与更新 / 声音。
+        // 通用页按职责拆成四组：启动与运行 / 外观与语言 / 同步与更新 / 声音。
         "settings.general.startup-section.title": ("启动与运行", "啟動與執行", "Startup & Running"),
+        "settings.general.appearance-section.title": ("外观与语言", "外觀與語言", "Appearance & Language"),
         "settings.general.sync-section.title": ("同步与更新", "同步與更新", "Sync & Updates"),
         "settings.general.sound-section.title": ("声音", "聲音", "Sound"),
+        // 外观与语言：主题写 `preferences.appearance`，语言写 `appLanguage`；两行都
+        // 写明行为（跟随时随系统变、界面语言不含系统弹窗），避免选项名被当成全部。
+        "settings.appearance.theme.title": ("主题", "主題", "Theme"),
+        "settings.appearance.theme.subtitle": ("选「跟随系统」时随 macOS 外观切换。", "選「跟隨系統」時隨 macOS 外觀切換。", "“Follow System” tracks the macOS appearance."),
+        "settings.appearance.theme.light": ("浅色", "淺色", "Light"),
+        "settings.appearance.theme.dark": ("深色", "深色", "Dark"),
+        "settings.appearance.language.title": ("语言", "語言", "Language"),
+        "settings.appearance.language.subtitle": ("界面语言；部分系统弹窗仍跟随系统语言。", "介面語言；部分系統對話框仍跟隨系統語言。", "Interface language. Some system dialogs still follow the system language."),
+        "settings.appearance.follow-system": ("跟随系统", "跟隨系統", "Follow System"),
         "settings.open-at-login.title": ("登录时启动", "登入時啟動", "Launch at Login"),
         "settings.privacy.screensharing.title": ("共享屏幕时显示闪贴", "共享螢幕時顯示閃貼", "Show BlinkClip While Sharing Screen"),
         "settings.privacy.screensharing.subtitle": ("面板打开时，允许共享屏幕的观看者看到闪贴面板。", "面板開啟時，允許共享螢幕的觀看者看到閃貼面板。", "Let shared-screen viewers see the BlinkClip panel when it is open."),

@@ -1384,6 +1384,15 @@ final class ReplicaUIController {
         show(settingsWindow!)
     }
 
+    /// 语言变更后把设置窗口自己的 title 换成当前语言。
+    ///
+    /// 工具栏里的分区标题由 `SettingsSplitView` 每次 body 求值重写；`NSWindow.title`
+    /// 只在建窗时写一次（标题栏隐藏，但窗口菜单与读屏仍会读到它），语言切换后
+    /// 需要显式更新。
+    func refreshSettingsWindowTitle() {
+        settingsWindow?.title = ScreenshotSettingsCopy.text(.settingsWindowTitle)
+    }
+
     /// 换掉设置窗口的根视图（深链专用）。窗口的尺寸、样式和工具栏都留在窗口上，不受影响。
     private func installSettingsContent(initialTab: Int) {
         settingsWindow?.contentView =
@@ -2062,7 +2071,12 @@ final class ReplicaUIController {
                              width: frame.width, height: height), display: true)
     }
 
-    private func applyAppearance() {
+    /// 把 `preferences.appearance` 应用到所有已打开的窗口。
+    ///
+    /// 常规路径是 `WindowAppearancePreferenceObservation` 在下一轮 runloop 调这里；
+    /// 「通用 → 外观与语言 → 主题」在选择器写完偏好后**直接**调一次，让设置窗、底部
+    /// 面板和编辑器当场跟着换，不用等一轮。两条路径结果相同（同一份偏好、同一个实现）。
+    func applyAppearance() {
         let appearance: NSAppearance?
         switch store.preferences.appearance {
         case "light": appearance = NSAppearance(named: .aqua)

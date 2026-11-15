@@ -56,6 +56,18 @@ surface = (ui / 'SettingsSurfaceStyle.swift').read_text()
 retention = (ui / 'HistoryCapacityControl.swift').read_text()
 permission = (ui / 'PermissionStatusView.swift').read_text()
 harness = (root / 'Tests/Native/SettingsArchitectureHarness.swift').read_text()
+# Z3b：通用页四组的先后，以及外观与语言组内部的两行顺序。
+general_slice = aux[aux.index('private var general: some View'):aux.index('/// 「自动检查更新」')]
+startup_at = general_slice.index('settings.general.startup-section.title')
+appearance_at = general_slice.index('settings.general.appearance-section.title')
+sync_at = general_slice.index('settings.general.sync-section.title')
+sound_at = general_slice.index('settings.general.sound-section.title')
+general_order_ok = startup_at < appearance_at < sync_at < sound_at and (
+    appearance_at
+    < general_slice.index('appearanceThemeRow')
+    < general_slice.index('appearanceLanguageRow')
+    < sync_at
+)
 checks = {
     # 1) 浅色卡片层级：只允许语义层，不再用 primary.opacity 压暗浅色卡片。
     'card-layer-is-semantic': 'Color.primary.opacity(0.035)' not in aux,
@@ -184,24 +196,83 @@ checks = {
     'card-block-padding-declared': 'enum SettingsCardBlock' in aux
                                    and aux.count('SettingsCardBlock.') >= 5
                                    and 'SettingsCardBlock.tilesTop' in aux,
+    # Z3b：说明文字卡（外观与语言）按 1.5pt 的已知降部差异逐卡点名，
+    # 七张严格卡的 0.5pt 口径不变。
     'card-centring-is-asserted': 'cardCentring' in harness
                                  and 'assertCardCentring(appearance: appearance)' in harness
-                                 and 'delta <= 0.5' in harness,
+                                 and 'delta <= 0.5' in harness
+                                 and 'cardCentringCaptionLimit' in harness
+                                 and '(.general, 1)' in harness
+                                 and 'try check(delta <= 1.5' in harness,
     'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1
                                            and aux.count('settingsRowSwitch(title:') >= 3,
     'no-row-vertical-padding-hack': '.padding(.top, 1).padding(.bottom' not in aux
                                     and '.offset(y:' not in aux,
-    # 8) 通用页按职责拆成「启动与运行 / 同步与更新 / 声音」三组小标题卡片。
-    'general-splits-into-three-groups': aux.count('settings.general.startup-section.title') == 1
-                                        and aux.count('settings.general.sync-section.title') == 1
-                                        and aux.count('settings.general.sound-section.title') == 1,
+    # 8) 通用页按职责拆成「启动与运行 / 外观与语言 / 同步与更新 / 声音」四组小标题卡片。
+    'general-splits-into-four-groups': aux.count('settings.general.startup-section.title') == 1
+                                       and aux.count('settings.general.appearance-section.title') == 1
+                                       and aux.count('settings.general.sync-section.title') == 1
+                                       and aux.count('settings.general.sound-section.title') == 1,
     'general-groups-keep-divider-only-inside-a-card': aux[
-        aux.index('private var general: some View'):aux.index('/// 「自动检查更新」')].count('Divider()') == 2,
+        aux.index('private var general: some View'):aux.index('/// 「自动检查更新」')].count('Divider()') == 3,
     'general-groups-are-trilingual': all(
         f'"{key}": (' in (ui / 'SettingsCopy.swift').read_text()
         for key in ('settings.general.startup-section.title',
+                    'settings.general.appearance-section.title',
                     'settings.general.sync-section.title',
                     'settings.general.sound-section.title')),
+    # Z3b：外观与语言组在「启动与运行」之后、「同步与更新」之前（同一页里的先后）。
+    'appearance-section-between-startup-and-sync': general_order_ok,
+    # Z3b：两行都走同一个 `settingsRow`，控件是菜单 Picker（不是自绘控件）。
+    'appearance-rows-use-the-one-row-helper': aux.count('settingsRow(topPadding: SettingsRowMetrics.twoLineTop,') >= 3
+                                               and 'appearanceThemeRow' in aux
+                                               and 'appearanceLanguageRow' in aux
+                                               and aux.count(".pickerStyle(.menu).labelsHidden().controlSize(.small).fixedSize()") == 2
+                                               and aux.count('accessibilityIdentifier("settings.appearance.theme.picker")') == 1
+                                               and aux.count('accessibilityIdentifier("settings.appearance.language.picker")') == 1,
+    # Z3b：主题写既有 `preferences.appearance` → 落盘 → 立刻跑同一份 `applyAppearance()`。
+    'theme-writes-existing-preference': 'SettingsAppearanceChoice(stored: state.store.preferences.appearance)' in aux
+                                        and 'state.store.preferences.appearance = choice.storedValue' in aux
+                                        and 'state.perform { try state.store.save() }' in aux
+                                        and 'state.controller?.applyAppearance()' in aux
+                                        and 'func applyAppearance()' in (ui / 'ReplicaUIController.swift').read_text(),
+    'theme-options-match-store-values': all(f'case {name}' in (ui / 'SettingsAppearanceLanguage.swift').read_text()
+                                            for name in ('system', 'light', 'dark'))
+                                         and 'var storedValue: String { rawValue }' in (ui / 'SettingsAppearanceLanguage.swift').read_text(),
+    # Z3b：语言写 `appLanguage`（跟随系统 = 删键）并发 `.languageDidChange` 同名通知；
+    #      设置页自己重算（`SettingsCopy.text` 不是绑定值），语言名按自称。
+    'language-writes-appLanguage-and-notifies': all(marker in (ui / 'SettingsAppearanceLanguage.swift').read_text()
+                                                    for marker in ('SettingsLanguage.preferenceKey',
+                                                                   'defaults.set(value, forKey: SettingsLanguage.preferenceKey)',
+                                                                   'defaults.removeObject(forKey: SettingsLanguage.preferenceKey)',
+                                                                   'post(name: .appLanguageDidChange',
+                                                                   'Notification.Name("blinkclip.languageDidChange")'))
+                                                 and 'case zhHans' in (ui / 'SettingsAppearanceLanguage.swift').read_text()
+                                                 and 'return "zh"' in (ui / 'SettingsAppearanceLanguage.swift').read_text()
+                                                 and 'return "zh-Hant"' in (ui / 'SettingsAppearanceLanguage.swift').read_text(),
+    'language-names-are-self-named': all(f'return "{name}"' in (ui / 'SettingsAppearanceLanguage.swift').read_text()
+                                         for name in ('简体中文', '繁體中文', 'English')),
+    'settings-page-refreshes-on-language-change': '.onReceive(NotificationCenter.default.publisher(for: .appLanguageDidChange))'
+                                                  in aux
+                                                  and 'languageChoice = SettingsAppLanguageChoice.current()' in aux
+                                                  and 'languageChoice = choice' in aux
+                                                  and 'choice.apply()' in aux,
+    # Z3b：窗口自己的 title 只在建窗时写过一次，换语言后也要跟着换。
+    'language-switch-updates-window-title': 'state.controller?.refreshSettingsWindowTitle()' in aux
+                                            and 'settingsWindow?.title = ScreenshotSettingsCopy.text(.settingsWindowTitle)'
+                                            in (ui / 'ReplicaUIController.swift').read_text(),
+    'appearance-language-copy-is-trilingual': all(
+        f'"{key}": (' in (ui / 'SettingsCopy.swift').read_text()
+        for key in ('settings.appearance.theme.title',
+                    'settings.appearance.theme.subtitle',
+                    'settings.appearance.theme.light',
+                    'settings.appearance.theme.dark',
+                    'settings.appearance.language.title',
+                    'settings.appearance.language.subtitle',
+                    'settings.appearance.follow-system')),
+    'appearance-language-rows-are-asserted': 'verifyAppearanceLanguageRows' in harness
+                                             and '外观与语言 row \(row.title) picker centre' in harness
+                                             and 'appearance-section-between-startup-and-sync' in (root / 'scripts/test-settings-architecture.sh').read_text(),
 }
 failures = {name: value for name, value in checks.items() if not value}
 assert not failures, failures
