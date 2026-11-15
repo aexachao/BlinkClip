@@ -72,8 +72,10 @@ final class PanelShortcutMenuSurfaceView: NSView {
                     .size(withAttributes: [.font: titleFont]).width
                 let key = (item.keyEquivalentDisplay as NSString)
                     .size(withAttributes: [.font: keyFont]).width
+                // 带子菜单的父项在系统菜单里右侧有一个 ▸，这里同样留出位置。
+                let disclosure: CGFloat = item.submenu == nil ? 0 : 12
                 let needed = horizontalPadding + PanelShortcutMenuLayout.iconSide + iconTitleGap
-                    + title + titleKeyGap + key + horizontalPadding
+                    + title + titleKeyGap + key + disclosure + horizontalPadding
                 width = max(width, needed.rounded(.up))
             }
         }
@@ -135,6 +137,12 @@ final class PanelShortcutMenuSurfaceView: NSView {
         let title = NSAttributedString(string: item.title,
                                        attributes: [.font: Self.titleFont, .foregroundColor: color])
         title.draw(at: NSPoint(x: titleX, y: rowY + (Self.rowHeight - title.size().height) / 2))
+        if item.submenu != nil {
+            let chevron = NSAttributedString(string: "\u{25b8}",
+                                             attributes: [.font: Self.keyFont, .foregroundColor: secondary])
+            chevron.draw(at: NSPoint(x: bounds.width - Self.horizontalPadding - chevron.size().width,
+                                     y: rowY + (Self.rowHeight - chevron.size().height) / 2))
+        }
         guard !item.keyEquivalent.isEmpty else { return }
         let key = NSAttributedString(string: item.keyEquivalentDisplay,
                                      attributes: [.font: Self.keyFont, .foregroundColor: secondary])

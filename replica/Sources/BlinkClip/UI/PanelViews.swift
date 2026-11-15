@@ -994,50 +994,19 @@ private struct PanelMoreMenu: NSViewRepresentable {
     }
 
     @MainActor final class Coordinator: NSObject {
-        private var actions: [() -> Void] = []
-
-        @discardableResult private func add(_ title: String, symbol: String? = nil, key: String = "",
-                         to menu: NSMenu, action: @escaping () -> Void) -> NSMenuItem {
-            let item = NSMenuItem(title: title, action: #selector(invoke(_:)), keyEquivalent: key)
-            item.target = self
-            item.tag = actions.count
-            actions.append(action)
-            if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
-            menu.addItem(item)
-            return item
-        }
-
-        @objc private func invoke(_ item: NSMenuItem) { actions[item.tag]() }
-
+        /// 与状态栏右键菜单**同一份模型**（`PanelShortcutMenuModel`），只换变体：
+        /// 面板已经打开，所以不给「打开剪贴板」，也不带状态栏专属的诊断开关与
+        /// 全局热键注册失败提示；暂停变成带 15/30/60/180/480 分钟档位的子菜单，
+        /// 退出走 `PanelShortcutMenuQuitConfirmation` 二次确认。
+        ///
+        /// 动作仍挂在 `AppMain`（状态栏菜单的 target）上：两个入口共用同一套
+        /// `@objc` 方法，不再各写一份闭包。
         func makeMenu(state: ReplicaUIState) -> NSMenu {
-            actions.removeAll()
-            let menu = NSMenu()
-            menu.autoenablesItems = false
-            add("关于 \(ReplicaBrand.name)", symbol: "info.circle", to: menu) {
-                NSApp.sendAction(NSSelectorFromString("about:"), to: NSApp.delegate, from: nil)
-            }
-            menu.addItem(.separator())
-            add("新文本项", symbol: "square.and.pencil", key: "n", to: menu) { state.controller?.newTextItem() }
-            add("设置…", symbol: "gear", key: ",", to: menu) { state.controller?.showSettings() }
-            menu.addItem(.separator())
-            let pause = NSMenuItem(title: "暂停 \(ReplicaBrand.name)", action: nil, keyEquivalent: "")
-            pause.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: nil)
-            let submenu = NSMenu()
-            submenu.autoenablesItems = false
-            if state.store.preferences.isMonitoringPaused {
-                add("继续 \(ReplicaBrand.name)", to: submenu) { state.resumeMonitoring() }
-            } else {
-                add("暂停", to: submenu) { state.pauseMonitoring() }
-                for minutes in [15, 30, 60, 180, 480] {
-                    add(minutes < 60 ? "暂停 \(minutes)分钟" : "暂停 \(minutes / 60)小时", to: submenu) {
-                        state.pauseMonitoring(minutes: minutes)
-                    }
-                }
-            }
-            pause.submenu = submenu
-            menu.addItem(pause)
-            add("退出 \(ReplicaBrand.name)", symbol: "xmark.square", key: "q", to: menu) { NSApp.terminate(nil) }
-            return menu
+            let context = PanelShortcutMenuContext(
+                variant: .panelOverflow,
+                productName: ReplicaBrand.name,
+                isMonitoringPaused: state.store.preferences.isMonitoringPaused)
+            return PanelShortcutMenuBuilder.makeMenu(context, target: NSApp.delegate as AnyObject?)
         }
     }
 }

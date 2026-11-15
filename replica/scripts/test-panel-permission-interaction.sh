@@ -51,6 +51,7 @@ binary_root="$(swift build --package-path "$replica_root" --scratch-path "$test_
 test_with_capture=1
 compile_native_test_harness panel-permission-qa \
   "$replica_root/Sources/BlinkClip/UI/"*.swift \
+  "$replica_root/Sources/BlinkClip/PanelShortcutMenu.swift" \
   "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" \
   "$replica_root/Sources/BlinkClip/SourceAppColor.swift" \
   "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" \

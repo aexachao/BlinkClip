@@ -1,12 +1,20 @@
 import AppKit
 
-/// 底部快捷菜单（状态栏图标右键弹出）的模型、`NSMenu` 构建与退出二次确认。
+/// 快捷菜单的模型、`NSMenu` 构建与退出二次确认。
 ///
-/// 结构在这里是**纯数据**：`PanelShortcutMenuModel.groups(_:)` 只回答「哪些分组、
-/// 每组哪些项、什么标题/图标/动作」，`PanelShortcutMenuBuilder` 才把它贴到
-/// `NSMenu` 上。这样离屏 harness（`Tests/Native/PanelShortcutMenuHarness.swift`）
-/// 可以直接枚举分组、检查图标与动作、驱动退出确认，不必启动整个 App，
-/// 也不必真的把菜单弹出来。
+/// 同一套结构服务两个入口，差异只有**数据**（`PanelShortcutMenuVariant`）：
+/// - `.statusItem`：状态栏图标右键（`AppMain.statusClicked`）；
+/// - `.panelOverflow`：面板工具栏最右边的 `⋯`（`PanelViews.PanelMoreMenu`）。
+///
+/// 两者都经由 `PanelShortcutMenuModel.groups(_:)` 出分组、`PanelShortcutMenuBuilder`
+/// 贴成 `NSMenu`，动作共用 `PanelShortcutMenuAction` 的 selector 名与同一个
+/// target（`AppMain` 的 `@objc` 方法），所以不会出现「状态栏有检查更新、面板没有」
+/// 这种两份实现走样。
+///
+/// 结构在这里是**纯数据**：`groups(_:)` 只回答「哪些分组、每组哪些项、
+/// 什么标题/图标/动作」，`PanelShortcutMenuBuilder` 才把它贴到 `NSMenu` 上。
+/// 这样离屏 harness（`Tests/Native/PanelShortcutMenuHarness.swift`）可以直接枚举
+/// 分组、检查图标与动作、驱动退出确认，不必启动整个 App，也不必真的把菜单弹出来。
 ///
 /// 图标统一走 SF Symbol：`NSImage(systemSymbolName:accessibilityDescription:)`
 /// 拿到的模板图由系统按菜单背景着色，深色 / 浅色外观共用一套资源，不需要
@@ -14,6 +22,16 @@ import AppKit
 enum PanelShortcutMenuLayout {
     /// 每行图标统一成同一个 16×16 盒子，各行标题才会对齐。
     static let iconSide: CGFloat = 16
+}
+
+// MARK: - 两个入口的差异
+
+/// 菜单放在哪里。两个变体共用同一台模型 / 构建器，只换数据：
+/// 面板场景下剪贴板面板本来就开着，所以不给「打开剪贴板」；面板也没有状态栏
+/// 专属的诊断开关与全局热键注册失败提示。
+enum PanelShortcutMenuVariant: String, CaseIterable {
+    case statusItem
+    case panelOverflow
 }
 
 // MARK: - 「帮助与关于」
@@ -37,7 +55,14 @@ enum PanelShortcutMenuEntryID: String, CaseIterable {
     case checkForUpdates
     case helpAndAbout
     case diagnostics
+    /// 状态栏变体的「暂停采集 / 继续采集」单项；面板变体里是带子菜单的父项。
     case pauseMonitoring
+    /// 面板变体子菜单里的「暂停」（不限时）。
+    case pauseIndefinitely
+    /// 面板变体子菜单里的「暂停 N 分钟 / N 小时」，具体分钟数在 `minutes` 上。
+    case pauseForMinutes
+    /// 面板变体子菜单里的「继续」。
+    case resumeMonitoring
     /// 历史快捷键注册失败的只读提示（只在失败时出现）。
     case hotKeyNotice
     /// Stack 快捷键注册失败的只读提示（只在失败时出现）。
@@ -46,7 +71,7 @@ enum PanelShortcutMenuEntryID: String, CaseIterable {
 }
 
 /// 菜单项要调的动作。`rawValue` 就是 `AppMain` 里 `@objc` 方法的 selector 名，
-/// 构建器直接用 `Selector(rawValue)`，避免第二份映射表走样。
+/// 构建器直接用它，避免第二份映射表走样。
 enum PanelShortcutMenuAction: String {
     case togglePanel = "togglePanel:"
     case newText = "newText:"
@@ -54,23 +79,39 @@ enum PanelShortcutMenuAction: String {
     case checkForUpdates = "checkForUpdates:"
     case openAbout = "openAbout:"
     case toggleDiagnostics = "toggleDiagnostics:"
+    /// 状态栏变体的「暂停采集 / 继续采集」：一个开关。
     case pause = "pause:"
+    /// 面板变体子菜单的「暂停」：暂停且不设定时恢复。
+    case pauseIndefinitely = "pauseIndefinitely:"
+    /// 面板变体子菜单的「暂停 N 分钟」：分钟数通过 `representedObject` 传。
+    case pauseForMinutes = "pauseForMinutes:"
+    /// 面板变体子菜单的「继续」。
+    case resumeMonitoring = "resumeMonitoring:"
     case confirmQuit = "confirmQuit:"
 
     var selector: Selector { Selector(rawValue) }
 }
 
+/// 子菜单（目前只有面板变体的「暂停」一条）。
+struct PanelShortcutMenuSubmenu: Equatable {
+    let items: [PanelShortcutMenuItem]
+}
+
 struct PanelShortcutMenuItem: Equatable {
     let id: PanelShortcutMenuEntryID
     let title: String
-    /// `nil` 表示只读提示行（快捷键注册失败），构建时置灰且没有动作。
+    /// `nil` 表示只读提示行（快捷键注册失败）或带子菜单的父项。
     let action: PanelShortcutMenuAction?
     /// SF Symbol 名。
     let symbol: String
     var keyEquivalent: String = ""
     var modifiers: NSEvent.ModifierFlags = [.command]
+    /// 有子菜单的项在 `NSMenuItem` 上挂 `submenu`，本体不执行动作。
+    var submenu: PanelShortcutMenuSubmenu? = nil
+    /// 带参数动作的载荷（「暂停 N 分钟」的分钟数），构建时写进 `representedObject`。
+    var minutes: Int? = nil
 
-    var isEnabled: Bool { action != nil }
+    var isEnabled: Bool { action != nil || submenu != nil }
 
     /// 菜单右侧显示的快捷键：标准顺序 ⌃⌥⇧⌘ + 键名。
     var keyEquivalentDisplay: String {
@@ -89,23 +130,28 @@ struct PanelShortcutMenuGroup: Equatable {
     let items: [PanelShortcutMenuItem]
 }
 
-/// 每次右键时现取的状态。菜单在 `statusClicked` 里**重建**，所以这里的值
-/// 永远是最新的（暂停 / 继续、诊断开关、快捷键注册失败）。
+/// 每次弹出时现取的状态。菜单在点击时**重建**，所以这里的值永远是最新的
+/// （暂停 / 继续、诊断开关、快捷键注册失败）。
 struct PanelShortcutMenuContext: Equatable {
+    /// 两个入口的差异全部落在数据上；缺省是状态栏右键菜单。
+    var variant: PanelShortcutMenuVariant
     var productName: String
     var isMonitoringPaused: Bool
     /// 「收集诊断日志」/「停止收集诊断日志」，取自 `PreviewLocalization`。
+    /// 只有状态栏变体用得到，面板变体不渲染诊断项。
     var diagnosticsTitle: String
-    /// 历史快捷键注册失败时的提示文案；正常时为 `nil`。
+    /// 历史快捷键注册失败时的提示文案；正常时为 `nil`。只有状态栏变体用得到。
     var hotKeyNotice: String?
-    /// Stack 快捷键注册失败时的提示文案；正常时为 `nil`。
+    /// Stack 快捷键注册失败时的提示文案；正常时为 `nil`。只有状态栏变体用得到。
     var stackHotKeyNotice: String?
 
-    init(productName: String,
+    init(variant: PanelShortcutMenuVariant = .statusItem,
+         productName: String,
          isMonitoringPaused: Bool,
-         diagnosticsTitle: String,
+         diagnosticsTitle: String = "",
          hotKeyNotice: String? = nil,
          stackHotKeyNotice: String? = nil) {
+        self.variant = variant
         self.productName = productName
         self.isMonitoringPaused = isMonitoringPaused
         self.diagnosticsTitle = diagnosticsTitle
@@ -115,10 +161,80 @@ struct PanelShortcutMenuContext: Equatable {
 }
 
 enum PanelShortcutMenuModel {
-    /// 四组，组间一条 `NSMenuItem.separator()`：
+    /// 状态栏变体固定四组，组间一条 `NSMenuItem.separator()`：
     /// 动作 / 应用 / 维护 / 退出。
+    ///
+    /// 面板变体同样是四组：动作（只有新建文本）/ 应用 / 维护（暂停子菜单）/ 退出。
+    /// 两个变体共用「应用」与「退出」两组，连标题、图标与快捷键都是同一份数据。
     static func groups(_ context: PanelShortcutMenuContext) -> [PanelShortcutMenuGroup] {
-        var maintenance = [
+        [
+            PanelShortcutMenuGroup(title: "动作", items: actionItems(context)),
+            PanelShortcutMenuGroup(title: "应用", items: applicationItems()),
+            maintenanceGroup(context),
+            PanelShortcutMenuGroup(title: "退出", items: [quitItem(context)])
+        ]
+    }
+
+    /// 面板变体「暂停」子菜单里可选的定时暂停分钟数（顺序即菜单顺序）。
+    static let pauseWindowMinutes = [15, 30, 60, 180, 480]
+
+    // MARK: 共用项
+
+    private static func actionItems(_ context: PanelShortcutMenuContext) -> [PanelShortcutMenuItem] {
+        var items: [PanelShortcutMenuItem] = []
+        // 状态栏才需要「打开剪贴板」：点状态栏图标时面板可能没开；
+        // 面板的 ⋯ 是从已经打开的面板上点出来的。
+        if context.variant == .statusItem {
+            items.append(PanelShortcutMenuItem(id: .openClipboard,
+                                               title: "打开剪贴板",
+                                               action: .togglePanel,
+                                               symbol: "rectangle.on.rectangle"))
+        }
+        items.append(PanelShortcutMenuItem(id: .newText,
+                                           title: "新建文本…",
+                                           action: .newText,
+                                           symbol: "square.and.pencil"))
+        return items
+    }
+
+    private static func applicationItems() -> [PanelShortcutMenuItem] {
+        [
+            PanelShortcutMenuItem(id: .settings,
+                                  title: "设置…",
+                                  action: .settings,
+                                  symbol: "gearshape",
+                                  keyEquivalent: ",",
+                                  modifiers: [.command]),
+            PanelShortcutMenuItem(id: .checkForUpdates,
+                                  title: "检查更新",
+                                  action: .checkForUpdates,
+                                  symbol: "arrow.triangle.2.circlepath"),
+            PanelShortcutMenuItem(id: .helpAndAbout,
+                                  title: "帮助与关于",
+                                  action: .openAbout,
+                                  symbol: "info.circle")
+        ]
+    }
+
+    private static func quitItem(_ context: PanelShortcutMenuContext) -> PanelShortcutMenuItem {
+        PanelShortcutMenuItem(id: .quit,
+                              title: "退出 \(context.productName)",
+                              action: .confirmQuit,
+                              symbol: "power")
+    }
+
+    // MARK: 维护组
+
+    private static func maintenanceGroup(_ context: PanelShortcutMenuContext) -> PanelShortcutMenuGroup {
+        switch context.variant {
+        case .statusItem: return statusMaintenanceGroup(context)
+        case .panelOverflow: return panelMaintenanceGroup(context)
+        }
+    }
+
+    /// 状态栏：诊断开关 + 「暂停采集 / 继续采集」单项 + 注册失败提示（恒为 4 组）。
+    private static func statusMaintenanceGroup(_ context: PanelShortcutMenuContext) -> PanelShortcutMenuGroup {
+        var items = [
             PanelShortcutMenuItem(id: .diagnostics,
                                   title: context.diagnosticsTitle,
                                   action: .toggleDiagnostics,
@@ -132,52 +248,61 @@ enum PanelShortcutMenuModel {
         // 注册失败的提示只是状态行，没有动作；放进「维护」组尾部，
         // 分组数量因此恒为 4，不会因为一次注册失败多出一块。
         if let notice = context.hotKeyNotice {
-            maintenance.append(PanelShortcutMenuItem(id: .hotKeyNotice,
-                                                     title: notice,
-                                                     action: nil,
-                                                     symbol: "exclamationmark.triangle"))
+            items.append(PanelShortcutMenuItem(id: .hotKeyNotice,
+                                               title: notice,
+                                               action: nil,
+                                               symbol: "exclamationmark.triangle"))
         }
         if let notice = context.stackHotKeyNotice {
-            maintenance.append(PanelShortcutMenuItem(id: .stackHotKeyNotice,
-                                                     title: notice,
-                                                     action: nil,
-                                                     symbol: "exclamationmark.triangle"))
+            items.append(PanelShortcutMenuItem(id: .stackHotKeyNotice,
+                                               title: notice,
+                                               action: nil,
+                                               symbol: "exclamationmark.triangle"))
         }
-        return [
-            PanelShortcutMenuGroup(title: "动作", items: [
-                PanelShortcutMenuItem(id: .openClipboard,
-                                      title: "打开剪贴板",
-                                      action: .togglePanel,
-                                      symbol: "rectangle.on.rectangle"),
-                PanelShortcutMenuItem(id: .newText,
-                                      title: "新建文本…",
-                                      action: .newText,
-                                      symbol: "square.and.pencil")
-            ]),
-            PanelShortcutMenuGroup(title: "应用", items: [
-                PanelShortcutMenuItem(id: .settings,
-                                      title: "设置…",
-                                      action: .settings,
-                                      symbol: "gearshape",
-                                      keyEquivalent: ",",
-                                      modifiers: [.command]),
-                PanelShortcutMenuItem(id: .checkForUpdates,
-                                      title: "检查更新",
-                                      action: .checkForUpdates,
-                                      symbol: "arrow.triangle.2.circlepath"),
-                PanelShortcutMenuItem(id: .helpAndAbout,
-                                      title: "帮助与关于",
-                                      action: .openAbout,
-                                      symbol: "info.circle")
-            ]),
-            PanelShortcutMenuGroup(title: "维护", items: maintenance),
-            PanelShortcutMenuGroup(title: "退出", items: [
-                PanelShortcutMenuItem(id: .quit,
-                                      title: "退出 \(context.productName)",
-                                      action: .confirmQuit,
-                                      symbol: "power")
+        return PanelShortcutMenuGroup(title: "维护", items: items)
+    }
+
+    /// 面板：只有一条带子菜单的「暂停 闪贴」。
+    ///
+    /// 子菜单里未暂停时是「暂停」+ 五档定时暂停；已暂停时只剩「继续 闪贴」。
+    /// 父项标题保持「暂停 闪贴」（它是这个开关的名字），状态由子菜单表达。
+    private static func panelMaintenanceGroup(_ context: PanelShortcutMenuContext) -> PanelShortcutMenuGroup {
+        PanelShortcutMenuGroup(title: "维护", items: [
+            PanelShortcutMenuItem(id: .pauseMonitoring,
+                                  title: "暂停 \(context.productName)",
+                                  action: nil,
+                                  symbol: "pause.circle",
+                                  submenu: pauseSubmenu(context))
+        ])
+    }
+
+    private static func pauseSubmenu(_ context: PanelShortcutMenuContext) -> PanelShortcutMenuSubmenu {
+        guard !context.isMonitoringPaused else {
+            return PanelShortcutMenuSubmenu(items: [
+                PanelShortcutMenuItem(id: .resumeMonitoring,
+                                      title: "继续 \(context.productName)",
+                                      action: .resumeMonitoring,
+                                      symbol: "play.circle")
             ])
+        }
+        var items = [
+            PanelShortcutMenuItem(id: .pauseIndefinitely,
+                                  title: "暂停",
+                                  action: .pauseIndefinitely,
+                                  symbol: "pause.circle")
         ]
+        items.append(contentsOf: pauseWindowMinutes.map { minutes in
+            PanelShortcutMenuItem(id: .pauseForMinutes,
+                                  title: pauseWindowTitle(minutes: minutes),
+                                  action: .pauseForMinutes,
+                                  symbol: "clock",
+                                  minutes: minutes)
+        })
+        return PanelShortcutMenuSubmenu(items: items)
+    }
+
+    static func pauseWindowTitle(minutes: Int) -> String {
+        minutes < 60 ? "暂停 \(minutes)分钟" : "暂停 \(minutes / 60)小时"
     }
 }
 
@@ -206,6 +331,14 @@ enum PanelShortcutMenuBuilder {
         // 提示行没有动作，但同样带图标，菜单的左侧图标列不会缺一格。
         item.image = icon(entry.symbol, accessibilityDescription: entry.title)
         item.isEnabled = entry.isEnabled
+        // 带参数的动作用 `representedObject` 传载荷（目前只有「暂停 N 分钟」）。
+        item.representedObject = entry.minutes
+        if let submenu = entry.submenu {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            for subentry in submenu.items { menu.addItem(makeItem(subentry, target: target)) }
+            item.submenu = menu
+        }
         return item
     }
 

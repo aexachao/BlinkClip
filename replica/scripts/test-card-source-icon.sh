@@ -11,7 +11,7 @@ test_root="$ARTIFACT_TASK_DIR/build/harness"; mkdir -p "$test_root"
 source "$replica_root/Tests/Native/build-support.sh"
 shasum -a 256 "$replica_root/Sources/BlinkClip/UI/PanelViews.swift" "$replica_root/Sources/BlinkClip/UI/CardSourceIconPresentation.swift" "$replica_root/Tests/Native/CardSourceIconHarness.swift" "$replica_root/scripts/test-card-source-icon.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 prepare_native_test_ui > "$ARTIFACT_TASK_DIR/out/build.log" 2>&1
-compile_native_test_harness card-source-icon "$replica_root/Sources/BlinkClip/UI/"*.swift "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" "$replica_root/Sources/BlinkClip/SourceAppColor.swift" "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" "$replica_root/Sources/BlinkClip/BackgroundService.swift" "$replica_root/Tests/Native/CardSourceIconHarness.swift" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
+compile_native_test_harness card-source-icon "$replica_root/Sources/BlinkClip/UI/"*.swift "$replica_root/Sources/BlinkClip/PanelShortcutMenu.swift" "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" "$replica_root/Sources/BlinkClip/SourceAppColor.swift" "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" "$replica_root/Sources/BlinkClip/BackgroundService.swift" "$replica_root/Tests/Native/CardSourceIconHarness.swift" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
 for ((run_id=1;run_id<=repeat_count;run_id++)); do
  run_out="$ARTIFACT_TASK_DIR/out/run-$run_id"; mkdir -p "$run_out"
  skip="${BLINKCLIP_SKIP_SCREENSHOTS:-0}"; if ((run_id>1)); then skip=1; fi

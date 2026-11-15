@@ -445,6 +445,21 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         NotificationCenter.default.post(name: .blinkClipOpenAbout, object: nil)
     }
 
+    /// 面板 ⋯ 菜单「暂停 闪贴 → 暂停」：暂停且不设定时恢复。
+    /// 与状态栏那个开关同一条路径（`ReplicaUIState.pauseMonitoring`），
+    /// 只是不做「已暂停就反转」的判断。
+    @objc private func pauseIndefinitely(_ sender: Any?) { ui.state.pauseMonitoring() }
+
+    /// 面板 ⋯ 菜单「暂停 闪贴 → 暂停 N 分钟 / N 小时」：分钟数由菜单项的
+    /// `representedObject` 带过来（模型里的 `minutes`）。
+    @objc private func pauseForMinutes(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int else { return }
+        ui.state.pauseMonitoring(minutes: minutes)
+    }
+
+    /// 面板 ⋯ 菜单「暂停 闪贴 → 继续 闪贴」。
+    @objc private func resumeMonitoring(_ sender: Any?) { ui.state.resumeMonitoring() }
+
     @objc private func about(_ sender: Any?) {
         ui?.hidePanel()
         aboutController.showWindow(sender)

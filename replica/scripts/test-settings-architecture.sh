@@ -17,7 +17,7 @@ shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$rep
 prepare_native_test_ui > "$ARTIFACT_TASK_DIR/out/build.log" 2>&1
 compile_native_test_harness shortcut-row-restore "$replica_root/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Tests/Native/ShortcutRowRestoreHarness.swift" > "$ARTIFACT_TASK_DIR/out/row-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/row-test.log"
-compile_native_test_harness settings-architecture "$replica_root/Sources/BlinkClip/UI/"*.swift "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" "$replica_root/Sources/BlinkClip/SourceAppColor.swift" "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" "$replica_root/Sources/BlinkClip/BackgroundService.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
+compile_native_test_harness settings-architecture "$replica_root/Sources/BlinkClip/UI/"*.swift "$replica_root/Sources/BlinkClip/PanelShortcutMenu.swift" "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" "$replica_root/Sources/BlinkClip/SourceAppColor.swift" "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" "$replica_root/Sources/BlinkClip/BackgroundService.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
 for ((run_id=1; run_id<=repeat_count; run_id++)); do
  run_out="$ARTIFACT_TASK_DIR/out/run-$run_id"
  mkdir -p "$run_out"

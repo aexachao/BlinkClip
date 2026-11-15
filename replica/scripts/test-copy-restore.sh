@@ -10,6 +10,7 @@ source "$replica_root/Tests/Native/build-support.sh"
 prepare_native_test_ui
 compile_native_test_harness copy-restore \
   "$replica_root/Sources/BlinkClip/UI/"*.swift \
+  "$replica_root/Sources/BlinkClip/PanelShortcutMenu.swift" \
   "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" \
   "$replica_root/Sources/BlinkClip/SourceAppColor.swift" \
   "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" \
