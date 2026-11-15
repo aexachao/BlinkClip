@@ -13,7 +13,7 @@ mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$ARTIFACT_TASK_DIR/out"
 test_root="$ARTIFACT_TASK_DIR/build/harness"
 mkdir -p "$test_root"
 source "$replica_root/Tests/Native/build-support.sh"
-shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
+shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipInAppUpdater.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 prepare_native_test_ui > "$ARTIFACT_TASK_DIR/out/build.log" 2>&1
 compile_native_test_harness shortcut-row-restore "$replica_root/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Tests/Native/ShortcutRowRestoreHarness.swift" > "$ARTIFACT_TASK_DIR/out/row-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/row-test.log"
@@ -64,9 +64,31 @@ checks = {
                               and 'static let tileSpacing: CGFloat = 10' in retention,
     'retention-single-width-formula': retention.count('gridColumns - 1) * Self.tileSpacing') == 1,
     'retention-no-count-3-row': 'index < 4 ? 0 : 1' not in retention and 'row == 0 ? 4 : 3' not in retention,
-    # 3) 六页统一 16pt 顶部节奏。
-    'six-pages-tighten-to-16': aux.count('.padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)') == 6,
+    # 3) 六页统一 16pt 顶部节奏 + P7 垂直居中规则：短页居中、长页顶对齐。
+    #    内边距只在 `SettingsPageMetrics` 写一次，六个分区共用同一个容器；
+    #    居中必须靠在「带内边距的内容块」外面加 minHeight 的 frame 实现，
+    #    长页因此拿不到任何额外高度（不会把长页也居中）。
+    'six-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 6,
+    'page-insets-defined-once': aux.count('horizontalInset: CGFloat = 20') == 1
+                                and aux.count('verticalInset: CGFloat = 16') == 1,
+    'centres-only-short-pages': 'padding(.vertical, SettingsPageMetrics.verticalInset)\n                    .frame(minHeight: proxy.size.height, alignment: .center)' in aux,
+    'no-page-content-max-height-centring': 'frame(maxHeight: .infinity, alignment: .center)' not in aux
+                                           and 'frame(minHeight: 0, alignment: .center)' not in aux,
+    'no-asymmetric-page-padding': '.padding(.top, 16).padding(.bottom, 20)' not in aux,
     'six-pages-no-8pt-top': '.padding(.top, 8).padding(.bottom, 20)' not in aux,
+    # P7：「自动检查更新」写在 iCloud 之后、提示音之前，且落到 Sparkle 自己的键上。
+    'auto-update-row-between-icloud-and-sound': aux.index('ICloudSyncGeneralRow(')
+                                                 < aux.index('settings.automatic-updates.toggle')
+                                                 < aux.index('settings.sound-effects.title'),
+    'auto-update-writes-sparkle-key': 'BlinkClipInAppUpdater.automaticallyChecksForUpdates' in aux
+                                      and 'controller.updater.automaticallyChecksForUpdates' in (ui / 'BlinkClipInAppUpdater.swift').read_text(),
+    'auto-update-copy-is-trilingual': 'settings.automatic-updates.title' in (ui / 'SettingsCopy.swift').read_text()
+                                      and 'settings.automatic-updates.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
+    # P7 关于窗：只剩「检查更新」一个按钮，Esc 由窗口的键盘等价物接住。
+    'about-has-no-close-button': 'closeButton' not in (ui / 'BlinkClipAboutWindowController.swift').read_text()
+                                 and 'updates.close' not in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
+    'about-esc-closes-window': 'override func performKeyEquivalent(with event: NSEvent) -> Bool' in (ui / 'BlinkClipAboutWindowController.swift').read_text()
+                               and 'override func cancelOperation(_ sender: Any?)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
     # 4) AI 页按钮进卡、说明与状态标题对齐、卡片底部同构分隔线。
     'ai-connect-inside-card': (mcp := aux[aux.index('private var mcp: some View'):aux.index('.sheet(isPresented: $showingMCPConfiguration)')])
                               .count('Divider().padding(.vertical, 8)') == 1

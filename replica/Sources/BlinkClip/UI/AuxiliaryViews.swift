@@ -339,6 +339,10 @@ struct ReplicaSettingsView: View {
     @State private var screenshotRegionShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .region)
     @State private var screenshotFullScreenShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .fullScreen)
     @State private var screenshotHotKeyRegistrations = BlinkClipScreenshotSettings.lastRegistration
+    // 「自动检查更新」：读的与写入的都是 Sparkle 自己那一个键
+    // （`SUEnableAutomaticChecks` / `SPUUpdater.automaticallyChecksForUpdates`），
+    // 所以重开设置窗、重启应用都保持同值，不另存一份偏好。
+    @State private var automaticUpdates = BlinkClipInAppUpdater.automaticallyChecksForUpdates
 
     init(state: ReplicaUIState, initialTab: Int = 0, permissionModel: PermissionStatusModel? = nil) {
         _state = ObservedObject(wrappedValue: state)
@@ -480,7 +484,8 @@ struct ReplicaSettingsView: View {
         .contentShape(Rectangle())
     }
 
-    private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+    private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>,
+                               identifier: String? = nil) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(SettingsCopy.text(title))
@@ -491,6 +496,7 @@ struct ReplicaSettingsView: View {
             Spacer()
             Toggle(SettingsCopy.text(title), isOn: isOn)
                 .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                .accessibilityIdentifierIfPresent(identifier)
         }
         .frame(minHeight: 42)
     }
@@ -524,7 +530,7 @@ struct ReplicaSettingsView: View {
     }
 
     private var general: some View {
-        ScrollView {
+        SettingsPageScroll {
             VStack(alignment: .leading, spacing: 32) {
                 settingsCard {
                     settingsSwitch(SettingsCopy.text("settings.open-at-login.title"), isOn: Binding(get: { state.store.preferences.launchAtLogin },
@@ -538,18 +544,37 @@ struct ReplicaSettingsView: View {
                     ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync)
                         .frame(minHeight: 30)
                     Divider()
+                    // 「自动检查更新」排在 iCloud 同步之后、「播放操作提示音」之前：
+                    // 前三条都是「这个应用做什么」，第四条是唯一一个会自己跑网络请求的
+                    // 后台行为，紧接着再回到纯本地的提示音，信息层级从「启动/常驻/同步」
+                    // 到「更新」再到「音效」是递进的。
+                    settingsToggle("settings.automatic-updates.title",
+                                   subtitle: "settings.automatic-updates.subtitle",
+                                   isOn: automaticUpdatesBinding,
+                                   identifier: "settings.automatic-updates.toggle")
+                    Divider()
                     // Same trilingual table as the rest of this pane: the Core
                     // bundle has no zh-Hant table, so String(localized:) would
                     // fall back to English for a Traditional reader.
                     settingsSwitch(SettingsCopy.text("settings.sound-effects.title"), isOn: preference(\.playSounds))
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
+    /// 「自动检查更新」：打开写入 Sparkle 自己的 `SUEnableAutomaticChecks`
+    /// （`SPUUpdater.automaticallyChecksForUpdates`），关掉写回 false；手动
+    /// 「检查更新」按钮永远可用，不经过这个开关。回显用 `@State`，不重开窗口也
+    /// 能立刻看到新状态。
+    private var automaticUpdatesBinding: Binding<Bool> {
+        Binding(get: { automaticUpdates }, set: { enabled in
+            automaticUpdates = enabled
+            BlinkClipInAppUpdater.automaticallyChecksForUpdates = enabled
+        })
+    }
+
     private var clipboard: some View {
-        ScrollView {
+        SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(SettingsCopy.text("settings.paste-items.title"))
@@ -593,7 +618,6 @@ struct ReplicaSettingsView: View {
                     state.controller?.clearHistory()
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -638,7 +662,7 @@ struct ReplicaSettingsView: View {
     ///
     /// 截图后行为和翻译开关；所有快捷键统一位于「键盘快捷键」分区。
     private var screenshot: some View {
-        ScrollView {
+        SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.postCaptureSectionTitle))
@@ -667,7 +691,6 @@ struct ReplicaSettingsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -895,7 +918,7 @@ struct ReplicaSettingsView: View {
     }
 
     private var privacy: some View {
-        ScrollView {
+        SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     // 刷新入口落在卡片标题行右侧：它作用于整张卡片（两条权限行 + 授权
@@ -962,12 +985,11 @@ struct ReplicaSettingsView: View {
                                       lineWidth: SettingsSurfaceStyle.borderWidth))
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
     private var shortcuts: some View {
-        ScrollView {
+        SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.applicationShortcutsTitle))
@@ -1028,7 +1050,6 @@ struct ReplicaSettingsView: View {
                                          identifier: "settings.reset-all-shortcuts") { resetShortcuts() }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
     }
 
@@ -1188,7 +1209,7 @@ struct ReplicaSettingsView: View {
 
     private var mcp: some View {
         let executable = FileManager.default.isExecutableFile(atPath: mcpExecutable.path)
-        return ScrollView {
+        return SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
                 settingsCard {
                     // 「正常/不正常」的图标语言与隐私页统一：同一个 7pt 状态圆点，
@@ -1222,7 +1243,6 @@ struct ReplicaSettingsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 20)
         }
         .sheet(isPresented: $showingMCPConfiguration) {
             VStack(alignment: .leading, spacing: 16) {
@@ -1287,6 +1307,42 @@ struct ReplicaSettingsView: View {
             try state.store.save()
         } catch { state.controller?.presentError(error) }
     }
+}
 
+private extension View {
+    /// 只有需要被测试或无障碍工具精确定位的行才带标识符；其余行保持原样。
+    @ViewBuilder func accessibilityIdentifierIfPresent(_ identifier: String?) -> some View {
+        if let identifier { accessibilityIdentifier(identifier) } else { self }
+    }
+}
 
+/// 设置内容区的内边距：六个分区共用一套节奏。
+///
+/// 上下取同一个值是有意的：内容不足一屏时内容块会被居中，多出来的留白平均分给
+/// 上下两边，`top: 16 / bottom: 20` 那种不对称的写法会让居中后的上下留白差出 4pt。
+enum SettingsPageMetrics {
+    static let horizontalInset: CGFloat = 20
+    static let verticalInset: CGFloat = 16
+}
+
+/// 设置内容区的滚动容器：内容不足一屏时垂直居中，超出一屏时从顶部开始并可滚动。
+///
+/// 居中的做法只有一句：把「带内边距的内容块」放进一个最小高度等于可视高度的
+/// `frame` 里。内容比可视区矮时，多出来的留白由 `.center` 平均分给上下两边，
+/// 两边留白相等；内容比可视区高时这个 `frame` 不产生任何额外高度，文档视图就是
+/// 内容本身的高度，布局与原来从 16pt 顶部起、可滚到底完全一致。
+struct SettingsPageScroll<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .padding(.horizontal, SettingsPageMetrics.horizontalInset)
+                    .padding(.vertical, SettingsPageMetrics.verticalInset)
+                    .frame(minHeight: proxy.size.height, alignment: .center)
+            }
+        }
+        .accessibilityIdentifier("settings.page-scroll")
+    }
 }

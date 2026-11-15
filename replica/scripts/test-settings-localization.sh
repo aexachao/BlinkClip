@@ -70,9 +70,10 @@ root, out = map(pathlib.Path, sys.argv[1:])
 languages = ['en', 'zh-Hans', 'zh-Hant']
 runs = {language: json.loads((out / f'{language}.json').read_text()) for language in languages}
 assert all(run['passed'] for run in runs.values()), {k: v['passed'] for k, v in runs.items()}
-# 每种语言至少 98 条检查：进程语言 + 语言判定 + 三语查表 + 6 个分区标题 +
-# 39 条设置文案 + 截图表的 copy-table/title/2 个无障碍标签/停用提示 + 32 条截图文案。
-assert all(len(run['cases']) >= 98 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
+# 每种语言至少 100 条检查：进程语言 + 语言判定 + 三语查表 + 6 个分区标题 +
+# 41 条设置文案（P7 新增「自动检查更新」标题与说明）+ 截图表的
+# copy-table/title/2 个无障碍标签/停用提示 + 32 条截图文案。
+assert all(len(run['cases']) >= 100 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
 
 def resolved(run):
     """32 条截图文案：resolved.<key>。"""
@@ -84,10 +85,10 @@ def values(run, prefixes):
 
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
-# 39 条设置文案 + 32 条截图文案，三语同键集。
-assert len(keys['en']) == 71, f'unexpected key count: {len(keys["en"])}'
+# 41 条设置文案 + 32 条截图文案，三语同键集。
+assert len(keys['en']) == 73, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
-    assert runs[language]['settingsKeyCount'] == 39, (language, runs[language]['settingsKeyCount'])
+    assert runs[language]['settingsKeyCount'] == 41, (language, runs[language]['settingsKeyCount'])
     assert runs[language]['screenshotKeyCount'] == 32, (language, runs[language]['screenshotKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
 assert resolved_cases['en'] == resolved_cases['zh-Hans'] == resolved_cases['zh-Hant'], 'resolved case set differs per language'
@@ -155,7 +156,7 @@ assert '截图' in sections['zh-Hans'].values(), sections['zh-Hans']
 
 # --- the whole settings table is Traditional under zh-Hant --------------------
 settings = {language: values(runs[language], ['settings.']) for language in languages}
-assert len(settings['zh-Hant']) == 39, len(settings['zh-Hant'])
+assert len(settings['zh-Hant']) == 41, len(settings['zh-Hant'])
 assert set(settings['zh-Hant']) == set(settings['zh-Hans']) == set(settings['en']), 'settings key sets differ'
 # 10 known Simplified/Traditional divergences: no Simplified-only spelling may
 # survive anywhere in the zh-Hant settings copy.
@@ -361,7 +362,7 @@ for name in SETTINGS_HELPERS + ['SettingsShortcutReset.swift']:
 used |= set(re.findall(r'aboutRowTitleKey\s*=\s*"([^"]+)"', by_name['AuxiliaryViews.swift'].read_text()))
 assert used == terms, ('settings keys outside the trilingual table', sorted(used - terms),
                        'unused terms', sorted(terms - used))
-assert len(terms) == 39, len(terms)
+assert len(terms) == 41, len(terms)
 
 # Inventory of the remaining blanket "any zh" branches outside the settings
 # copy: none of them is settings-page copy. AppBrand picks the Chinese app name,

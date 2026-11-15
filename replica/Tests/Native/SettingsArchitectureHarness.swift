@@ -100,13 +100,53 @@ import BlinkClipCapture
     }
     @MainActor static var firstElementOffsets: [String: CGFloat] = [:]
 
-    /// Per-page surface + geometry contract:
-    /// - the first content element starts at the same 16pt offset on all six pages;
+    /// Per-page surface + geometry contract (P7: short pages are vertically centred):
+    /// - a page whose content is shorter than the visible area is centred inside it:
+    ///   the gap above the first element equals the gap below the last one (<=2pt),
+    ///   and the document is exactly one viewport tall (nothing to scroll);
+    /// - a page whose content is taller than the visible area starts at the same
+    ///   16pt top offset it always had, really scrolls, and its last element is
+    ///   fully visible once scrolled to the bottom;
+    /// - `centredSections` / `topAlignedSections` pin the four pages the change is
+    ///   judged by, so a page silently growing or shrinking cannot reclassify
+    ///   itself and still pass;
     /// - the rendered card is brighter than the page margin in both appearances;
     /// - the retention grid is one fixed 4-column grid (10pt gaps, empty last cell);
     /// - the AI connect action sits inside its status card and aligns with the title;
     /// - the iCloud summary sits under the title with >=12pt to the switch;
     /// - reset-all shortcuts is below the last card, not at the top right.
+    /// 内容块在屏幕坐标里的上下边界：内容区里所有「比一屏矮」的无障碍元素的并集
+    /// 边界。比一屏高的元素是滚动容器/文档视图本身，排除；页尾动作等零散元素因此
+    /// 也算进内容块，不会被漏算。
+    @MainActor static func contentEdges(_ hosting: NSView, window: NSWindow) -> (top: CGFloat, bottom: CGFloat)? {
+        let contentTop = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.maxY)).y
+        let contentBottom = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.minY)).y
+        let viewportHeight = window.contentLayoutRect.height
+        // 只量右侧内容列：无障碍树里也有侧栏的表格行，它们的 y 落在内容区里，
+        // 但 x 在 200pt 宽的侧栏内。内容列左边 = 卡片左边（卡片距内容区左 20pt）。
+        let cards = accessibilityTree(hosting).filter { axID($0) == "settings.card" }
+            .map { axFrame($0) }.filter { $0.width > 10 }
+        let detailLeft = cards.map(\.minX).min() ?? contentTop
+        let frames = accessibilityTree(hosting).compactMap { node -> NSRect? in
+            let frame = axFrame(node)
+            guard frame.height > 2, frame.width > 2, frame.height < viewportHeight - 1 else { return nil }
+            guard frame.minX >= detailLeft - 1 else { return nil }
+            // 贴着内容区上下边的元素是滚动条一类的 chrome（其 AX 帧可能越界 1pt），
+            // 真正的内容块至少离边 16pt；这一条把它们排除在内容块之外。
+            guard frame.maxY <= contentTop - 8, frame.minY >= contentBottom + 8 else { return nil }
+            return frame
+        }
+        guard let top = frames.map(\.maxY).max(), let bottom = frames.map(\.minY).min() else { return nil }
+        return (top, bottom)
+    }
+
+    /// 648×600（出货窗口尺寸）下装得下 therefore 居中的分区，以及唯一超出一屏、
+    /// 仍从 16pt 顶部起的分区。实测值见 `pageGeometry`；这份清单是**显式**的，
+    /// 某一页内容长高或缩水都必须重新确认，不会自动改分类还照样通过。
+    static let centredSections: Set<SettingsSection> = [.general, .screenshot, .clipboard, .shortcuts, .ai]
+    static let topAlignedSections: Set<SettingsSection> = [.privacy]
+    @MainActor static var pageGeometry: [String: [String: Double]] = [:]
+
     @MainActor static func checkPageSurface(hosting: NSView, window: NSWindow, section: SettingsSection,
                                             appearance: String) async throws {
         let tree = accessibilityTree(hosting)
@@ -120,13 +160,53 @@ import BlinkClipCapture
         try check(!cardRects.isEmpty, "\(appearance) \(section) renders no settings card")
         let titleRects = tree.filter { axID($0) == "settings.section-title" }.map { axFrame($0) }.filter { $0.width > 10 }
         let contentTop = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.maxY)).y
-        guard let first = (cardRects + titleRects).max(by: { $0.maxY < $1.maxY }) else {
-            throw Failure(message: "\(appearance) \(section) has no first content element")
+        let contentBottom = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.minY)).y
+        let viewportHeight = window.contentLayoutRect.height
+        // 内容块的上下边界：取内容区里所有「比一屏矮」的无障碍元素的并集边界。
+        // 比一屏高的元素是滚动容器/文档视图本身，排除掉；这样页尾动作（例如
+        // 「清空历史记录…」）也算进内容块，居中与否不会被漏算的元素歪曲。
+        guard let edges = contentEdges(hosting, window: window) else {
+            throw Failure(message: "\(appearance) \(section) has no content elements")
         }
-        let offset = contentTop - first.maxY
+        let offset = contentTop - edges.top
+        let bottomGap = edges.bottom - contentBottom
         firstElementOffsets["\(appearance)-\(section.rawValue)"] = offset
-        try check(offset >= 14 && offset <= 21,
-                  "\(appearance) \(section) first element offset \(offset) outside 16-20pt")
+
+        // 这一个分区的内容装得下/装不下一屏：文档视图高度对可视高度的实测值，
+        // 不是从「哪一页应该居中」反推出来的。
+        let pageScroll = descendants(hosting, of: NSScrollView.self)
+            .filter { $0.documentView != nil }
+            .max { $0.contentView.bounds.height < $1.contentView.bounds.height }
+        guard let pageScroll else { throw Failure(message: "\(appearance) \(section) has no page scroll view") }
+        let documentHeight = pageScroll.documentView?.bounds.height ?? 0
+        let fitsOneScreen = documentHeight <= viewportHeight + 0.5
+        pageGeometry["\(appearance)-\(section.rawValue)"] = [
+            "topGap": Double((offset * 100).rounded() / 100),
+            "bottomGap": Double((bottomGap * 100).rounded() / 100),
+            "documentHeight": Double(documentHeight),
+            "viewportHeight": Double(viewportHeight),
+            "fitsOneScreen": fitsOneScreen ? 1 : 0,
+        ]
+        try check(!(centredSections.contains(section) && topAlignedSections.contains(section)),
+                  "\(section) is classified as both centred and top aligned")
+        if centredSections.contains(section) {
+            try check(fitsOneScreen, "\(appearance) \(section) no longer fits one screen (\(documentHeight) of \(viewportHeight))")
+            try check(abs(offset - bottomGap) <= 2,
+                      "\(appearance) \(section) is not vertically centred: top gap \(offset) bottom gap \(bottomGap)")
+            try check(offset >= SettingsPageMetrics.verticalInset - 0.5,
+                      "\(appearance) \(section) centred content lost its floor: top gap \(offset)")
+        } else if topAlignedSections.contains(section) {
+            try check(!fitsOneScreen, "\(appearance) \(section) fits one screen now, so the top-aligned rule no longer covers it (\(documentHeight) of \(viewportHeight))")
+            try check(offset >= 14 && offset <= 21,
+                      "\(appearance) \(section) first element offset \(offset) outside 16-20pt")
+        } else if fitsOneScreen {
+            // 其余分区也遵守同一条规则：装得下就居中，上下留白必须相等。
+            try check(abs(offset - bottomGap) <= 2,
+                      "\(appearance) \(section) fits one screen but is not centred: top \(offset) bottom \(bottomGap)")
+        } else {
+            try check(offset >= 14 && offset <= 21,
+                      "\(appearance) \(section) overflows one screen but is not top aligned: offset \(offset)")
+        }
 
         // Rendered surface: sample the card fill in the top-right padding and the
         // page margin just left of it. Pixel levels are 8-bit sRGB gray.
@@ -241,6 +321,158 @@ import BlinkClipCapture
             try check(abs(card.maxX - refresh.maxX) <= 2,
                       "refresh control is not right-aligned with the card: refresh \(refresh) card \(card)")
         }
+    }
+
+    // MARK: - P7「自动检查更新」
+
+    /// 「自动检查更新」开关：默认关（信息表里 `SUEnableAutomaticChecks=NO`，默认域
+    /// 里连键都没有）→ 打开写入 Sparkle 自己那一份 `SUEnableAutomaticChecks`（`true`）
+    /// → 重开视图（相当于重启应用后重开设置窗）仍然是开 → 关掉写回 false。
+    @MainActor static func verifyAutomaticUpdateToggle(state: ReplicaUIState, model: PermissionStatusModel,
+                                                       out: URL, language: String) async throws {
+        guard let domain = Bundle.main.bundleIdentifier, domain.hasPrefix("local.blinkclip.regression.") else {
+            throw Failure(message: "isolated test app domain required")
+        }
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "SUEnableAutomaticChecks")
+        defer { defaults.removeObject(forKey: "SUEnableAutomaticChecks") }
+        try check(defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
+                  "the isolated domain already stored an automatic-check flag")
+        try check(BlinkClipInAppUpdater.automaticallyChecksForUpdates == false,
+                  "the shipped default (Info.plist SUEnableAutomaticChecks=NO) is not off")
+
+        func makeHost() -> NSHostingView<AnyView> {
+            let root = AnyView(ReplicaSettingsView(state: state,
+                                                  initialTab: SettingsSection.general.rawValue,
+                                                  permissionModel: model)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            let host = NSHostingView(rootView: root)
+            let window = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600),
+                                                styleMask: [.titled, .closable, .fullSizeContentView],
+                                                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.titlebarAppearsTransparent = false
+            window.toolbarStyle = .unified
+            window.setFrame(NSRect(x: -5000, y: -5000, width: 648, height: 600), display: false)
+            window.contentView = host
+            window.orderFront(nil)
+            return host
+        }
+        func nodes(_ host: NSView, id: String) -> [NSObject] {
+            accessibilityTree(host).filter { axID($0) == id }
+        }
+        func toggleNodes(_ host: NSView) -> [NSObject] {
+            nodes(host, id: "settings.automatic-updates.toggle")
+        }
+        func switchIsOn(_ node: NSObject) -> Bool? {
+            // SwiftUI 的开关只经现代的 `accessibilityValue` 暴露 0/1；
+            // 旧的 AXValue 属性在这里是 nil（实测），两个都试一遍。
+            let modern = NSSelectorFromString("accessibilityValue")
+            if node.responds(to: modern),
+               let value = node.perform(modern)?.takeUnretainedValue() {
+                if let number = value as? NSNumber { return number.boolValue }
+                if let string = value as? String { return ["1", "on", "true"].contains(string.lowercased()) }
+            }
+            if let number = node.accessibilityAttributeValue(.value) as? NSNumber { return number.boolValue }
+            if let string = node.accessibilityAttributeValue(.value) as? String {
+                return ["1", "on", "true"].contains(string.lowercased())
+            }
+            return nil
+        }
+        func frameOfLabel(_ host: NSView, _ text: String) -> NSRect? {
+            for node in accessibilityTree(host) {
+                var values: [String] = []
+                for attribute in [NSAccessibility.Attribute.value, .title, .description] {
+                    if let value = node.accessibilityAttributeValue(attribute) as? String { values.append(value) }
+                }
+                for name in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+                    let selector = NSSelectorFromString(name)
+                    if node.responds(to: selector),
+                       let value = node.perform(selector)?.takeUnretainedValue() as? String {
+                        values.append(value)
+                    }
+                }
+                if values.contains(text) {
+                    let frame = axFrame(node)
+                    if frame.height > 0 { return frame }
+                }
+            }
+            return nil
+        }
+
+        let host = makeHost()
+        defer { host.window?.orderOut(nil); host.window?.contentView = nil; host.window?.close() }
+        await pause()
+        // 1) 默认关：开关在关位，键盘上也没有写入过任何键。
+        guard let switchNode = toggleNodes(host).max(by: { axFrame($0).width < axFrame($1).width }) else {
+            throw Failure(message: "general page has no automatic-update switch")
+        }
+
+        try check(switchIsOn(switchNode) == false,
+                  "the automatic-update switch does not start off: \(String(describing: switchIsOn(switchNode)))")
+        try check(defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
+                  "opening the page wrote SUEnableAutomaticChecks before the user touched it")
+        // 文案三语在同一行：标题在上、说明在下，行在 iCloud 之后、提示音之前。
+        try check(treeHasText(host, SettingsCopy.text("settings.automatic-updates.title")),
+                  "the row title is missing: \(SettingsCopy.text("settings.automatic-updates.title"))")
+        try check(treeHasText(host, SettingsCopy.text("settings.automatic-updates.subtitle")),
+                  "the row subtitle is missing")
+        if let icloud = nodes(host, id: "settings.icloud.toggle").map({ axFrame($0) })
+            .max(by: { $0.width < $1.width }),
+           let sound = frameOfLabel(host, SettingsCopy.text("settings.sound-effects.title")) {
+            try check(icloud.midY > axFrame(switchNode).midY,
+                      "the automatic-update row is not below the iCloud row: \(icloud.midY) vs \(axFrame(switchNode).midY)")
+            try check(axFrame(switchNode).midY > sound.midY,
+                      "the automatic-update row is not above the sound row: \(axFrame(switchNode).midY) vs \(sound.midY)")
+        } else {
+            throw Failure(message: "could not measure the iCloud row and the sound row around the new switch")
+        }
+        if let themeFrame = host.window?.contentView?.superview {
+            try writePNG(themeFrame, name: "p7-\(language)-general-automatic-updates-off", out: out)
+        }
+        // 2) 打开：写的就是 Sparkle 的键，值是 true。
+        try check(press(switchNode), "the automatic-update switch rejects AX press")
+        await pause()
+        try check(BlinkClipInAppUpdater.automaticallyChecksForUpdates == true,
+                  "turning the switch on did not reach SPUUpdater.automaticallyChecksForUpdates")
+        try check(defaults.bool(forKey: "SUEnableAutomaticChecks") == true,
+                  "turning the switch on did not persist SUEnableAutomaticChecks = true: \(String(describing: defaults.object(forKey: "SUEnableAutomaticChecks")))")
+        if let themeFrame = host.window?.contentView?.superview {
+            try writePNG(themeFrame, name: "p7-\(language)-general-automatic-updates-on", out: out)
+        }
+        host.window?.orderOut(nil)
+        host.window?.contentView = nil
+        host.window?.close()
+
+        // 3) 「重启后保持」：换一份全新的根视图（= 重开设置窗/重启后的首次渲染），
+        //    开关读到的仍是打开状态。
+        let relaunched = makeHost()
+        defer { relaunched.window?.orderOut(nil); relaunched.window?.contentView = nil; relaunched.window?.close() }
+        await pause()
+        try check(BlinkClipInAppUpdater.automaticallyChecksForUpdates == true,
+                  "a fresh process view lost the persisted automatic-check flag")
+        guard let reloadedSwitch = toggleNodes(relaunched).max(by: { axFrame($0).width < axFrame($1).width }) else {
+            throw Failure(message: "the reopened general page has no automatic-update switch")
+        }
+        try check(switchIsOn(reloadedSwitch) == true,
+                  "the reopened switch does not show the persisted on state: \(String(describing: switchIsOn(reloadedSwitch)))")
+        try check(defaults.bool(forKey: "SUEnableAutomaticChecks") == true,
+                  "the persisted key vanished after reopening the page")
+
+        // 4) 关掉：写回 false，状态与默认一致。
+        try check(press(reloadedSwitch), "the reopened automatic-update switch rejects AX press")
+        await pause()
+        try check(BlinkClipInAppUpdater.automaticallyChecksForUpdates == false,
+                  "turning the switch off did not reach SPUUpdater.automaticallyChecksForUpdates")
+        try check(defaults.bool(forKey: "SUEnableAutomaticChecks") == false,
+                  "turning the switch off did not persist false: \(String(describing: defaults.object(forKey: "SUEnableAutomaticChecks")))")
+        try check(defaults.object(forKey: "SUEnableAutomaticChecks") != nil,
+                  "turning the switch off left no stored value at all")
+        print("{\"automatic_updates\":\"off->on->persisted->off\",\"key\":\"SUEnableAutomaticChecks\"}")
+    }
+
+    @MainActor static func treeHasText(_ host: NSView, _ text: String) -> Bool {
+        texts(accessibilityTree(host)).contains(text)
     }
 
     @MainActor static func verifyShortcutRows(store: ClipboardStore, state: ReplicaUIState, model: PermissionStatusModel, out: URL, language: String) async throws {
@@ -799,6 +1031,8 @@ import BlinkClipCapture
             try capture(themeFrame, name: "\(language)-\(section.rawValue)-top-640pt", out: out)
             let beforeScrollHeader = try pixels(hosting, headerOnly: true)
             if true {
+                let key = "\(appearance)-\(section.rawValue)"
+                let fitsOneScreen = pageGeometry[key]?["fitsOneScreen"] == 1
                 let scrolls = descendants(hosting, of: NSScrollView.self)
                 for scroll in scrolls where scroll.documentView != nil {
                     let document = scroll.documentView!
@@ -809,18 +1043,56 @@ import BlinkClipCapture
                 try capture(themeFrame, name: "\(language)-\(section.rawValue)-bottom-648x600", out: out)
                 try check(title.convert(title.bounds, to: nil) == titleFrame, "native toolbar frame stable after scroll")
                 try check(try pixels(hosting, headerOnly: true) == beforeScrollHeader, "\(appearance) \(section) header pixels unchanged after scrolling")
+                // 滚到底之后：装不下一屏的分区必须真的滚动了、并且最后一个内容块仍
+                // 距内容区底 16pt（能滚到底，不是被裁掉）；装得下的分区一格都不滚。
+                guard let pageScroll = scrolls.filter({ $0.documentView != nil })
+                    .max(by: { $0.contentView.bounds.height < $1.contentView.bounds.height }) else {
+                    throw Failure(message: "\(appearance) \(section) has no page scroll view to scroll")
+                }
+                let hidden = max(0, (pageScroll.documentView?.bounds.height ?? 0) - pageScroll.contentView.bounds.height)
+                if fitsOneScreen {
+                    try check(hidden <= 0.5 && pageScroll.contentView.bounds.origin.y == 0,
+                              "\(appearance) \(section) is centred but still scrolled by \(pageScroll.contentView.bounds.origin.y) of \(hidden)")
+                } else {
+                    try check(pageScroll.contentView.bounds.origin.y >= hidden - 1,
+                              "\(appearance) \(section) did not reach the bottom: origin \(pageScroll.contentView.bounds.origin.y) hidden \(hidden)")
+                    let contentBottom = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.minY)).y
+                    guard let edges = contentEdges(hosting, window: window) else {
+                        throw Failure(message: "\(appearance) \(section) has no content bottom after scrolling")
+                    }
+                    let gapAfterScroll = edges.bottom - contentBottom
+                    try check(gapAfterScroll >= SettingsPageMetrics.verticalInset - 1.5
+                              && gapAfterScroll <= SettingsPageMetrics.verticalInset + 4,
+                              "\(appearance) \(section) bottom inset after scrolling is \(gapAfterScroll), expected \(SettingsPageMetrics.verticalInset)")
+                }
             }
             window.orderOut(nil)
             window.contentView = nil
             window.close()
         }
-        // 六页同一套顶部节奏：首元素（小标题或卡片）距内容区顶的偏移一致。
+        // 出货尺寸下：五个分区装得下（居中，上下留白相等），隐私页超出一屏
+        // （顶对齐、可滚）。跨页的 16pt 顶部节奏在 648×380 的长页面检查里比较，
+        // 那里才有多个超出一屏的分区。
         let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
         try check(pageOffsets.count == SettingsSection.allCases.count,
                   "\(appearance) only \(pageOffsets.count) pages measured: \(pageOffsets.keys.sorted())")
-        let offsetValues = pageOffsets.map(\.value)
-        try check(offsetValues.max()! - offsetValues.min()! <= 0.75,
-                  "\(appearance) six pages disagree on first-element offset: \(pageOffsets.sorted { $0.key < $1.key })")
+        for key in pageOffsets.keys {
+            guard let geometry = pageGeometry[key] else { throw Failure(message: "\(key) has no geometry") }
+            if geometry["fitsOneScreen"] == 1 {
+                try check(abs(geometry["topGap"]! - geometry["bottomGap"]!) <= 2,
+                          "\(appearance) \(key) is centred but has unequal gaps: \(geometry)")
+            } else {
+                try check(geometry["topGap"]! >= 14 && geometry["topGap"]! <= 21,
+                          "\(appearance) \(key) overflows but is not top aligned: \(geometry)")
+            }
+        }
+        try check(!topAlignedSections.isEmpty, "the top-aligned contract must keep at least one page to hold")
+        try check(centredSections.allSatisfy {
+                      pageGeometry["\(appearance)-\($0.rawValue)"]?["fitsOneScreen"] == 1 },
+                  "\(appearance) a section promised to be centred no longer measures as one screen tall")
+        try check(topAlignedSections.allSatisfy {
+                      pageGeometry["\(appearance)-\($0.rawValue)"]?["fitsOneScreen"] == 0 },
+                  "\(appearance) a section promised to overflow one screen now fits")
         if !captures.isEmpty {
             let cell = NSSize(width: 648, height: 622)
             let sheet = NSImage(size: NSSize(width: cell.width * 4, height: cell.height * 3))
@@ -963,6 +1235,7 @@ import BlinkClipCapture
         try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.screenshot.title, "reopen preserves title and delegate")
         navigationWindow.orderOut(nil); navigationWindow.contentView = nil; navigationWindow.close()
         if runID == "1" {
+            try await verifyAutomaticUpdateToggle(state: state, model: model, out: out, language: language)
             try await verifyRefreshFeedback(state: state, out: out, language: language)
             try await verifyDangerFooter(state: state, out: out, language: language)
             try await verifyDangerActions(state: state, out: out, language: language)
@@ -973,7 +1246,11 @@ import BlinkClipCapture
         try check(store.preferences.historyRetentionDays == originalRetention, "viewing pages does not change retention")
         let reopened = try ClipboardStore(directoryURL: fixture)
         try check(reopened.preferences.historyRetentionDays == originalRetention, "persisted retention unchanged")
-        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,"sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
+        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,
+            "pageGeometry": pageGeometry.mapValues { $0.mapValues { $0 } },
+            "centredSections": centredSections.sorted { $0.rawValue < $1.rawValue }.map(\.title),
+            "topAlignedSections": topAlignedSections.sorted { $0.rawValue < $1.rawValue }.map(\.title),
+            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))

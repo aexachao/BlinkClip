@@ -40,15 +40,17 @@ final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate
     var onClose: (() -> Void)?
 
     let statusLabel = NSTextField(wrappingLabelWithString: "")
+    /// 唯一的主按钮。关于窗不再有「关闭」按钮：Esc 与 ⌘W 仍然关窗
+    /// （见 `AboutWindow.performKeyEquivalent(with:)` 与 `cancelOperation(_:)`），
+    /// 标题栏的关闭按钮也照常。
     let checkButton = NSButton()
-    let closeButton = NSButton()
     private let versionLabel = NSTextField(labelWithString: "")
 
     init(checker: BlinkClipUpdateChecker, sparkleCheck: @escaping () throws -> Void) {
         self.checker = checker
         self.sparkleCheck = sparkleCheck
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.contentSize),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = AboutWindow(contentRect: NSRect(origin: .zero, size: Self.contentSize),
+                                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = SettingsLocalization.text("updates.about-title")
         window.identifier = NSUserInterfaceItemIdentifier(Self.windowIdentifier)
         window.isReleasedWhenClosed = false
@@ -144,14 +146,9 @@ final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate
         checkButton.bezelStyle = .rounded
         checkButton.keyEquivalent = "\r"
         checkButton.setAccessibilityIdentifier("about-check-updates")
-        closeButton.title = text("updates.close")
-        closeButton.target = self
-        closeButton.action = #selector(closeWindow)
-        closeButton.bezelStyle = .rounded
-        closeButton.keyEquivalent = "\u{1b}"
-        closeButton.setAccessibilityIdentifier("about-close")
 
-        let buttonRow = NSStackView(views: [checkButton, closeButton])
+        // 一行只有主按钮：它自己居中，状态行压在它上方同一条中轴。
+        let buttonRow = NSStackView(views: [checkButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 10
         buttonRow.alignment = .centerY
@@ -211,8 +208,7 @@ final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate
             // The buttons must never be squeezed by the flexible bands: their
             // row keeps its native height, so the 8 pt gap above is real.
             buttonHolder.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
-            checkButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 104),
-            closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
+            checkButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 104)
         ])
 
         // Emphasis is a window-level decision, not an appearance-level one: the
@@ -278,7 +274,10 @@ final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
-    @objc func closeWindow() {
+    /// Esc 没有可以挂快捷键的取消按钮了，就走响应链上的标准取消动作：
+    /// `NSWindow` 把 Esc 作为 `cancelOperation:` 往上递，窗口控制器在链上收到后
+    /// 交给标准的 `performClose:`（与 ⌘W、标题栏关闭按钮同一条路径）。
+    override func cancelOperation(_ sender: Any?) {
         window?.performClose(nil)
     }
 
@@ -294,5 +293,21 @@ final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate
     @objc private func openLink(_ sender: NSButton) {
         guard linkTargets.indices.contains(sender.tag) else { return }
         NSWorkspace.shared.open(linkTargets[sender.tag])
+    }
+}
+
+/// 关于窗的窗口类型：唯一的作用是把「没有修饰键的 Esc」接住并关窗。
+///
+/// 删掉「关闭」按钮后，Esc 的键盘等价物就没有控件承载了；这一层用 AppKit 的
+/// 键盘等价物路径（过去那个 Esc 按钮走的同一条路径）把它接回来，而不是塞一个
+/// 看不见的按钮。带修饰键的 Esc、⌘W（主菜单的关闭项）与其他键都不经过这里。
+private final class AboutWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == 53,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }

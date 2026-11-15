@@ -28,4 +28,17 @@ final class BlinkClipInAppUpdater {
         }
         Self.controller.checkForUpdates(nil)
     }
+
+    /// 「自动检查更新」开关读写的就是 Sparkle 自己那一个偏好
+    /// （`SPUUpdater.automaticallyChecksForUpdates` → 默认域里的
+    /// `SUEnableAutomaticChecks`）。不另存一份副本，所以设置页、菜单和 Sparkle
+    /// 的调度器看到的永远是同一个值，重启后仍保持；关掉它只影响后台定时检查，
+    /// 手动「检查更新」永远可用。
+    ///
+    /// 写入发生在 updater 还没 `start()` 时也安全：Sparkle 只是把键落进默认域
+    /// 并等下次调度时读，不会因此发一次网络请求。
+    static var automaticallyChecksForUpdates: Bool {
+        get { controller.updater.automaticallyChecksForUpdates }
+        set { controller.updater.automaticallyChecksForUpdates = newValue }
+    }
 }

@@ -97,6 +97,8 @@ enum SettingsCopy {
         "settings.shortcuts.plain-text.title": ("纯文本修饰键", "純文字修飾鍵", "Plain Text Modifier"),
         "settings.shortcuts.quick-paste.title": ("快捷粘贴按键", "快速貼上按鍵", "Quick Paste Keys"),
         "settings.run-in-background.title": ("保持后台服务运行", "保持背景服務執行", "Keep Background Service Running"),
+        "settings.automatic-updates.title": ("自动检查更新", "自動檢查更新", "Check for Updates Automatically"),
+        "settings.automatic-updates.subtitle": ("每天在后台检查一次，发现新版本时提示。", "每天在背景檢查一次，發現新版本時提示。", "Checks once a day in the background and lets you know when a new version is available."),
         "settings.sound-effects.title": ("播放操作提示音", "播放操作提示音", "Play Feedback Sounds"),
         "updates.about-title": ("关于闪贴", "關於閃貼", "About BlinkClip")
     ]

@@ -202,8 +202,8 @@ struct AppUpdateHarness {
     @MainActor static var neverCheckedText: String { SettingsLocalization.text("updates.never-checked") }
 
     /// Geometry the About window promises, measured in content coordinates:
-    /// the status line sits 8 pt above the button row on the same centred axis,
-    /// and the button group is centred with equal left/right margins.
+    /// the single action button is centred with equal left/right margins and the
+    /// status line sits 8 pt above it on the very same centred axis.
     struct AboutLayout {
         let statusButtonGap: CGFloat
         let statusRowCenterOffset: CGFloat
@@ -211,6 +211,7 @@ struct AppUpdateHarness {
         let buttonRightInset: CGFloat
         let statusHeight: CGFloat
         let buttonGroupWidth: CGFloat
+        let actionButtonCount: Int
         var debugDescription: String = ""
 
         var json: [String: Any] {
@@ -219,43 +220,48 @@ struct AppUpdateHarness {
              "button_left_inset": Double(buttonLeftInset),
              "button_right_inset": Double(buttonRightInset),
              "status_height": Double(statusHeight),
-             "button_group_width": Double(buttonGroupWidth)]
+             "button_group_width": Double(buttonGroupWidth),
+             "action_button_count": actionButtonCount]
         }
+    }
+
+    /// 动作行上只剩一个按钮：`Check for Updates`。链接是 `bezelStyle == .inline`
+    /// 的无框按钮，所以「动作按钮」按圆角 bezel 统计。
+    @MainActor static func actionButtons(_ content: NSView) -> [NSButton] {
+        descendants(content, of: NSButton.self).filter { $0.bezelStyle == .rounded }
     }
 
     @MainActor static func layout(_ controller: BlinkClipAboutWindowController) -> AboutLayout {
         guard let content = controller.window?.contentView else {
             return AboutLayout(statusButtonGap: -1, statusRowCenterOffset: -1,
                                buttonLeftInset: -1, buttonRightInset: -1,
-                               statusHeight: -1, buttonGroupWidth: -1)
+                               statusHeight: -1, buttonGroupWidth: -1, actionButtonCount: -1)
         }
         content.layoutSubtreeIfNeeded()
         let status = controller.statusLabel.convert(controller.statusLabel.bounds, to: content)
         let check = controller.checkButton.convert(controller.checkButton.bounds, to: content)
-        let close = controller.closeButton.convert(controller.closeButton.bounds, to: content)
-        let group = check.union(close)
-        var measured = AboutLayout(statusButtonGap: status.minY - group.maxY,
-                                   statusRowCenterOffset: status.midX - group.midX,
-                                   buttonLeftInset: group.minX,
-                                   buttonRightInset: content.bounds.width - group.maxX,
+        var measured = AboutLayout(statusButtonGap: status.minY - check.maxY,
+                                   statusRowCenterOffset: status.midX - check.midX,
+                                   buttonLeftInset: check.minX,
+                                   buttonRightInset: content.bounds.width - check.maxX,
                                    statusHeight: status.height,
-                                   buttonGroupWidth: group.width)
-        let row = controller.checkButton.superview
-        let holder = row?.superview
-        let rowFrame = row.map { $0.convert($0.bounds, to: content) }
-        let holderFrame = holder.map { $0.convert($0.bounds, to: content) }
-        measured.debugDescription = "status=\(status) check=\(check) close=\(close) row=\(String(describing: rowFrame)) holder=\(String(describing: holderFrame)) content=\(content.bounds)"
+                                   buttonGroupWidth: check.width,
+                                   actionButtonCount: actionButtons(content).count)
+        let rowFrame = controller.checkButton.superview.map { $0.convert($0.bounds, to: content) }
+        measured.debugDescription = "status=\(status) check=\(check) row=\(String(describing: rowFrame)) content=\(content.bounds)"
         return measured
     }
 
     @MainActor static func assertAboutLayout(_ controller: BlinkClipAboutWindowController) throws {
         let measured = layout(controller)
+        try check(measured.actionButtonCount == 1,
+                  "About shows \(measured.actionButtonCount) action buttons, expected only Check for Updates: \(measured.debugDescription)")
         try check(measured.statusButtonGap >= 8 && measured.statusButtonGap <= 12,
                   "Status line is not 8–10 pt above the buttons: \(measured.statusButtonGap) \(measured.debugDescription)")
-        try check(abs(measured.statusRowCenterOffset) <= 2,
-                  "Status line is not centred over the buttons: \(measured.statusRowCenterOffset)")
-        try check(abs(measured.buttonLeftInset - measured.buttonRightInset) <= 2,
-                  "Button group is not centred in the window: left \(measured.buttonLeftInset) right \(measured.buttonRightInset)")
+        try check(abs(measured.statusRowCenterOffset) <= 1,
+                  "Status line is not on the button's centred axis: \(measured.statusRowCenterOffset) \(measured.debugDescription)")
+        try check(abs(measured.buttonLeftInset - measured.buttonRightInset) <= 1,
+                  "The action button is not centred in the window: left \(measured.buttonLeftInset) right \(measured.buttonRightInset)")
     }
 
     /// A completed check reports the timestamp only. Sparkle's own
@@ -361,6 +367,7 @@ struct AppUpdateHarness {
                 return
             }
             try await run(session: session)
+            try verifyClosePaths()
             if CommandLine.arguments.contains("--live") {
                 // All expected versions come from the feed the script just read,
                 // so a new release cannot turn this mode red.
@@ -545,7 +552,16 @@ struct AppUpdateHarness {
         try check(controller.window?.contentView?.bounds.size == NSSize(width: 380, height: 420), "About window is not 380 by 420")
         try check(!controller.checkButton.isHidden && controller.checkButton.isEnabled, "Check button unavailable")
         try check(controller.checkButton.keyEquivalent == "\r", "Return does not start a check")
-        try check(controller.closeButton.keyEquivalent == "\u{1b}", "Escape does not close the window")
+        // 「关闭」按钮已经删掉：动作行上只剩「检查更新」，而且没有任何控件再认领
+        // Esc（Esc 现在由窗口的键盘等价物负责，见 `verifyClosePaths`）。
+        try check(actionButtons(controller.window!.contentView!).count == 1,
+                  "About still shows \(actionButtons(controller.window!.contentView!).count) action buttons")
+        try check(!descendants(controller.window!.contentView!, of: NSView.self)
+                    .contains { $0.accessibilityIdentifier() == "about-close" },
+                  "the removed Close button is still in the About window")
+        try check(!descendants(controller.window!.contentView!, of: NSButton.self)
+                    .contains { $0.keyEquivalent == "\u{1b}" },
+                  "a control still claims Esc, so the window key equivalent would never run")
         try check(controller.statusLabel.stringValue == neverCheckedText,
                   "About claims a result before any check: \(controller.statusLabel.stringValue)")
         try check(!controller.statusLabel.stringValue.lowercased().contains("up to date")
@@ -555,14 +571,17 @@ struct AppUpdateHarness {
         let initialLayout = layout(controller)
         try assertAboutLayout(controller)
         print(String(data: try JSONSerialization.data(withJSONObject: ["about_layout": initialLayout.json]), encoding: .utf8)!)
-        // Both appearances get the same primary/secondary relationship: the
-        // check button is the window's default button, close is not.
-        try check(controller.checkButton.bezelStyle == .rounded && controller.closeButton.bezelStyle == .rounded,
-                  "About buttons lost their rounded bezel")
+        // The single action button is still the window's default button and keeps
+        // its rounded bezel; the window itself stays closable so ⌘W and the
+        // titlebar button keep working.
+        try check(controller.checkButton.bezelStyle == .rounded,
+                  "Check for Updates lost its rounded bezel")
         try check(controller.window?.defaultButtonCell === controller.checkButton.cell,
                   "Check for Updates is not the default button")
-        try check(controller.window?.defaultButtonCell !== controller.closeButton.cell,
-                  "Close became the default button")
+        try check(controller.window?.styleMask.contains(.closable) == true,
+                  "About window is no longer closable")
+        try check(controller.window?.standardWindowButton(.closeButton)?.isEnabled == true,
+                  "the titlebar close button is missing or disabled")
         if let versionField = descendants(controller.window!.contentView!, of: NSTextField.self)
             .first(where: { $0.accessibilityIdentifier() == "about-current-version" }) {
             let expectedVersion = String(format: SettingsLocalization.text("updates.current-version"), "1.0.10")
@@ -691,6 +710,75 @@ struct AppUpdateHarness {
         guard case .failed = unknown.state else { throw Failure(message: "Invalid installed version reported success") }
     }
 
+    /// Esc 与 ⌘W 仍能关窗 —— 关于窗没有「关闭」按钮之后，这是两条人工关闭路径，
+    /// 必须各自用真实事件验证一遍（不是只断言某个属性）。
+    ///
+    /// * Esc：真实的 `keyDown`（keyCode 53）经 `NSApp.sendEvent` 派发，窗口自己的
+    ///   键盘等价物接住后走标准 `performClose:`。
+    /// * ⌘W：主菜单「关闭」项执行的就是 `performClose:`，所以用
+    ///   `NSApp.sendAction(performClose:)` 走同一条响应链；同时断言没有控件认领
+    ///   Esc/⌘W 的键等价物、标题栏关闭按钮仍在且可用。
+    @MainActor static func verifyClosePaths() throws {
+        let checker = BlinkClipUpdateChecker(currentVersion: "1.0.11")
+        func window(_ controller: BlinkClipAboutWindowController) throws -> NSWindow {
+            guard let window = controller.window else { throw Failure(message: "About window missing") }
+            window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            for _ in 0..<60 where !window.isKeyWindow {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+            }
+            return window
+        }
+        func escapeEvent(_ window: NSWindow) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                             timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: window.windowNumber, context: nil,
+                             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                             isARepeat: false, keyCode: 53)!
+        }
+        // ── Esc ──────────────────────────────────────────────────────────────
+        let escapeController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+        let escapeWindow = try window(escapeController)
+        try check(escapeWindow.styleMask.contains(.closable), "About window is no longer closable")
+        try check(escapeWindow.standardWindowButton(.closeButton)?.isEnabled == true,
+                  "the titlebar close button is missing or disabled")
+        try check(escapeWindow.isVisible, "About window is not visible before the Esc event")
+        NSApp.sendEvent(escapeEvent(escapeWindow))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        try check(!escapeWindow.isVisible, "Esc does not close the About window")
+        print("{\"escape_closes\":true}")
+
+        // ── ⌘W（主菜单「关闭」项的 performClose:）────────────────────────────
+        let commandWController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+        let commandWWindow = try window(commandWController)
+        for button in descendants(commandWWindow.contentView!, of: NSButton.self) {
+            try check(button.keyEquivalent != "w",
+                      "a control claims \(button.keyEquivalent) and would swallow ⌘W")
+        }
+        // 主菜单「关闭」项的 action 就是 `performClose:`，target 为 nil（走响应链）。
+        // 这里从窗口自己的响应链发出同一个 action：链上没有别的控件抢占它。
+        try check(commandWWindow.tryToPerform(#selector(NSWindow.performClose(_:)), with: nil),
+                  "the Close action ⌘W performs reached no responder in the About window's chain")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        try check(!commandWWindow.isVisible, "⌘W (performClose:) does not close the About window")
+        print("{\"command_w_closes\":true}")
+
+        // ── 这个窗口的键盘等价物只认 Esc，不会吞掉别的按键 ──────────────────────
+        let letterController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+        let letterWindow = try window(letterController)
+        let letter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                      timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: letterWindow.windowNumber, context: nil,
+                                      characters: "a", charactersIgnoringModifiers: "a",
+                                      isARepeat: false, keyCode: 0)!
+        NSApp.sendEvent(letter)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        try check(letterWindow.isVisible, "a plain letter key closed the About window")
+        letterWindow.close()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+
     /// The status line belongs directly above the action row, in window coordinates.
     @MainActor static func statusIsAboveButtons(_ controller: BlinkClipAboutWindowController) -> Bool {
         guard let content = controller.window?.contentView else { return false }
@@ -714,7 +802,40 @@ struct AppUpdateHarness {
 
     /// The fill colour under a button's left third, away from the title glyphs.
     @MainActor static func fillColor(_ bitmap: NSBitmapImageRep, of view: NSView, in frameView: NSView) -> RGB {
-        let point = view.convert(NSPoint(x: view.bounds.width * 0.25, y: view.bounds.height * 0.5), to: frameView)
+        fillColor(bitmap, atContentPoint: NSPoint(x: view.bounds.width * 0.25, y: view.bounds.height * 0.5),
+                  of: view, in: frameView)
+    }
+
+    /// 数一个按钮矩形里「明显是 accent 蓝」的像素：默认按钮的强调色是整块纯色
+    /// 填充（浅色/深色两套外观都是 accent），普通按钮的灰白底一个也数不到。
+    /// 比在某个点上取样稳：圆角、标题字形、1pt 描边都不会让结论翻转。
+    @MainActor static func accentPixels(_ bitmap: NSBitmapImageRep, of view: NSView, in frameView: NSView) -> Int {
+        let rect = view.convert(view.bounds, to: frameView)
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, frameView.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, frameView.bounds.height)
+        var count = 0
+        var y = rect.minY + 2
+        while y <= rect.maxY - 2 {
+            var x = rect.minX + 2
+            while x <= rect.maxX - 2 {
+                let px = Int(x * scaleX)
+                let py = bitmap.pixelsHigh - Int(y * scaleY) - 1
+                if px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh,
+                   let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) {
+                    let red = color.redComponent * 255, green = color.greenComponent * 255, blue = color.blueComponent * 255
+                    if blue >= 120, blue - red >= 60, blue - green >= 40 { count += 1 }
+                }
+                x += 1
+            }
+            y += 1
+        }
+        return count
+    }
+
+    /// The same sample, at an explicit point in `view`'s coordinates.
+    @MainActor static func fillColor(_ bitmap: NSBitmapImageRep, atContentPoint contentPoint: NSPoint,
+                                     of view: NSView, in frameView: NSView) -> RGB {
+        let point = view.convert(contentPoint, to: frameView)
         let scaleX = CGFloat(bitmap.pixelsWide) / frameView.bounds.width
         let scaleY = CGFloat(bitmap.pixelsHigh) / frameView.bounds.height
         let x = Int((point.x * scaleX).rounded())
@@ -839,14 +960,22 @@ struct AppUpdateHarness {
             frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
             // A key window is the only place AppKit draws the default button's
             // emphasis; without a window server (headless CI) the renders are
-            // still written, but the weight comparison is not asserted.
+            // still written, but the emphasis is not asserted. With the Close
+            // button gone, the evidence is that the single action button really
+            // renders with the accent fill a default button gets.
             if window.isKeyWindow {
-                let checkFill = fillColor(bitmap, of: item.controller.checkButton, in: frameView)
-                let closeFill = fillColor(bitmap, of: item.controller.closeButton, in: frameView)
-                try check(checkFill != closeFill,
-                          "\(item.appearance)/\(item.scenario): primary and secondary buttons render identically (\(checkFill))")
+                let accent = accentPixels(bitmap, of: item.controller.checkButton, in: frameView)
+                // 「正在检查」时按钮是禁用的：AppKit 把禁用的默认按钮画成灰底，
+                // 强调色只在可用状态下出现，所以只有可用状态才要求 accent 填充。
+                if item.controller.checkButton.isEnabled {
+                    try check(accent >= 200,
+                              "\(item.appearance)/\(item.scenario): the only action button renders without default-button emphasis (\(accent) accent pixels)")
+                } else {
+                    try check(accent == 0,
+                              "\(item.appearance)/\(item.scenario): a disabled check button renders with accent fill (\(accent) pixels)")
+                }
                 weights.append(["appearance": item.appearance, "state": item.scenario,
-                                "check": checkFill.json, "close": closeFill.json,
+                                "accent_pixels": accent,
                                 "layout": layout(item.controller).json])
             } else {
                 print("{\"warning\":\"\(item.appearance)/\(item.scenario): About window is not key; weight not measured\"}")
