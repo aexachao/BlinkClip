@@ -109,6 +109,11 @@
 - 检查中英文最小窗口宽度、长文案、状态失败及截图设置深链。（Agent 推断）
 - 离屏截图不替代可见界面验收，隔离数据测试不代表真实历史清理或系统授权通过。（Agent 推断）
 
+## 编辑器选框与放大镜
+- **编辑器选框（虚线框）、8 个手柄、长截图裁剪边线、放大镜十字与框选覆盖层同色（跟随系统强调色）**：统一取共享常量 `selectionAccent`（`replica/Vendor/capcap/UI/SelectionAccent.swift`；`NSColor.controlAccentColor` 解析成 sRGB，失败才回落 `systemBlue`，本机实测 `#007AFF` / rgb(0,122,255)）。**全产品只有这一份选区色定义**：覆盖层的 `SelectionView.selectionTint` 已改为引用这个常量（不再自带表达式），编辑器与放大镜里也不重写第二份字面色值——改色只改这一个常量。（2026-11-16 用户要求；源码 `EditCanvasView.swift` 的 `selectionOutlineColor` / `drawSelectionHandles`、`EditWindowController.swift` 的 `SelectionChromeOverlay.draw`、`ScrollCropView.swift` 的裁剪边线与手柄、`UI/MagnifierLensPanelWindow.swift` 的 `drawMagnifiedArea`；实测见 `evidence/patches/ed-report.md`）
+- 「选区语义」与「工具语义」两条色不混：选框/手柄/裁剪边线/放大镜十字走 `selectionAccent`（跟随系统强调色）；工具栏选中态、工具组下拉对勾、美化预设与色板选中环、粗细滑块充填、填充样式分段控件、二维码悬浮光圈仍用 `accentGreen`（0,212,106），因为它们表达「当前启用哪个工具/选项」，不是「选区在哪」。要整体换品牌强调色时改 `accentGreen` 一处即可，两条色互不影响。（2026-11-16 取舍说明）
+- 编辑器选区框仍是虚线（`[6,4]`、2pt），本次只改颜色不改形态：虚线=编辑器选框，实线=屏幕取景框，两种语义仍可区分。（2026-11-16 现状）
+
 ## 2026-11-11 自有素材接入
 
 A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立绘制；中英文重新撰写，其他语言明确回退英文。源稿审查与源码接入完成，本机 arm64 包 / 安装已验，新的 Universal 正式发布与商店专项仍分别验收，不把候选图审查当作实际安装验收。主 mark 保留现选取景框与折角卡片；源证据、提取研究材料边界和第三方许可见 `branding/BlinkClipAssets/PROVENANCE.md`、`NOTICE.md` 与 `docs/BRAND_ASSET_REPLACEMENTS.md`。

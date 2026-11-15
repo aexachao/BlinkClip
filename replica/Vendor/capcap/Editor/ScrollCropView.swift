@@ -24,7 +24,6 @@ final class ScrollCropView: NSView {
 
     private var activeEdge: Edge?
 
-    private let accent = NSColor(red: 0, green: 212.0 / 255.0, blue: 106.0 / 255.0, alpha: 1.0)
     private let outerMargin: CGFloat = 80
     private let minimumImageInset: CGFloat = 24
     private let minimumCropHeight: CGFloat = 12
@@ -191,8 +190,9 @@ final class ScrollCropView: NSView {
             width: imageFrame.width, height: imageFrame.maxY - cropBottom
         ).fill()
 
-        // Kept-region border.
-        accent.setStroke()
+        // Kept-region border — selection accent, same blue as the capture
+        // frame: this line is where the crop is, not a brand colour.
+        selectionAccent.setStroke()
         let border = NSBezierPath(rect: NSRect(
             x: imageFrame.minX, y: cropTop,
             width: imageFrame.width, height: cropBottom - cropTop
@@ -209,7 +209,7 @@ final class ScrollCropView: NSView {
     }
 
     private func drawHandle(atY y: CGFloat) {
-        accent.setStroke()
+        selectionAccent.setStroke()
         let line = NSBezierPath()
         line.lineWidth = 2
         line.move(to: NSPoint(x: imageFrame.minX, y: y))
@@ -217,7 +217,7 @@ final class ScrollCropView: NSView {
         line.stroke()
 
         let tab = NSRect(x: imageFrame.midX - 24, y: y - 7, width: 48, height: 14)
-        accent.setFill()
+        selectionAccent.setFill()
         NSBezierPath(roundedRect: tab, xRadius: 7, yRadius: 7).fill()
         NSColor.white.setFill()
         for dx in [-7.0, 0.0, 7.0] {
@@ -275,7 +275,7 @@ final class ScrollCropView: NSView {
         marker.line(to: NSPoint(x: previewRect.maxX, y: markerY))
         marker.stroke()
 
-        accent.setStroke()
+        selectionAccent.setStroke()
         let frame = NSBezierPath(rect: previewRect)
         frame.lineWidth = 1.5
         frame.stroke()

@@ -460,7 +460,10 @@ class EditCanvasView: NSView {
     private static let selectionBoxPad: CGFloat = 6
     private static let hoverBoxPad: CGFloat = 5
     private static let hoverColor = NSColor(calibratedRed: 0.0, green: 0.56, blue: 1.0, alpha: 1.0)
-    private static let selectionOutlineColor = NSColor(calibratedWhite: 0.36, alpha: 0.9)
+    /// Dashed box around the selected annotation. Same accent as the capture
+    /// overlay's frame and this canvas' handle dots, so "selected" reads as one
+    /// colour instead of a neutral grey box wrapped around blue handles.
+    private static let selectionOutlineColor = selectionAccent
 
     private var trackingArea: NSTrackingArea?
 
@@ -2840,7 +2843,7 @@ class EditCanvasView: NSView {
                     at: resizeHandlePoint(anchor, for: annotation),
                     size: EditCanvasView.resizeHandleSize,
                     fill: NSColor.white.withAlphaComponent(0.95),
-                    stroke: accentGreen,
+                    stroke: selectionAccent,
                     in: context
                 )
             }
@@ -2864,7 +2867,7 @@ class EditCanvasView: NSView {
                 at: handleCenter,
                 size: EditCanvasView.rotateHandleSize,
                 fill: NSColor(white: 0.12, alpha: 0.94),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
             drawSymbolGlyph(
@@ -2881,7 +2884,7 @@ class EditCanvasView: NSView {
                 at: cp,
                 size: EditCanvasView.curveHandleSize,
                 fill: NSColor.white.withAlphaComponent(0.95),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
         }
@@ -2892,7 +2895,7 @@ class EditCanvasView: NSView {
                 at: tip,
                 size: EditCanvasView.tipHandleSize,
                 fill: NSColor.white.withAlphaComponent(0.95),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
         }
@@ -2910,14 +2913,15 @@ class EditCanvasView: NSView {
         }
 
         // 4b. Second text-callout add/tip handle. Before the second leader
-        // exists, use a green plus so the extra affordance is explicit.
+        // exists, use the selection accent plus so the extra affordance is
+        // explicit.
         if let tip = secondTextCalloutHandleCenter(for: annotation),
            let text = annotation as? TextAnnotation {
             let isAddHandle = !text.hasSecondCalloutArrow
             drawHandleDot(
                 at: tip,
                 size: EditCanvasView.textCalloutHandleSize,
-                fill: isAddHandle ? accentGreen : text.color,
+                fill: isAddHandle ? selectionAccent : text.color,
                 stroke: NSColor.white.withAlphaComponent(0.95),
                 in: context
             )
@@ -2938,7 +2942,7 @@ class EditCanvasView: NSView {
                 at: source,
                 size: EditCanvasView.magnifierSourceHandleSize,
                 fill: NSColor.white.withAlphaComponent(0.95),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
         }
@@ -2949,7 +2953,7 @@ class EditCanvasView: NSView {
                 at: start,
                 size: EditCanvasView.endpointHandleSize,
                 fill: NSColor.white.withAlphaComponent(0.95),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
         }
@@ -2958,7 +2962,7 @@ class EditCanvasView: NSView {
                 at: end,
                 size: EditCanvasView.endpointHandleSize,
                 fill: NSColor.white.withAlphaComponent(0.95),
-                stroke: accentGreen,
+                stroke: selectionAccent,
                 in: context
             )
         }
@@ -3093,7 +3097,7 @@ class EditCanvasView: NSView {
             at: NSPoint(x: rect.midX, y: rect.midY),
             size: rect.width,
             fill: NSColor(white: 0.12, alpha: 0.94 * alpha),
-            stroke: accentGreen.withAlphaComponent(alpha),
+            stroke: selectionAccent.withAlphaComponent(alpha),
             in: context
         )
         drawSymbolGlyph(

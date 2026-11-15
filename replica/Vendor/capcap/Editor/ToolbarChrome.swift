@@ -3,6 +3,13 @@ import AppKit
 /// Green used for the selected / active toolbar state. Shared by the bar, the
 /// grouped-tool dropdown rows and the shortcut list, so "selected" reads the
 /// same everywhere.
+///
+/// This is the "which tool / which option is active" accent, deliberately not
+/// the selection accent: anything that says *where the crop is* — the overlay's
+/// frame, the editor's selection outline and handles, the long-screenshot crop
+/// boundaries, the magnifier crosshair — uses `selectionAccent`
+/// (`UI/SelectionAccent.swift`, follows the system accent colour), so the
+/// selection chrome never appears in two different colours.
 let accentGreen = NSColor(red: 0, green: 212.0 / 255.0, blue: 106.0 / 255.0, alpha: 1.0)
 
 /// Geometry and drawing shared by the editor toolbar and the grouped-tool

@@ -6885,7 +6885,6 @@ final class SelectionChromeOverlay: NSView {
     private(set) var selectionRectInView: NSRect = .zero
     private(set) var isActiveAndVisible: Bool = false
 
-    private let accentColor = NSColor(red: 0, green: 212.0/255.0, blue: 106.0/255.0, alpha: 1.0)
     private let handleSize: CGFloat = 8
     private let handleHitSize: CGFloat = 12
     private let borderWidth: CGFloat = 2.0
@@ -7016,7 +7015,10 @@ final class SelectionChromeOverlay: NSView {
         context.saveGState()
         defer { context.restoreGState() }
 
-        context.setStrokeColor(accentColor.cgColor)
+        // Selection frame and handle dots use the shared selection accent (the
+        // same blue as the capture overlay), not `accentGreen`: this chrome is
+        // where the crop is, not which tool is active.
+        context.setStrokeColor(selectionAccent.cgColor)
         context.setLineWidth(borderWidth)
         context.setLineDash(phase: 0, lengths: dashPattern)
         context.stroke(rect.insetBy(dx: -1, dy: -1))
@@ -7029,7 +7031,7 @@ final class SelectionChromeOverlay: NSView {
                 width: handleSize,
                 height: handleSize
             )
-            context.setFillColor(accentColor.cgColor)
+            context.setFillColor(selectionAccent.cgColor)
             context.fillEllipse(in: handleRect)
         }
 

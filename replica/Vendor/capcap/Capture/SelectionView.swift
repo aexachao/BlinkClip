@@ -154,13 +154,11 @@ class SelectionView: NSView {
 
     // MARK: - Constants
 
-    /// Capture chrome tint: the product accent (system blue). Resolved once so
-    /// the frame, handles and size label cannot drift apart. `controlAccentColor`
-    /// is dynamic (it follows the user's accent); a colour that cannot be
-    /// converted to sRGB falls back to the fixed system blue.
-    private static let selectionTint: NSColor = {
-        NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? NSColor.systemBlue
-    }()
+    /// Capture chrome tint: the product accent (system blue), aliased to the one
+    /// shared constant so the overlay, the editor's selection chrome and the
+    /// magnifier lens cannot drift apart. The colour itself is defined once in
+    /// `UI/SelectionAccent.swift`; there is no second literal here.
+    private static let selectionTint: NSColor = selectionAccent
     private static let selectionTintCGColor: CGColor = selectionTint.cgColor
     private let handleSize: CGFloat = 8
     private let handleHitSize: CGFloat = 12

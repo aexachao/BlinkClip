@@ -402,10 +402,12 @@ final class MagnifierLensPanelView: NSView {
         context.draw(cropped, in: drawRect)
         context.restoreGState()
 
-        // Thin app-accent crosshair spanning the full magnified area.
+        // Thin selection-accent crosshair spanning the full magnified area.
+        // Same blue as the capture frame and the editor's handles, so the lens
+        // reads as part of the selection chrome rather than a second green.
         let centerX = rect.midX
         let centerY = rect.midY
-        accentGreen.setStroke()
+        selectionAccent.setStroke()
         let bigCross = NSBezierPath()
         bigCross.lineWidth = 2
         bigCross.move(to: NSPoint(x: rect.minX, y: centerY))
