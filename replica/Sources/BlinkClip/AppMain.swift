@@ -330,23 +330,21 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         }
     }
 
+    /// 底部快捷菜单每次右键现取状态重建：分组、图标、动作与置灰都来自模型
+    /// （`PanelShortcutMenuModel`），这里只负责把当前状态塞进去。
+    private var panelShortcutMenuContext: PanelShortcutMenuContext {
+        PanelShortcutMenuContext(
+            productName: ReplicaBrand.name,
+            isMonitoringPaused: store.preferences.isMonitoringPaused,
+            diagnosticsTitle: diagnosticsMenuTitle,
+            hotKeyNotice: hotKeyStatus != noErr ? "历史快捷键无法注册" : nil,
+            stackHotKeyNotice: stackHotKeyStatus != noErr
+                ? "\(ReplicaBrand.name) Stack 快捷键无法注册" : nil)
+    }
+
     @objc private func statusClicked(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
-            let menu = NSMenu()
-            menu.addItem(menuItem("打开剪贴板", #selector(togglePanel(_:))))
-            menu.addItem(menuItem("新建文本…", #selector(newText(_:))))
-            menu.addItem(menuItem("设置…", #selector(settings(_:))))
-            menu.addItem(menuItem(diagnosticsMenuTitle, #selector(toggleDiagnostics(_:))))
-            menu.addItem(menuItem(store.preferences.isMonitoringPaused ? "继续采集" : "暂停采集", #selector(pause(_:))))
-            if hotKeyStatus != noErr {
-                let notice = NSMenuItem(title: "历史快捷键无法注册", action: nil, keyEquivalent: "")
-                menu.addItem(notice)
-            }
-            if stackHotKeyStatus != noErr {
-                menu.addItem(NSMenuItem(title: "\(ReplicaBrand.name) Stack 快捷键无法注册", action: nil, keyEquivalent: ""))
-            }
-            menu.addItem(.separator())
-            menu.addItem(menuItem("退出", #selector(quit(_:))))
+            let menu = PanelShortcutMenuBuilder.makeMenu(panelShortcutMenuContext, target: self)
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
@@ -429,6 +427,24 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     @objc private func importArchive(_ sender: Any?) { ui.importArchive() }
     @objc private func exportArchive(_ sender: Any?) { ui.exportArchive() }
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
+
+    /// 底部快捷菜单的「退出 \(ReplicaBrand.name)」：先过二次确认弹窗，
+    /// 用户点「取消」或按 Esc 时 `confirm` 返回 false，进程继续跑。
+    @objc private func confirmQuit(_ sender: Any?) { PanelShortcutMenuQuitConfirmation.confirm() }
+
+    /// 「检查更新」走的就是关于页那颗按钮的同一条路径
+    /// （`BlinkClipInAppUpdater.checkForUpdates()`），不再另写一套。
+    @objc private func checkForUpdates(_ sender: Any?) {
+        do { try inAppUpdater.checkForUpdates() }
+        catch { ui.presentError(error) }
+    }
+
+    /// 「帮助与关于」只发通知，**由设置窗口观察后打开关于页**；
+    /// 关于页正在迁进设置页。观察者还没接上时，这次 post 没有副作用。
+    @objc private func openAbout(_ sender: Any?) {
+        NotificationCenter.default.post(name: .blinkClipOpenAbout, object: nil)
+    }
+
     @objc private func about(_ sender: Any?) {
         ui?.hidePanel()
         aboutController.showWindow(sender)
