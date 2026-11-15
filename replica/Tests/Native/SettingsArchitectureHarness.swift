@@ -11,6 +11,9 @@ import BlinkClipCapture
 @main struct SettingsArchitectureHarness {
     struct Failure: Error { let message: String }
     static var assertions = 0
+    /// 逐卡/逐行契约单独计数：报告里「恢复了多少断言」用这两个数，不靠手算。
+    static var cardCentringAssertions = 0
+    static var rowAlignmentAssertions = 0
     @MainActor static var captures: [(String, NSImage)] = []
     static func check(_ value: Bool, _ message: String) throws {
         assertions += 1
@@ -145,7 +148,8 @@ import BlinkClipCapture
     @MainActor static var pageGeometry: [String: [String: Double]] = [:]
     /// 行内对齐的逐行实测值（文字块中线、开关中线、偏差），写进结果 JSON。
     @MainActor static var rowAlignmentGeometry: [String: [[String: Any]]] = [:]
-    /// 卡片内容垂直居中的逐卡实测值（卡顶→首行墨迹顶、末行墨迹底→卡底、差值）。
+    /// 卡片与卡内每行的实测值（卡顶→首行框顶、末行框底→卡底、逐行上下留白，
+    /// 以及同一张卡的墨迹带证据）。
     @MainActor static var cardCentringGeometry: [String: [[String: Any]]] = [:]
     /// 关于页的实测值（页顶 → 卡片顶、卡片内容上下留白、状态行与按钮间距）。
     @MainActor static var aboutGeometry: [String: [String: Double]] = [:]
@@ -317,12 +321,52 @@ import BlinkClipCapture
         }
     }
 
-    // MARK: - 卡片内容垂直居中（墨迹带，≤0.5pt）
+    // MARK: - 卡片行结构（卡片只给左右内边距，每行自带上下留白）
+
+    // A card supplies horizontal inset only; every row owns a symmetric vertical
+    // inset (`SettingsRowMetrics.singleLine` 9pt / `.withDescription` 8pt /
+    // `.sectionContent` 12pt). The card-level contract is therefore measured in
+    // the unit DESIGN.md now names: the row's own frame against its boundaries
+    // (the card edge or the adjacent divider). Glyph ascender/descender pixel
+    // differences are explicitly not layout error there — a bordered button's
+    // fill also extends ~1.25pt below its frame — so the glyph-ink band stays
+    // measured as evidence in the JSON but no longer decides the contract.
+
+    /// 卡片里的一行：行内容框（该行可见元素的并集，不含贴着两侧边界的整行按钮框）
+    /// 与它自己的上下边界。
+    struct CardRowBand {
+        struct Member {
+            let role: String
+            let id: String?
+            let frame: NSRect
+            var record: [String: Any] {
+                ["role": role, "id": id ?? "", "height": Double((frame.height * 100).rounded() / 100),
+                 "top": Double((frame.maxY * 100).rounded() / 100),
+                 "bottom": Double((frame.minY * 100).rounded() / 100)]
+            }
+        }
+        let index: Int
+        let content: NSRect
+        let top: CGFloat      // 卡片顶边或相邻分隔线的上沿（屏幕坐标 y 向上）
+        let bottom: CGFloat   // 卡片底边或相邻分隔线的下沿
+        let members: [Member]
+        var padTop: CGFloat { top - content.maxY }
+        var padBottom: CGFloat { content.minY - bottom }
+        var delta: CGFloat { abs(padTop - padBottom) }
+        var record: [String: Any] {
+            [
+                "band": index,
+                "padTop": Double((padTop * 100).rounded() / 100),
+                "padBottom": Double((padBottom * 100).rounded() / 100),
+                "contentHeight": Double((content.height * 100).rounded() / 100),
+                "delta": Double((delta * 100).rounded() / 100),
+                "members": members.map(\.record),
+            ]
+        }
+    }
 
     /// 卡片「可见内容带」的两条留白：卡顶 → 首行墨迹顶、末行墨迹底 → 卡底。
-    ///
-    /// 量的是渲染出来的墨迹，不是 AX 控件外框：文字行盒里升部/降部的空隙、
-    /// 开关轨道、分隔线都算在内容带里，所以这张表能和肉眼看到的一致。
+    /// 只作证据（写进结果 JSON），判定用 `CardRowBand` 的框。
     struct CardInkBand {
         let index: Int
         let card: NSRect
@@ -331,25 +375,27 @@ import BlinkClipCapture
         var topGap: CGFloat { card.maxY - inkTopY }
         var bottomGap: CGFloat { inkBottomY - card.minY }
         var delta: CGFloat { abs(topGap - bottomGap) }
-        var record: [String: Any] {
-            [
-                "card": index,
-                "cardHeight": Double((card.height * 100).rounded() / 100),
-                "inkHeight": Double(((inkTopY - inkBottomY) * 100).rounded() / 100),
-                "topGap": Double((topGap * 100).rounded() / 100),
-                "bottomGap": Double((bottomGap * 100).rounded() / 100),
-                "delta": Double((delta * 100).rounded() / 100),
-            ]
-        }
     }
 
-    /// 一张卡片的内容墨迹带。
+    /// 一张卡片的像素扫描：内容墨迹带 + 卡内贯通内容宽度的分隔线。
+    struct CardScan {
+        struct Boundary {
+            let centre: CGFloat
+            let thickness: CGFloat
+        }
+        let inkTopY: CGFloat
+        let inkBottomY: CGFloat
+        let dividers: [Boundary]
+    }
+
+    /// 扫一张卡片：取卡片内缘（左右各让 16pt 避开 12pt 圆角、上下各让 2.5pt
+    /// 避开 1pt 描边）的全部像素，先按出现次数最多的颜色定卡片底色，再把
+    /// 「任一通道差 >0.015」的像素记为墨迹。
     ///
-    /// 取卡片内缘（左右各让 16pt 避开 12pt 圆角、上下各让 2.5pt 避开 1pt 描边）的
-    /// 全部像素，先按出现次数最多的颜色定卡片底色，再把「任一通道差 >4/255」的像素
-    /// 记为墨迹；最高的一行墨迹像素到卡顶、最低的一行墨迹像素到卡底就是两条留白。
-    @MainActor static func cardInkBand(index: Int, card: NSRect, hosting: NSView, window: NSWindow,
-                                       bitmap: NSBitmapImageRep) -> CardInkBand? {
+    /// 贯通整条内容宽度（≥92%）的细行是分隔线：把它当行的边界，行与行之间就
+    /// 不必靠猜。抗锯齿会让一条 1pt 线占 1–2 个位图行，连续行合并成一条。
+    @MainActor static func cardScan(index: Int, card: NSRect, hosting: NSView, window: NSWindow,
+                                    bitmap: NSBitmapImageRep) -> CardScan? {
         let scaleX = CGFloat(bitmap.pixelsWide) / max(1, hosting.bounds.width)
         let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, hosting.bounds.height)
         func pixel(_ point: NSPoint) -> (x: Int, y: Int)? {
@@ -386,8 +432,11 @@ import BlinkClipCapture
         }
         guard let backgroundKey = histogram.max(by: { $0.value < $1.value })?.key,
               let background = lookup[backgroundKey] else { return nil }
+        let stripWidth = bottomRight.x - topLeft.x + 1
+        let dividerWidth = Int((Double(stripWidth) * 0.92).rounded())
         var inkTopRow: Int?
         var inkBottomRow: Int?
+        var lineRows: [Int] = []
         for y in topLeft.y...bottomRight.y {
             var ink = 0
             for x in topLeft.x...bottomRight.x {
@@ -400,12 +449,112 @@ import BlinkClipCapture
                 if inkTopRow == nil { inkTopRow = y }
                 inkBottomRow = y
             }
+            if ink >= dividerWidth { lineRows.append(y) }
         }
         guard let top = inkTopRow, let bottom = inkBottomRow else { return nil }
-        return CardInkBand(index: index, card: card, inkTopY: windowY(ofRow: top), inkBottomY: windowY(ofRow: bottom))
+        var dividers: [CardScan.Boundary] = []
+        var run: [Int] = []
+        func flush() {
+            guard let first = run.first, let last = run.last else { return }
+            // 一条分隔线最多 2.5pt 厚；更厚的是整块墨迹（按钮、选项块），不是线。
+            let upper = windowY(ofRow: first), lower = windowY(ofRow: last)
+            let thickness = upper - lower + 2 * (0.5 / scaleY) * 1
+            if upper - lower + 1 / scaleY <= 2.5 {
+                dividers.append(CardScan.Boundary(centre: (upper + lower) / 2, thickness: max(0.5, thickness)))
+            }
+            run = []
+        }
+        for row in lineRows {
+            if let last = run.last, row <= last + 1 { run.append(row) } else { flush(); run = [row] }
+        }
+        flush()
+        return CardScan(inkTopY: windowY(ofRow: top), inkBottomY: windowY(ofRow: bottom),
+                        dividers: dividers)
     }
 
-    /// 逐卡量本页所有卡片的内容墨迹带（在出货窗口 648×600 的同一张渲染上量），
+    /// 把一张卡片切成行：以卡顶、卡内分隔线的**近边**、卡底为边界；每行的内容框
+    /// 是该行可见元素帧的并集。
+    ///
+    /// 三条过滤：
+    /// - 合成替身：`SettingsRadioRows` 用 `accessibilityRepresentation` 合成了一棵
+    ///   Picker 子树（`AXRadioGroup`），它的帧不是渲染位置、还跨过分隔线。整棵子树
+    ///   在遍历时就跳过，不靠几何猜测；
+    /// - 跨分隔线的元素是整张卡片的容器（VStack / AXGroup），不属于某一行；
+    /// - 贴着行两侧边界的框是「整行按钮」（自绘单选行）：它自带 8pt 内边距，把它的
+    ///   框当成行内容会让这一行看起来没有留白，所以只取它内部的内容框。
+    @MainActor static func cardRowBands(card: NSRect, tree: [NSObject],
+                                        dividers: [CardScan.Boundary]) -> [CardRowBand] {
+        let ordered = dividers.sorted { $0.centre > $1.centre }
+        var edges: [(top: CGFloat, bottom: CGFloat)] = []
+        var top = card.maxY
+        for divider in ordered {
+            edges.append((top: top, bottom: divider.centre + divider.thickness / 2))
+            top = divider.centre - divider.thickness / 2
+        }
+        edges.append((top: top, bottom: card.minY))
+        func children(_ node: NSObject) -> [Any] {
+            let selector = NSSelectorFromString("accessibilityChildren")
+            let own = node.responds(to: selector)
+                ? (node.perform(selector)?.takeUnretainedValue() as? [Any] ?? []) : []
+            let legacy = node.accessibilityAttributeValue(.children) as? [Any] ?? []
+            let views = (node as? NSView)?.subviews ?? []
+            return own + legacy + views
+        }
+        var seen = Set<ObjectIdentifier>()
+        var candidates: [(role: String, id: String?, frame: NSRect)] = []
+        var standInFrames: [NSRect] = []
+        func visit(_ value: Any) {
+            guard let node = value as? NSObject, seen.insert(ObjectIdentifier(node)).inserted else { return }
+            if axRole(node) == "AXRadioGroup" {
+                // 合成替身：整棵子树不是渲染内容（它的帧还是另一套坐标）。
+                standInFrames.append(axFrame(node))
+                return
+            }
+            if axID(node) != "settings.card" {
+                let frame = axFrame(node)
+                if frame.width > 2, frame.height > 2, frame.height < card.height - 2,
+                   frame.minX >= card.minX - 0.5, frame.maxX <= card.maxX + 0.5,
+                   frame.minY >= card.minY - 0.5, frame.maxY <= card.maxY + 0.5,
+                   !ordered.contains(where: { frame.minY < $0.centre - 1.5 && frame.maxY > $0.centre + 1.5 }) {
+                    candidates.append((axRole(node), axID(node), frame))
+                }
+            }
+            for child in children(node) { visit(child) }
+        }
+        if let root = tree.first { visit(root) }
+        let contentRoles: Set<String> = ["AXStaticText", "AXCheckBox", "AXSwitch", "AXPopUpButton",
+                                         "AXMenuButton", "AXButton", "AXLink", "AXRadioButton",
+                                         "AXSlider", "AXTextField", "AXImage"]
+        /// 合成替身的标签是同级的一个 `AXStaticText`，它与替身组共用同一条顶边：
+        /// 真实内容会被替身组帧部分覆盖，但不会正好从组帧的顶边开始。
+        func isStandIn(_ frame: NSRect) -> Bool {
+            standInFrames.contains { outer in
+                abs(frame.maxY - outer.maxY) <= 1
+                    && frame.minY >= outer.minY - 0.5 && frame.maxY <= outer.maxY + 0.5
+            }
+        }
+        candidates.removeAll { isStandIn($0.frame) }
+        var bands: [CardRowBand] = []
+        for (index, edge) in edges.enumerated() {
+            let members = candidates.filter { $0.frame.midY <= edge.top + 0.5 && $0.frame.midY >= edge.bottom - 0.5 }
+            // 有具名角色的元素时只信它们：`AXUnknown` 是 SwiftUI 的重复/命中区帧
+            // （比可见控件大 1–2pt，且左右不对称），会把行留白算歪。
+            let named = members.filter { contentRoles.contains($0.role) }
+            let trusted = named.isEmpty ? members : named
+            let content = trusted.filter { member in
+                !(abs(edge.top - member.frame.maxY) <= 1 && abs(member.frame.minY - edge.bottom) <= 1)
+            }.map(\.frame)
+            guard let first = content.first else { continue }
+            let frame = content.dropFirst().reduce(first) { $0.union($1) }
+            bands.append(CardRowBand(index: index, content: frame, top: edge.top, bottom: edge.bottom,
+                                     members: members.map {
+                                         CardRowBand.Member(role: $0.role, id: $0.id, frame: $0.frame)
+                                     }))
+        }
+        return bands
+    }
+
+    /// 逐卡逐行量本页所有卡片（在出货窗口 648×600 的同一张渲染上量），
     /// 写进 `cardCentringGeometry`；实测值先落盘，断言在后面统一跑。
     @MainActor static func measureCardCentring(hosting: NSView, window: NSWindow,
                                                section: SettingsSection, appearance: String,
@@ -415,8 +564,9 @@ import BlinkClipCapture
             throw Failure(message: "\(appearance) \(section) has no bitmap for the card centring check")
         }
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let tree = accessibilityTree(hosting)
         var frames: [NSRect] = []
-        for rect in accessibilityTree(hosting).filter({ axID($0) == "settings.card" }).map({ axFrame($0) })
+        for rect in tree.filter({ axID($0) == "settings.card" }).map({ axFrame($0) })
         where rect.width > 10 && rect.height > 20 {
             if frames.contains(where: { abs($0.minX - rect.minX) < 0.5 && abs($0.minY - rect.minY) < 0.5
                                           && abs($0.width - rect.width) < 0.5 && abs($0.height - rect.height) < 0.5 }) {
@@ -428,12 +578,148 @@ import BlinkClipCapture
         frames.sort { $0.maxY > $1.maxY }
         var rows: [[String: Any]] = []
         for (index, card) in frames.enumerated() {
-            guard let band = cardInkBand(index: index, card: card, hosting: hosting, window: window, bitmap: bitmap) else {
+            guard let scan = cardScan(index: index, card: card, hosting: hosting, window: window, bitmap: bitmap) else {
                 throw Failure(message: "\(appearance) \(section) card \(index) has no ink band inside \(card)")
             }
-            rows.append(band.record)
+            let bands = cardRowBands(card: card, tree: tree, dividers: scan.dividers)
+            if ProcessInfo.processInfo.environment["BLINKCLIP_CARD_DEBUG"] == "1" {
+                let inner = tree.filter { node in
+                    let f = axFrame(node)
+                    return f.width > 2 && f.height > 2 && f.height < card.height - 2
+                        && f.minY >= card.minY - 0.5 && f.maxY <= card.maxY + 0.5
+                        && f.minX >= card.minX - 0.5 && f.maxX <= card.maxX + 0.5
+                }
+                for node in inner {
+                    let f = axFrame(node)
+                    print(String(format: "NODE %@ card=%d %@ %@ top=%.2f bottom=%.2f h=%.2f w=%.2f",
+                                 "\(section.rawValue)", index, axRole(node), axID(node) ?? "-",
+                                 f.maxY, f.minY, f.height, f.width))
+                }
+                for d in scan.dividers {
+                    print(String(format: "DIV  card=%d y=%.2f thickness=%.2f", index, d.centre, d.thickness))
+                }
+            }
+            let ink = CardInkBand(index: index, card: card,
+                                  inkTopY: scan.inkTopY, inkBottomY: scan.inkBottomY)
+            let firstBand = bands.first, lastBand = bands.last
+            var record: [String: Any] = [
+                "card": index,
+                "section": section.rawValue,
+                "cardHeight": Double((card.height * 100).rounded() / 100),
+                "cardTop": Double((card.maxY * 100).rounded() / 100),
+                "cardBottom": Double((card.minY * 100).rounded() / 100),
+                "inkTopGap": Double((ink.topGap * 100).rounded() / 100),
+                "inkBottomGap": Double((ink.bottomGap * 100).rounded() / 100),
+                "inkDelta": Double((ink.delta * 100).rounded() / 100),
+                "rows": bands.count,
+                "bands": bands.map(\.record),
+            ]
+            // 卡级：卡片自己不加垂直内边距——首行的上留白、末行的下留白都必须是
+            // 该行自己的留白常量，不能是「常量 + 卡片内边距」。
+            if let first = firstBand, let last = lastBand {
+                record["topGap"] = Double((first.padTop * 100).rounded() / 100)
+                record["bottomGap"] = Double((last.padBottom * 100).rounded() / 100)
+                record["delta"] = Double((abs(first.padTop - last.padBottom) * 100).rounded() / 100)
+            }
+            rows.append(record)
         }
         cardCentringGeometry["\(appearance)-\(section.rawValue)"] = rows
+    }
+
+    /// 需要逐卡达标的十二张卡（任务口径）：通用四组、剪贴板两张、截图两张、
+    /// 隐私三张、AI 一张。数量按卡片身份点名，同时核对实际量到的卡片数——
+    /// 新加一张卡不会悄悄跑出逐卡断言。
+    @MainActor static var cardCentringCoverage: [(section: SettingsSection, cards: Int)] {
+        [(.general, 4), (.clipboard, 2), (.screenshot, 2), (.privacy, 3), (.ai, 1)]
+    }
+
+    /// 逐卡逐行断言（新结构：卡片只给左右内边距）。
+    ///
+    /// 先锁覆盖面（十二张卡一张都不能少，量到的卡片数也要对上），再逐卡量：
+    /// - 卡级：首行的上留白、末行的下留白都必须等于该行自己的留白常量（8/9/12），
+    ///   不能是「常量 + 卡片内边距」——卡片自己不加上下留白；
+    /// - 卡级残差：首行留白与末行留白之差 ≤1.0pt（浅色，8 与 9 是源代码里写死的
+    ///   两种行留白，同一张卡可以一个用 8、另一个用 9）／≤1.5pt（深色，沿用既有
+    ///   回归上限）；
+    /// - 行级：每行的上下留白相等 ≤0.5pt，且落在源码常量 ±1.0pt 内（`AX` 命中区
+    ///   比可见控件大 1pt：开关 17 对 16、保留期块 46 对 44）。
+    ///
+    /// 快捷键页不套行留白常量（那里用 `frame(minHeight: 36)`），只核卡级残差。
+    @MainActor static func assertCardCentring(appearance: String) throws {
+        for entry in cardCentringCoverage {
+            let key = "\(appearance)-\(entry.section.rawValue)"
+            let cards = cardCentringGeometry[key] ?? []
+            try check(cards.count == entry.cards,
+                      "\(appearance) \(entry.section) measured \(cards.count) cards, expected \(entry.cards)")
+        }
+        let cardLimit: Double = appearance == "light" ? 1.0 : 1.5
+        let insets: [Double] = [Double(SettingsRowMetrics.singleLine),
+                                Double(SettingsRowMetrics.withDescription),
+                                Double(SettingsRowMetrics.sectionContent)]
+        func declared(_ value: Double) -> Bool {
+            insets.contains { abs($0 - value) <= 1.0 }
+        }
+        let covered = Set(cardCentringCoverage.map { $0.section.rawValue })
+        for key in cardCentringGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
+            for row in cardCentringGeometry[key] ?? [] {
+                let cardIndex = row["card"] ?? "?"
+                guard let delta = row["delta"] as? Double,
+                      let topGap = row["topGap"] as? Double,
+                      let bottomGap = row["bottomGap"] as? Double else {
+                    throw Failure(message: "\(appearance) \(key) card \(cardIndex) has no measured card inset")
+                }
+                try check(delta <= cardLimit,
+                          "\(appearance) \(key) card \(cardIndex) first/last row insets differ by \(delta)pt: top \(topGap) bottom \(bottomGap)")
+                let section = (row["section"] as? Int).flatMap(SettingsSection.init(rawValue:))
+                guard let section, covered.contains(section.rawValue) else { continue }
+                try check(declared(topGap) && declared(bottomGap),
+                          "\(appearance) \(key) card \(cardIndex) is not flush with its rows: top \(topGap) bottom \(bottomGap), declared row insets \(insets)")
+                guard let bands = row["bands"] as? [[String: Any]], !bands.isEmpty else {
+                    throw Failure(message: "\(appearance) \(key) card \(cardIndex) measured no rows")
+                }
+                for band in bands {
+                    guard let padTop = band["padTop"] as? Double, let padBottom = band["padBottom"] as? Double,
+                          let bandDelta = band["delta"] as? Double else {
+                        throw Failure(message: "\(appearance) \(key) card \(cardIndex) row \(band["band"] ?? "?") has no measured inset")
+                    }
+                    try check(bandDelta <= 0.5,
+                              "\(appearance) \(key) card \(cardIndex) row \(band["band"] ?? "?") does not own a symmetric inset: top \(padTop) bottom \(padBottom) delta \(bandDelta)pt")
+                    try check(declared(padTop),
+                              "\(appearance) \(key) card \(cardIndex) row \(band["band"] ?? "?") vertical inset \(padTop) is not one of the declared row insets \(insets)")
+                }
+            }
+        }
+    }
+
+    /// 每卡/每行数值表：每个语言 × 外观各打一遍，回归日志里能直接看到数值。
+    @MainActor static func printCardCentringTable(appearance: String, language: String) {
+        func padded(_ text: String, _ width: Int) -> String {
+            text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
+        }
+        for key in cardCentringGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
+            for row in cardCentringGeometry[key] ?? [] {
+                let section = (row["section"] as? Int).flatMap(SettingsSection.init(rawValue:))?.title ?? key
+                print("CARD [\(language)/\(appearance)] \(padded(section, 18)) card=\(row["card"] ?? "?")/"
+                    + " rows=\(row["rows"] ?? "?") frame=\(row["topGap"] ?? "?")/\(row["bottomGap"] ?? "?")"
+                    + " delta=\(row["delta"] ?? "?") ink=\(row["inkTopGap"] ?? "?")/\(row["inkBottomGap"] ?? "?")"
+                    + " delta=\(row["inkDelta"] ?? "?")")
+                for band in row["bands"] as? [[String: Any]] ?? [] {
+                    print("  ROW [\(language)/\(appearance)] card=\(row["card"] ?? "?") row=\(band["band"] ?? "?")"
+                        + " pad=\(band["padTop"] ?? "?")/\(band["padBottom"] ?? "?")"
+                        + " delta=\(band["delta"] ?? "?") h=\(band["contentHeight"] ?? "?")")
+                }
+            }
+        }
+    }
+
+    /// 每行控件对齐数值表：语言 × 外观各打一遍。
+    @MainActor static func printRowAlignmentTable(appearance: String, language: String) {
+        for key in rowAlignmentGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
+            for row in rowAlignmentGeometry[key] ?? [] {
+                print("ROW  [\(language)/\(appearance)] \(key) \(row["row"] ?? "?") lines=\(row["lines"] ?? "?")"
+                    + " text=\(row["textCenter"] ?? "?") control=\(row["controlCenter"] ?? "?") delta=\(row["delta"] ?? "?")")
+            }
+        }
     }
 
     /// 实测值落盘：`out/card-centring-<language>-<appearance>.json`。
@@ -445,55 +731,85 @@ import BlinkClipCapture
         try data.write(to: out.appendingPathComponent("card-centring-\(language)-\(appearance).json"))
     }
 
-
-
     // MARK: - 行内垂直对齐（右侧控件 ↔ 行文字块，≤0.5pt）
 
     /// 一行「标题 + 可选说明 + 右侧控件」的对齐规格。
     ///
+    /// `control` 是右侧控件的稳定标识（开关 / 菜单选择器 / 复选框）；
     /// `title` 按当前语言的文案找标题（单行行只有标题）；`detailIdentifier` 是
-    /// 说明行的稳定标识（双行行才有）。两者都取不到就判失败，不做「找不到就跳过」。
+    /// 说明行的稳定标识（双行行才有）。取不到就判失败，不做「找不到就跳过」。
     struct AlignmentRow {
-        let toggle: String
+        enum Kind: String {
+            case toggle, picker, checkbox
+        }
+        let control: String
+        let kind: Kind
         let title: String
         let detailIdentifier: String?
+        var roles: [String] {
+            switch kind {
+            case .toggle: return ["AXCheckBox", "AXButton", "AXSwitch"]
+            case .picker: return ["AXPopUpButton", "AXMenuButton", "AXButton"]
+            case .checkbox: return ["AXCheckBox"]
+            }
+        }
         var lines: Int { detailIdentifier == nil ? 1 : 2 }
     }
 
+    /// 逐行点名：通用页七个控件（五个开关 + 两个菜单选择器）、剪贴板页的复选框、
+    /// 截图页的翻译开关、隐私页四个开关。控件种类不同，中线口径相同。
     static func alignmentRows(for section: SettingsSection) -> [AlignmentRow] {
         switch section {
         case .general:
             return [
-                AlignmentRow(toggle: "settings.open-at-login.toggle",
+                AlignmentRow(control: "settings.open-at-login.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.open-at-login.title"),
                              detailIdentifier: nil),
-                AlignmentRow(toggle: "settings.run-in-background.toggle",
+                AlignmentRow(control: "settings.run-in-background.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.run-in-background.title"),
                              detailIdentifier: nil),
-                AlignmentRow(toggle: "settings.icloud.toggle",
+                AlignmentRow(control: "settings.appearance.theme.picker", kind: .picker,
+                             title: SettingsCopy.text("settings.appearance.theme.title"),
+                             detailIdentifier: "settings.appearance.theme.subtitle"),
+                AlignmentRow(control: "settings.appearance.language.picker", kind: .picker,
+                             title: SettingsCopy.text("settings.appearance.language.title"),
+                             detailIdentifier: "settings.appearance.language.subtitle"),
+                AlignmentRow(control: "settings.icloud.toggle", kind: .toggle,
                              title: SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"),
                              detailIdentifier: "settings.icloud.summary"),
-                AlignmentRow(toggle: "settings.automatic-updates.toggle",
+                AlignmentRow(control: "settings.automatic-updates.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.automatic-updates.title"),
                              detailIdentifier: "settings.automatic-updates.subtitle"),
-                AlignmentRow(toggle: "settings.sound-effects.toggle",
+                AlignmentRow(control: "settings.sound-effects.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.sound-effects.title"),
+                             detailIdentifier: nil),
+            ]
+        case .clipboard:
+            return [
+                AlignmentRow(control: "settings.paste-items.plain-text.toggle", kind: .checkbox,
+                             title: SettingsCopy.text("settings.paste-items.plain-text.title"),
                              detailIdentifier: nil),
             ]
         case .screenshot:
             return [
-                AlignmentRow(toggle: "settings.apple-translation.toggle",
+                AlignmentRow(control: "settings.apple-translation.toggle", kind: .toggle,
                              title: ScreenshotSettingsCopy.text(.appleTranslationTitle),
                              detailIdentifier: "settings.apple-translation.subtitle"),
             ]
         case .privacy:
             return [
-                AlignmentRow(toggle: "settings.privacy.screensharing.toggle",
+                AlignmentRow(control: "settings.privacy.screensharing.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.privacy.screensharing.title"),
                              detailIdentifier: "settings.privacy.screensharing.subtitle"),
-                AlignmentRow(toggle: "settings.privacy.saved-link-preview.toggle",
+                AlignmentRow(control: "settings.privacy.saved-link-preview.toggle", kind: .toggle,
                              title: SettingsCopy.text("replica.settings.privacy.saved-link-preview.title"),
                              detailIdentifier: "replica.settings.privacy.saved-link-preview.subtitle"),
+                AlignmentRow(control: "settings.privacy.confidential-content.toggle", kind: .toggle,
+                             title: SettingsCopy.text("settings.privacy.confidential-content.title"),
+                             detailIdentifier: "settings.privacy.confidential-content.subtitle"),
+                AlignmentRow(control: "settings.privacy.autogenerated-content.toggle", kind: .toggle,
+                             title: SettingsCopy.text("settings.privacy.autogenerated-content.title"),
+                             detailIdentifier: "settings.privacy.autogenerated-content.subtitle"),
             ]
         default:
             return []
@@ -522,8 +838,11 @@ import BlinkClipCapture
         return ""
     }
 
-    /// 逐行断言：开关外框中心 == 该行文字块中心（单行对文字行高中心，双行对
+    /// 逐行断言：右侧控件外框中心 == 该行文字块中心（单行对文字行高中心，双行对
     /// 标题 + 说明整块的中心），误差 ≤0.5pt。实测值写进 `rowAlignmentGeometry`。
+    ///
+    /// 复选框行（剪贴板「纯文本粘贴」）的控件帧含标签文字，方块本身没有独立的
+    /// AX 帧：这一行在渲染像素上量方块那一列的墨迹中线，要求它落在控件帧中线。
     @MainActor static func checkRowAlignment(hosting: NSView, section: SettingsSection,
                                               appearance: String) throws {
         let rows = alignmentRows(for: section)
@@ -531,39 +850,65 @@ import BlinkClipCapture
         hosting.layoutSubtreeIfNeeded()
         let tree = accessibilityTree(hosting)
         var measured: [[String: Any]] = []
+        var bitmap: NSBitmapImageRep?
         for row in rows {
-            guard let toggle = tree.filter({ node in
-                axID(node) == row.toggle && ["AXCheckBox", "AXButton", "AXSwitch"].contains(axRole(node))
-            }).map({ axFrame($0) }).filter({ $0.width > 10 && $0.height > 10 })
+            guard let control = tree.filter({ node in
+                axID(node) == row.control && row.roles.contains(axRole(node))
+            }).map({ axFrame($0) }).filter({ $0.width > 10 && $0.height > 8 })
                 .max(by: { $0.width < $1.width }) else {
-                throw Failure(message: "\(appearance) \(section) is missing the row switch \(row.toggle)")
+                throw Failure(message: "\(appearance) \(section) is missing the row control \(row.control)")
             }
-            guard let title = tree.filter({ node in
-                guard axRole(node) == "AXStaticText" else { return false }
+            let titleFrames: [NSRect] = tree.filter { node in
+                let role = axRole(node)
+                guard role == "AXStaticText" || role == "AXCheckBox" else { return false }
                 let text = axText(node)
                 return text == row.title || text.hasSuffix("| " + row.title)
-            }).map({ axFrame($0) }).filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else {
-                throw Failure(message: "\(appearance) \(section) row \(row.toggle) is missing its title: \(row.title)")
+            }.map { axFrame($0) }.filter { $0.width > 2 }
+            guard let title = titleFrames.max(by: { $0.width < $1.width }) else {
+                throw Failure(message: "\(appearance) \(section) row \(row.control) is missing its title: \(row.title)")
             }
             var block = title
             if let detail = row.detailIdentifier {
                 guard let detailFrame = tree.filter({ axID($0) == detail }).map({ axFrame($0) })
                     .filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else {
-                    throw Failure(message: "\(appearance) \(section) row \(row.toggle) is missing its detail \(detail)")
+                    throw Failure(message: "\(appearance) \(section) row \(row.control) is missing its detail \(detail)")
                 }
                 block = block.union(detailFrame)
             }
-            let delta = abs(block.midY - toggle.midY)
-            measured.append(["row": row.toggle, "lines": row.lines,
+            // 复选框行的控件帧含标签文字，方块本身没有独立的 AX 帧：方块那一列的
+            // 墨迹中线必须落在控件帧（标签行盒）的中线上。方块与文字同处一行时
+            // 两者本来就不是同一件事，所以只核「方块在行盒里正中」。
+            var controlMidY = control.midY
+            var rowLimit: CGFloat = 0.5
+            if row.kind == .checkbox {
+                if bitmap == nil, let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                    hosting.cacheDisplay(in: hosting.bounds, to: rep)
+                    bitmap = rep
+                }
+                guard let rep = bitmap, let window = hosting.window,
+                      let glyph = inkMidY(inScreen: NSRect(x: control.minX, y: control.midY - 14,
+                                                           width: 20, height: 28),
+                                          hosting: hosting, window: window, bitmap: rep) else {
+                    throw Failure(message: "\(appearance) \(section) row \(row.control) has no measurable checkbox glyph")
+                }
+                // 方块是渲染像素：深色下抗锯齿让它的墨迹整体移 0.25–0.5pt，沿用
+                // 与卡片墨迹同一套「浅 0.5 / 深 1.5」口径。
+                rowLimit = appearance == "light" ? 0.5 : 1.5
+                try check(abs(glyph - control.midY) <= rowLimit,
+                          "\(appearance) \(section) row \(row.control) checkbox glyph centre \(glyph) is \(abs(glyph - control.midY))pt off its row box centre \(control.midY)")
+                controlMidY = glyph
+            }
+            let delta = abs(block.midY - controlMidY)
+            measured.append(["row": row.control, "lines": row.lines,
                              "textCenter": Double((block.midY * 100).rounded() / 100),
-                             "switchCenter": Double((toggle.midY * 100).rounded() / 100),
+                             "controlCenter": Double((controlMidY * 100).rounded() / 100),
                              "delta": Double((delta * 100).rounded() / 100)])
-            try check(delta <= 0.5,
-                      "\(appearance) \(section) row \(row.toggle) switch centre \(toggle.midY) is \(delta)pt off its \(row.lines)-line text block centre \(block.midY)")
+            try check(delta <= rowLimit,
+                      "\(appearance) \(section) row \(row.control) control centre \(controlMidY) is \(delta)pt off its \(row.lines)-line text block centre \(block.midY)")
         }
         if section == .general {
-            let upper = try startupSwitchFrame(rows[0].toggle, in: tree)
-            let lower = try startupSwitchFrame(rows[1].toggle, in: tree)
+            let upper = try startupSwitchFrame(rows[0].control, in: tree)
+            let lower = try startupSwitchFrame(rows[1].control, in: tree)
             guard let card = tree.filter({ axID($0) == "settings.card" }).map({ axFrame($0) })
                 .first(where: { $0.contains(upper) && $0.contains(lower) }) else {
                 throw Failure(message: "Missing the shared startup card")
@@ -584,6 +929,61 @@ import BlinkClipCapture
             throw Failure(message: "Missing startup switch \(identifier)")
         }
         return frame
+    }
+
+    /// 一段屏幕区域里的墨迹带中线（卡片底色为基准，任一通道差 >0.015 记为墨迹）。
+    @MainActor static func inkMidY(inScreen rect: NSRect, hosting: NSView, window: NSWindow,
+                                   bitmap: NSBitmapImageRep) -> CGFloat? {
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, hosting.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, hosting.bounds.height)
+        func pixel(_ x: CGFloat, _ y: CGFloat) -> (x: Int, y: Int)? {
+            let local = hosting.convert(window.convertPoint(fromScreen: NSPoint(x: x, y: y)), from: nil)
+            let px = Int(local.x * scaleX)
+            let py = Int((hosting.isFlipped ? local.y : hosting.bounds.height - local.y) * scaleY)
+            guard px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh else { return nil }
+            return (px, py)
+        }
+        func colour(_ x: Int, _ y: Int) -> (CGFloat, CGFloat, CGFloat)? {
+            guard let value = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return nil }
+            return (value.redComponent, value.greenComponent, value.blueComponent)
+        }
+        guard let topLeft = pixel(rect.minX, rect.maxY), let bottomRight = pixel(rect.maxX, rect.minY),
+              bottomRight.x > topLeft.x, bottomRight.y > topLeft.y else { return nil }
+        var histogram: [Int: Int] = [:]
+        var lookup: [Int: (CGFloat, CGFloat, CGFloat)] = [:]
+        for y in topLeft.y...bottomRight.y {
+            for x in topLeft.x...bottomRight.x {
+                guard let value = colour(x, y) else { continue }
+                let key = (Int((value.0 * 255).rounded()) << 16)
+                    | (Int((value.1 * 255).rounded()) << 8)
+                    | Int((value.2 * 255).rounded())
+                histogram[key, default: 0] += 1
+                lookup[key] = value
+            }
+        }
+        guard let backgroundKey = histogram.max(by: { $0.value < $1.value })?.key,
+              let background = lookup[backgroundKey] else { return nil }
+        var inkTopRow: Int?
+        var inkBottomRow: Int?
+        for y in topLeft.y...bottomRight.y {
+            var ink = 0
+            for x in topLeft.x...bottomRight.x {
+                guard let value = colour(x, y) else { continue }
+                if max(abs(value.0 - background.0),
+                       max(abs(value.1 - background.1), abs(value.2 - background.2))) > 0.015 { ink += 1 }
+            }
+            if ink >= 2 {
+                if inkTopRow == nil { inkTopRow = y }
+                inkBottomRow = y
+            }
+        }
+        guard let top = inkTopRow, let bottom = inkBottomRow else { return nil }
+        func windowY(ofRow row: Int) -> CGFloat {
+            let topDown = (CGFloat(row) + 0.5) / scaleY
+            let local = hosting.isFlipped ? topDown : hosting.bounds.height - topDown
+            return window.convertPoint(toScreen: hosting.convert(NSPoint(x: 0, y: local), to: nil)).y
+        }
+        return (windowY(ofRow: top) + windowY(ofRow: bottom)) / 2
     }
 
     /// AI 页状态行：7pt 圆点（绘制出来的实心圆，读屏隐藏）与状态标题文字
@@ -962,6 +1362,14 @@ import BlinkClipCapture
         try check(abs(min(project.minY, license.minY, releases.minY) - contentBottom
                       - SettingsPageMetrics.bottomInset) <= 1,
                   "the About footer must align with the bottom page inset")
+        // 三层间距：身份区 → 更新卡 → 页脚。身份区与更新卡之间是页面的 20pt 节奏；
+        // 更新卡与页脚之间由弹簧撑开（页脚贴底），所以只要求 ≥20pt，不要求等于。
+        let identityGap = description.minY - card.maxY
+        let footerGap = card.minY - copyright.maxY
+        try check(abs(identityGap - 20) <= 1,
+                  "\(appearance) About identity and update card are \(identityGap)pt apart, expected the page's 20pt rhythm")
+        try check(footerGap >= 20,
+                  "\(appearance) About footer starts \(footerGap)pt below the update card, expected at least 20pt")
         let actionButtons = tree.filter { axRole($0) == "AXButton" && (axID($0) ?? "").hasPrefix("about-") }
         try check(actionButtons.count == 1 && axID(actionButtons[0]) == "about-check-updates",
                   "\(appearance) About page action buttons: \(actionButtons.compactMap { axID($0) })")
@@ -973,6 +1381,8 @@ import BlinkClipCapture
                   "\(appearance) About icon is \(icon.height)pt, expected about 96pt")
         aboutGeometry["\(appearance)-about"] = [
             "topGap": Double(topGap),
+            "identityGap": Double(identityGap),
+            "footerGap": Double(footerGap),
             "actionButtonCount": Double(actionButtons.count),
             "iconSide": Double(icon.height),
         ]
@@ -1737,7 +2147,9 @@ import BlinkClipCapture
             }
             // 行内对齐：右侧开关外框中心 == 该行文字块中心（单行对文字行高中心，
             // 双行对标题+说明整块中心），误差 ≤0.5pt。
+            let rowAssertionsBefore = assertions
             try checkRowAlignment(hosting: hosting, section: section, appearance: appearance)
+            rowAlignmentAssertions += assertions - rowAssertionsBefore
             if section == .ai {
                 try checkAIStatusDotAlignment(hosting: hosting, appearance: appearance)
             }
@@ -1765,6 +2177,11 @@ import BlinkClipCapture
         aboutWindow.close()
         // 六页所有卡片都量过之后再统一断言：某一张不达标不影响其它卡的实测值落盘。
         try writeCardCentringReport(appearance: appearance, language: language, out: out)
+        let cardAssertionsBefore = assertions
+        try assertCardCentring(appearance: appearance)
+        cardCentringAssertions += assertions - cardAssertionsBefore
+        printCardCentringTable(appearance: appearance, language: language)
+        printRowAlignmentTable(appearance: appearance, language: language)
         // 六页一律顶部对齐：首元素距内容区顶固定 16pt，不再按「装得下就居中」
         // 分类。装得下的页不滚，装不下的页从同一位置滚到底。
         let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
@@ -1944,7 +2361,7 @@ import BlinkClipCapture
         try check(store.preferences.historyRetentionDays == originalRetention, "viewing pages does not change retention")
         let reopened = try ClipboardStore(directoryURL: fixture)
         try check(reopened.preferences.historyRetentionDays == originalRetention, "persisted retention unchanged")
-        let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,
+        let result: [String: Any] = ["passed":true,"assertions":assertions,"cardCentringAssertions":cardCentringAssertions,"rowAlignmentAssertions":rowAlignmentAssertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,
             "pageGeometry": pageGeometry.mapValues { $0.mapValues { $0 } },
             "rowAlignment": rowAlignmentGeometry,
             "cardCentring": cardCentringGeometry,

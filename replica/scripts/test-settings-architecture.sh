@@ -185,9 +185,38 @@ checks = {
                                 and 'Spacer(minLength: spacing)' in aux,
     # A card supplies horizontal inset only; each row owns its vertical inset.
     'settings-rows-pad-symmetrically': '.padding(.vertical, verticalPadding)' in aux
-                                      and 'enum SettingsRowMetrics' in surface
                                       and 'padding(.vertical' not in
                                       aux[aux.index('private func settingsCard<'):aux.index('// MARK: - 关于闪贴')],
+    # 行留白常量只有一份：单行 9 / 带说明 8 / 成段内容 12，写在
+    # `SettingsSurfaceStyle.swift` 的 `SettingsRowMetrics`（卡片盒子与行盒子同一处），
+    # 设置页、权限页与同步控制器共用，不各页各写一套数值。
+    'row-insets-declared-once': 'enum SettingsRowMetrics' in surface
+                                and 'static let singleLine: CGFloat = 9' in surface
+                                and 'static let withDescription: CGFloat = 8' in surface
+                                and 'static let sectionContent: CGFloat = 12' in surface
+                                and 'enum SettingsRowMetrics' not in aux,
+    # 逐卡覆盖恢复：五页十二张卡按身份点名，卡级残差与逐行留白都在 harness 里断言。
+    'card-centring-is-asserted': 'try assertCardCentring(appearance: appearance)' in harness
+                                 and 'static var cardCentringCoverage' in harness
+                                 and '(.general, 4)' in harness
+                                 and '(.clipboard, 2)' in harness
+                                 and '(.screenshot, 2)' in harness
+                                 and '(.privacy, 3)' in harness
+                                 and '(.ai, 1)' in harness
+                                 and 'try check(bandDelta <= 0.5' in harness
+                                 and 'appearance == "light" ? 1.0 : 1.5' in harness
+                                 and 'printCardCentringTable(appearance:' in harness,
+    # 逐行控件中线按控件种类点名（开关 / 菜单选择器 / 复选框），不只是开关。
+    'row-alignment-covers-every-control': all(marker in harness for marker in
+                                              ['enum Kind: String', 'case toggle, picker, checkbox',
+                                               'settings.appearance.theme.picker',
+                                               'settings.appearance.language.picker',
+                                               'settings.paste-items.plain-text.toggle',
+                                               'settings.privacy.confidential-content.toggle'])
+                                          and 'printRowAlignmentTable(appearance:' in harness,
+    # 关于页三层（身份 / 更新卡 / 页脚）的间距断言。
+    'about-three-layers-are-asserted': 'identityGap' in harness and 'footerGap' in harness
+                                       and "expected the page's 20pt rhythm" in harness,
     'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1
                                            and aux.count('settingsRowSwitch(title:') >= 3,
     'no-row-vertical-padding-hack': '.padding(.top, 1).padding(.bottom' not in aux

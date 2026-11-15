@@ -59,7 +59,8 @@
 
 ## 设置页几何与节奏
 - 六页内容区统一左右 20pt、顶 16pt、底 20pt（`SettingsPageMetrics.horizontalInset = 20` / `topInset = 16` / `bottomInset = 20`）。内容**顶部对齐**：第一个内容块固定距内容区顶 16pt，六页一致；底部 20pt 只在内容收尾/滚到底时成立。（2026-11-15 源码：`AuxiliaryViews.swift` 的 `SettingsPageMetrics`）
-- 垂直节奏只有一条：`ScrollView { content.padding(.top, 16).padding(.bottom, 20) }`，内容超出一屏才滚动。**没有** `GeometryReader`、**没有** `frame(minHeight: proxy.size.height, alignment: .center)`，也不按「装得下/装不下」改首元素位置。反例（已撤销）：把带内边距的内容块放进最小高度等于可视高度的 frame 求居中，短页会整体浮在内容区中间，用户看到的是「内容区上下居中了」而不是「设置项在行内居中」。（2026-11-15 源码：`AuxiliaryViews.swift` 的 `SettingsPageScroll`；用户反馈原文：「为什么内容区域上下居中了？我说的是其中的选项」）
+- 垂直节奏只有一条：`ScrollView { content.padding(.top, 16).padding(.bottom, 20) }`，内容超出一屏才滚动。六个分区都不按「装得下/装不下」改首元素位置，也**没有** `frame(minHeight: proxy.size.height, alignment: .center)`。反例（已撤销）：把带内边距的内容块放进最小高度等于可视高度的 frame 求居中，短页会整体浮在内容区中间，用户看到的是「内容区上下居中了」而不是「设置项在行内居中」。（2026-11-15 源码：`AuxiliaryViews.swift` 的 `SettingsPageScroll`；用户反馈原文：「为什么内容区域上下居中了？我说的是其中的选项」）
+- `GeometryReader` 只有关于页用了一个（`AuxiliaryViews.swift` 的 `about`）：它把内容块的最小高度设成「内容区高 − 上下页边距」，好让页脚贴到内容区底部；六个分区与 `SettingsPageScroll` 都不用，页面级居中仍然没有回来。空间不足时关于页退化成普通滚动页，页脚随页面滚到底。（2026-11-15 源码核对：旧稿「没有 GeometryReader」已与实现不符，按事实订正）
 - 断言口径：六页首元素距内容区顶一律 16pt（±0.5pt）；装得下的页一格都不滚且底部留白 ≥19pt；装不下的页从 origin 0 起滚，滚到底后最后一个内容块距内容区底 20pt（±1.5/4pt）。出货 648×600 下通用、截图、剪贴板、快捷键、AI 五页装得下不滚，隐私页超出一屏可滚——**位置规则相同，只差是否滚动**。（2026-11-15 断言：`SettingsArchitectureHarness.swift` 的 `checkPageSurface` 与 `topGap` 汇总）
 - 小标题作为追加层固定在卡片上方 8pt，见「组件与交互」；本条目只管内容块上下的节奏与左右 20pt 边距。
 - 卡片圆角 12pt、1pt 内描边、左右内边距 10pt；小标题左缩进 10pt，与卡片内文左缘对齐。
@@ -106,6 +107,7 @@ A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立�
 - 2026-11-15 补充面板卡片、设置节奏、关于页几何、危险动作与状态反馈规范。（本轮评审后落地）
 - 2026-11-15 对齐 footer 对比度、设置页居中规则与关于页单按钮。
 - 2026-11-15 X1a：撤销页面级垂直居中（六页顶对齐 16pt、可滚动），补「行内控件与文字块垂直居中 ≤0.5pt」与「通用页按职责分三组」两条规范。
-- 2026-11-15 Z1：卡片内容垂直居中（上下留白差 ≤0.5pt）。行高改成「内容 + 上下对称内边距」（`SettingsRowMetrics`），卡片里的复选框/页脚说明/按钮行/保留期网格自带留白（`SettingsCardBlock`）；补 `assertCardCentring` 逐卡断言与源码门。
+- 2026-11-15 Z1：卡片内容垂直居中（上下留白差 ≤0.5pt）。行高改成「内容 + 上下对称内边距」（`SettingsRowMetrics`），卡片里的复选框/页脚说明/按钮行/保留期网格自带留白（当时的 `SettingsCardBlock`，该结构已被 2026-11-15 的「行自带留白」重构取代并删除）；补 `assertCardCentring` 逐卡断言与源码门。
 - 2026-11-15 Z3a：关于改为设置页内容区的第七页，独立关于窗口与其展示路径删除；「状态行 + 检查更新」整体移到链接/许可之上，页面只剩一个主按钮；`.blinkClipOpenAbout` 补上生产观察者，三个入口落到同一页。「关于页几何」按新形态改写，并记下「图标墨迹不能当布局证据」这条工程约束。
 - 2026-11-15 Z3b：通用页新增「外观与语言」组（主题、语言）；主题写 `preferences.appearance` 并立刻应用，语言写 `appLanguage` 并发同名通知让整页重算。通用页分组由三组变四组，逐卡居中断言按卡片身份重新点名（原三张仍在严格名单），另加说明文字卡 1.5pt 降部上限与行内选择器对齐 ≤0.5pt。
+- 2026-11-15 T1：行自带上下留白后恢复逐卡覆盖。留白常量收进 `SettingsSurfaceStyle.swift` 的 `SettingsRowMetrics`（单行 9 / 带说明 8 / 成段内容 12），权限页与同步控制器共用这一份；`assertCardCentring` 按新结构重写为「首行上留白、末行下留白必须等于该行自己的常量，卡片不加上下内边距」＋「每行上下留白相等 ≤0.5pt」，覆盖面由 `cardCentringCoverage` 点名五页十二张卡（通用四组、剪贴板两张、截图两张、隐私三张、AI 一张），逐行表扩到开关、菜单选择器与复选框 13 行；关于页补「身份 → 更新卡 20pt 节奏、更新卡 → 页脚 ≥20pt」三层间距断言。字形墨迹带继续落盘（`cardCentringGeometry` 的 `inkTopGap` / `inkBottomGap` / `inkDelta`）作为证据，但按上面「以行和控件的框为准」的口径不再承担判定。
