@@ -138,14 +138,43 @@ class SelectionView: NSView {
     private var pendingWindowID: CGWindowID?
     private let windowClickThreshold: CGFloat = 4
 
+    // MARK: - Crosshair
+
+    /// Pointer position in screen (global) coordinates, or `nil` when the
+    /// crosshair is hidden. Stored globally so every display's overlay draws
+    /// the same crossing point at its own local coordinates — a pointer on one
+    /// screen then continues the horizontal line across a side-by-side setup.
+    private var crosshairScreenPoint: NSPoint?
+    /// The same point in this view's coordinates. Cached because invalidating
+    /// the previous hairline needs it after the pointer has already moved on.
+    private var crosshairLocalPoint: NSPoint?
+    /// Set by `OverlayWindowController`: a pointer move seen by one display's
+    /// overlay is mirrored to the overlays of every other display.
+    var onCrosshairMoved: ((NSPoint) -> Void)?
+
     // MARK: - Constants
 
-    private let accentColor = NSColor(red: 0, green: 212.0/255.0, blue: 106.0/255.0, alpha: 1.0)
+    /// Capture chrome tint: the product accent (system blue). Resolved once so
+    /// the frame, handles and size label cannot drift apart. `controlAccentColor`
+    /// is dynamic (it follows the user's accent); a colour that cannot be
+    /// converted to sRGB falls back to the fixed system blue.
+    private static let selectionTint: NSColor = {
+        NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? NSColor.systemBlue
+    }()
+    private static let selectionTintCGColor: CGColor = selectionTint.cgColor
     private let handleSize: CGFloat = 8
     private let handleHitSize: CGFloat = 12
     private let borderWidth: CGFloat = 2.0
-    private let dashPattern: [CGFloat] = [6, 4]
     private let dimmingOverlayAlpha: CGFloat = 0.45
+    /// Size label geometry: 10x6 content padding, 6pt radius, 8pt above the frame
+    /// (6pt let the capsule crowd the top-left handle).
+    private static let sizeLabelPadding = NSSize(width: 10, height: 6)
+    private static let sizeLabelCornerRadius: CGFloat = 6
+    private static let sizeLabelGap: CGFloat = 8
+    /// Crosshair: a 1pt white hairline at 42% over a 2pt dark halo, so the lines
+    /// read on both a light and a dark desktop without becoming harsh.
+    private static let crosshairCoreAlpha: CGFloat = 0.42
+    private static let crosshairHaloAlpha: CGFloat = 0.35
 
     // MARK: - Public
 
@@ -154,6 +183,69 @@ class SelectionView: NSView {
     func refreshHoverAtCurrentMouseLocation() {
         guard state == .idle, !selectionLocked else { return }
         updateWindowHover(screenPoint: NSEvent.mouseLocation)
+    }
+
+    // MARK: - Crosshair
+
+    /// Mirrors the pointer (screen coordinates) into this overlay and repaints
+    /// only the two hairline bands, so a full-screen snapshot is not redrawn
+    /// for every mouse event. `nil` hides the crosshair.
+    func updateCrosshair(globalPoint: NSPoint?) {
+        let previousLocal = crosshairLocalPoint
+        crosshairScreenPoint = globalPoint
+        crosshairLocalPoint = globalPoint.flatMap(localPoint(forScreenPoint:))
+        invalidateCrosshairBands(at: previousLocal)
+        invalidateCrosshairBands(at: crosshairLocalPoint)
+    }
+
+    /// Hides the crosshair without touching the pointer bookkeeping used by
+    /// the drag itself (mouse-exit on the display holding the pointer).
+    private func hideCrosshair() {
+        guard crosshairScreenPoint != nil || crosshairLocalPoint != nil else { return }
+        let previousLocal = crosshairLocalPoint
+        crosshairScreenPoint = nil
+        crosshairLocalPoint = nil
+        invalidateCrosshairBands(at: previousLocal)
+    }
+
+    private func localPoint(forScreenPoint point: NSPoint) -> NSPoint? {
+        guard let window else { return nil }
+        return convert(window.convertPoint(fromScreen: point), from: nil)
+    }
+
+    /// Invalidates a 4pt band around each line so the redraw covers both the
+    /// lateral anti-aliasing and the 2pt halo.
+    private func invalidateCrosshairBands(at point: NSPoint?) {
+        guard let point else { return }
+        let halfBand: CGFloat = 4
+        let bands = [
+            NSRect(x: bounds.minX, y: point.y - halfBand, width: bounds.width, height: halfBand * 2),
+            NSRect(x: point.x - halfBand, y: bounds.minY, width: halfBand * 2, height: bounds.height)
+        ]
+        for band in bands {
+            let clipped = band.intersection(bounds)
+            if !clipped.isNull, !clipped.isEmpty {
+                setNeedsDisplay(clipped)
+            }
+        }
+    }
+
+    /// Turns a local pointer position into a screen point and hands it to the
+    /// overlay controller, which mirrors it to every display. Without a
+    /// controller (e.g. a bare view in a harness) the lines still follow the
+    /// pointer on this display.
+    private func broadcastCrosshair(at point: NSPoint) {
+        let screenPoint: NSPoint
+        if let window {
+            screenPoint = window.convertPoint(toScreen: convert(point, to: nil))
+        } else {
+            screenPoint = NSEvent.mouseLocation
+        }
+        if let onCrosshairMoved {
+            onCrosshairMoved(screenPoint)
+        } else {
+            updateCrosshair(globalPoint: screenPoint)
+        }
     }
 
     func updateSelectionRect(_ rect: NSRect) {
@@ -367,6 +459,8 @@ class SelectionView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
+        // Keep the guides glued to the pointer while the frame is being drawn.
+        broadcastCrosshair(at: point)
 
         switch dragAction {
         case .drawNew:
@@ -483,6 +577,7 @@ class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
+        broadcastCrosshair(at: point)
 
         // In idle state, detect windows under cursor for hover highlight
         if state == .idle && !selectionLocked {
@@ -501,7 +596,15 @@ class SelectionView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
-        updateCursor(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        broadcastCrosshair(at: point)
+        updateCursor(at: point)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        // The pointer left this display: hide the guides until the next move
+        // (the receiving display broadcasts its own position right away).
+        hideCrosshair()
     }
 
     private func updateCursor(at point: NSPoint) {
@@ -614,17 +717,20 @@ class SelectionView: NSView {
             context.addPath(path)
             context.fillPath(using: .evenOdd)
             // Solid accent border
-            context.setStrokeColor(accentColor.cgColor)
+            context.setStrokeColor(SelectionView.selectionTintCGColor)
             context.setLineWidth(borderWidth + 1)
+            context.setLineDash(phase: 0, lengths: [])
             context.stroke(hoverRect.insetBy(dx: -1.5, dy: -1.5))
             // Size label
             SelectionView.drawSizeLabel(context: context, rect: hoverRect)
+            drawCrosshair(context: context)
             return
         }
 
         // In idle state with no selection, just show the snapshot (already drawn above)
         guard let rect = selectionRect, (state == .drawing || state == .selected),
               rect.width > 0 || rect.height > 0 else {
+            drawCrosshair(context: context)
             return
         }
 
@@ -641,7 +747,7 @@ class SelectionView: NSView {
         context.addPath(path)
         context.fillPath(using: .evenOdd)
 
-        // Draw border — solid red during scroll capture, green dashed otherwise
+        // Draw border — solid red during scroll capture, solid accent blue otherwise.
         if scrollCaptureActive {
             // ScreenCaptureKit sees the overlay panel, so any stroke pixels
             // inside `rect` bleed into every captured frame and produce thin
@@ -654,12 +760,13 @@ class SelectionView: NSView {
             context.setLineWidth(strokeWidth)
             context.stroke(rect.insetBy(dx: outerInset, dy: outerInset))
         } else {
-            context.setStrokeColor(accentColor.cgColor)
+            context.setStrokeColor(SelectionView.selectionTintCGColor)
             context.setLineWidth(borderWidth)
-            context.setLineDash(phase: 0, lengths: dashPattern)
-            context.stroke(rect.insetBy(dx: -1, dy: -1))
             context.setLineDash(phase: 0, lengths: [])
+            context.stroke(rect.insetBy(dx: -1, dy: -1))
         }
+
+        drawCrosshair(context: context)
 
         if state == .selected && selectionInteractionEnabled {
             // Draw 8 control handles
@@ -708,31 +815,103 @@ class SelectionView: NSView {
                 width: handleSize,
                 height: handleSize
             )
-            context.setFillColor(accentColor.cgColor)
+            context.setFillColor(SelectionView.selectionTintCGColor)
             context.fillEllipse(in: handleRect)
         }
     }
 
+    /// Draws the full-width/full-height pointer guides. The lines are driven by
+    /// a screen-space point, so on a multi-display desktop every overlay draws
+    /// the same crossing: displays side by side continue the horizontal line,
+    /// while the vertical line only lands on the display holding the pointer.
+    /// Only `.idle` and `.drawing` show them; a committed frame hides them.
+    private func drawCrosshair(context: CGContext) {
+        guard state == .idle || state == .drawing,
+              selectionInteractionEnabled,
+              !scrollCaptureActive,
+              !selectionLocked,
+              let point = crosshairLocalPoint
+        else { return }
+
+        // Snap the hairline centre to a device pixel edge: on a 2x display a
+        // 1pt stroke then covers exactly two pixels instead of two blurred ones.
+        let scale = window?.backingScaleFactor ?? 2
+        let x = (point.x * scale).rounded() / scale
+        let y = (point.y * scale).rounded() / scale
+        let showsHorizontal = bounds.minY...bounds.maxY ~= y
+        let showsVertical = bounds.minX...bounds.maxX ~= x
+        guard showsHorizontal || showsVertical else { return }
+
+        func addLines() {
+            if showsHorizontal {
+                context.move(to: CGPoint(x: bounds.minX, y: y))
+                context.addLine(to: CGPoint(x: bounds.maxX, y: y))
+            }
+            if showsVertical {
+                context.move(to: CGPoint(x: x, y: bounds.minY))
+                context.addLine(to: CGPoint(x: x, y: bounds.maxY))
+            }
+        }
+
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineDash(phase: 0, lengths: [])
+        context.setLineCap(.butt)
+        // Dark halo first, then the white core: on a light desktop the halo
+        // carries the contrast, on a dark one the white core does.
+        context.setStrokeColor(NSColor.black.withAlphaComponent(SelectionView.crosshairHaloAlpha).cgColor)
+        context.setLineWidth(2)
+        addLines()
+        context.strokePath()
+        context.setStrokeColor(NSColor.white.withAlphaComponent(SelectionView.crosshairCoreAlpha).cgColor)
+        context.setLineWidth(1)
+        addLines()
+        context.strokePath()
+    }
+
     static func drawSizeLabel(context: CGContext, rect: NSRect, text: String? = nil) {
-        let text = text ?? "\(Int(rect.width)) x \(Int(rect.height))"
+        // Same multiplication sign as the rest of the app's size badges
+        // (`ReplicaImagePreviewContent`, `PanelViews`, `ReplicaCanonicalCardContent`).
+        let text = text ?? "\(Int(rect.width)) × \(Int(rect.height))"
         let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: NSColor.white,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         ]
         let size = text.size(withAttributes: attrs)
-        // Position above the top-left corner of selection
-        let labelX = rect.origin.x
-        let labelY = rect.origin.y + rect.height + 4  // Above top edge (AppKit coords: y increases upward)
-        let labelRect = NSRect(x: labelX, y: labelY, width: size.width + 8, height: size.height + 4)
+        let padding = SelectionView.sizeLabelPadding
+        // Sit above the top-left corner of the frame, never over its pixels:
+        // the label is chrome, so anything inside `rect` would end up cropped.
+        let labelRect = NSRect(
+            x: rect.origin.x,
+            y: rect.origin.y + rect.height + SelectionView.sizeLabelGap,
+            width: size.width + padding.width * 2,
+            height: size.height + padding.height * 2
+        )
 
-        // Draw background
-        context.setFillColor(NSColor.black.withAlphaComponent(0.6).cgColor)
-        let bgPath = CGPath(roundedRect: labelRect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        // Blue capsule with a soft drop shadow so it separates from both a
+        // bright and a dark snapshot.
+        context.saveGState()
+        context.setShadow(
+            offset: CGSize(width: 0, height: -1),
+            blur: 4,
+            color: NSColor.black.withAlphaComponent(0.35).cgColor
+        )
+        context.setFillColor(SelectionView.selectionTintCGColor)
+        let bgPath = CGPath(
+            roundedRect: labelRect,
+            cornerWidth: SelectionView.sizeLabelCornerRadius,
+            cornerHeight: SelectionView.sizeLabelCornerRadius,
+            transform: nil
+        )
         context.addPath(bgPath)
         context.fillPath()
+        context.restoreGState()
 
-        // Draw text
-        let textOrigin = NSPoint(x: labelRect.origin.x + 4, y: labelRect.origin.y + 2)
+        // Draw text, vertically centred inside the capsule.
+        let textOrigin = NSPoint(
+            x: labelRect.origin.x + padding.width,
+            y: labelRect.origin.y + (labelRect.height - size.height) / 2
+        )
         text.draw(at: textOrigin, withAttributes: attrs)
     }
 

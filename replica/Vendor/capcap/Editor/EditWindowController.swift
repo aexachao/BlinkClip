@@ -782,7 +782,7 @@ class EditWindowController {
     }
 
     private static func cropSizeLabelText(_ size: NSSize) -> String {
-        "\(max(1, Int(round(size.width)))) x \(max(1, Int(round(size.height))))"
+        "\(max(1, Int(round(size.width)))) × \(max(1, Int(round(size.height))))"
     }
 
     private func selectTool(_ tool: EditTool) {
@@ -2124,7 +2124,7 @@ class EditWindowController {
 
     private static func sizeLabelText(for size: NSSize) -> String? {
         guard size.width > 0, size.height > 0 else { return nil }
-        return "\(Int(size.width.rounded())) x \(Int(size.height.rounded()))"
+        return "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
     }
 
     private func exitCropMode() {

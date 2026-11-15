@@ -732,6 +732,16 @@ class OverlayWindowController {
             selectionView.mayActivateAppForCursor = !pendingFocusSensitiveForegroundClaim
             selectionView.delegate = self
             selectionView.windowDetector = windowDetector
+            // The pointer guide is a desktop-wide reference: whichever display
+            // sees the mouse movement mirrors the screen point into every
+            // overlay, so the horizontal line continues over the neighbouring
+            // display instead of stopping at this screen's edge.
+            selectionView.onCrosshairMoved = { [weak self] screenPoint in
+                guard let self else { return }
+                for view in self.selectionViewsByDisplayID.values {
+                    view.updateCrosshair(globalPoint: screenPoint)
+                }
+            }
             selectionView.aspectRatio = usesAspectRatioSelection ? Self.persistedSelectionAspectRatio : nil
             selectionView.onFirstDrawCompleted = { [weak self] in
                 self?.recordFirstDraw(generation: generation)
@@ -782,6 +792,13 @@ class OverlayWindowController {
         }
         CATransaction.commit()
         triggerContext?.mark(.overlayOrderedFront)
+
+        // Seed the guides at the pointer location the overlay opened at, so the
+        // crosshair is there before the first mouse move arrives.
+        let pointerAtPresentation = NSEvent.mouseLocation
+        for view in selectionViewsByDisplayID.values {
+            view.updateCrosshair(globalPoint: pointerAtPresentation)
+        }
 
         if shouldShowMagnifierLensPanel {
             // Lens replaces the drag-to-screenshot hint while the overlay is
@@ -1242,10 +1259,10 @@ class OverlayWindowController {
         let width = Int(round(imageSize.width))
         let height = Int(round(imageSize.height))
         guard ratio < 0.999 else {
-            return "\(width) x \(height)"
+            return "\(width) × \(height)"
         }
         let percent = max(1, Int(round(ratio * 100)))
-        return "\(width) x \(height) (\(percent)%)"
+        return "\(width) × \(height) (\(percent)%)"
     }
 
     private struct PresetDisplayMetrics {
