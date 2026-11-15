@@ -709,6 +709,31 @@ struct UIInteractionHarness {
         try require(focusTransitions == ["remember", "restore", "remember", "keep-preview"])
         try await waitForVisibility(false)
         detached.forEach { $0.close() }
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"old closing completion cannot close a reopened panel\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        // 面板可见期间全局热键保持注册（`AppMain` 不再随面板可见性注销，语义分歧由
+        // `StackHotKeyRouting` 承担）：注册本身只吞自己的组合，面板内部按键仍优先由
+        // `ReplicaPanel.keyHandler` 处理——⌘F 进搜索、Esc 关面板都照旧。
+        try await presentOffscreen()
+        let globalHotKey = GlobalHotKey()
+        var globalHotKeyFires = 0
+        globalHotKey.action = { globalHotKeyFires += 1 }
+        _ = globalHotKey.register(keyCode: 96, modifiers: [.control, .option], identifier: 91)
+        defer { globalHotKey.unregister() }
+        state.searchVisible = false
+        state.applySearchInput(nodes: [], text: "", filters: [])
+        try await Task.sleep(for: .milliseconds(150))
+        key(3, "f", .command)
+        try await Task.sleep(for: .milliseconds(200))
+        guard state.searchVisible else {
+            throw Failure(description: "panel stopped handling ⌘F while a global hot key is registered")
+        }
+        key(53, "", [])
+        try await waitForVisibility(false)
+        guard !ui.panel.isVisible else {
+            throw Failure(description: "panel stopped handling Escape while a global hot key is registered")
+        }
+        guard globalHotKeyFires == 0 else {
+            throw Failure(description: "panel-local key events reached the registered global hot key")
+        }
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }

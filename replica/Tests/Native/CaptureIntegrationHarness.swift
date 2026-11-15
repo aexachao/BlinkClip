@@ -7,6 +7,8 @@ import Foundation
 #if CAPTURE_BOUNDARY
 public enum CaptureProbe {
     public static var actions: [String] = []
+    /// 遮罩/编辑器创建那一刻的现场（`ScreenshotCoordinator` 必须先收起面板再进来）。
+    public static var onCaptureEntry: (() -> Void)?
     public static var activations = 0
     public static var fullScreenLaunches = 0
     public static var failFullScreen = false
@@ -42,6 +44,7 @@ final class OverlayWindowController {
          onComplete: @escaping (NSImage?) -> Void) {
         draft = SuspendedEditDraft(screenFrame: NSScreen.screens.first?.frame ?? .zero)
         completion = onComplete; suspension = onSuspend
+        CaptureProbe.onCaptureEntry?()
         CaptureProbe.actions.append(postCaptureAction.rawValue)
     }
     init(suspendedDraft: SuspendedEditDraft, onRecordingSelection: @escaping (CGRect, NSScreen) -> Void,
@@ -364,6 +367,50 @@ enum ReplicaBrand { static let name = "BlinkClip" }
                     "capture failure exit applies pending reload and creates no record")
         CaptureProbe.failFullScreen = false
 
+        // 面板可见时触发区域截图：真实 `ScreenshotCoordinator` 必须先把面板移出屏幕，
+        // 再创建遮罩（否则 capcap 在 init 抓的 pre-snapshot 会把面板截进底图），
+        // 结束出口再把面板还回来。窗口识别走生产 `ScreenshotWindowHider` 的 identifier 规则。
+        let capturePanel = NSPanel(contentRect: .init(x: 0, y: 0, width: 640, height: 200),
+                                   styleMask: [.borderless, .nonactivatingPanel],
+                                   backing: .buffered, defer: false)
+        capturePanel.identifier = NSUserInterfaceItemIdentifier("blinkclip-panel")
+        capturePanel.isReleasedWhenClosed = false
+        capturePanel.level = .mainMenu
+        capturePanel.hidesOnDeactivate = false
+        capturePanel.orderFront(nil)
+        drain()
+        try require(capturePanel.isVisible, "fixture panel starts visible before the screenshot hot key")
+        var panelHiddenAtCaptureEntry: Bool?
+        var panelVisibleAtCaptureEntry: Bool?
+        var captureEntryRuns = 0
+        CaptureProbe.onCaptureEntry = {
+            captureEntryRuns += 1
+            panelHiddenAtCaptureEntry = !capturePanel.isVisible
+            panelVisibleAtCaptureEntry = capturePanel.isVisible
+        }
+        let actionsBeforePanelCapture = CaptureProbe.actions.count
+        coordinator.startRegionCapture()
+        drain()
+        CaptureProbe.onCaptureEntry = nil
+        try require(captureEntryRuns == 1 && CaptureProbe.actions.count == actionsBeforePanelCapture + 1,
+                    "panel-visible trigger reaches the capture entry exactly once")
+        try require(panelHiddenAtCaptureEntry == true && panelVisibleAtCaptureEntry == false,
+                    "coordinator hides the visible panel before the capture entry snapshots the screen")
+        CaptureProbe.complete(nil)
+        drain()
+        try require(capturePanel.isVisible, "capture exit restores the panel that the coordinator hid")
+        var panelStayedVisibleWhileCaptureActive = true
+        CaptureProbe.onCaptureEntry = { panelStayedVisibleWhileCaptureActive = capturePanel.isVisible }
+        coordinator.startRegionCapture()
+        drain()
+        CaptureProbe.onCaptureEntry = nil
+        try require(!panelStayedVisibleWhileCaptureActive, "repeated panel-visible capture also hides the panel")
+        CaptureProbe.complete(nil)
+        drain()
+        try require(capturePanel.isVisible, "repeated capture restores the panel again")
+        capturePanel.orderOut(nil)
+        drain()
+
         let activationsBeforeStop = CaptureProbe.activations
         coordinator.startRegionCapture()
         coordinator.stop(); drain()
@@ -379,9 +426,9 @@ enum ReplicaBrand { static let name = "BlinkClip" }
                 "reopened": repeatedReopened.items.first { $0.id == saved.id }!.updatedAt.timeIntervalSince1970],
             "no_op_revision_unchanged": beforeNoOpRevision == afterNoOpRevision,
             "sync_apply_explicit_date": syncDate.timeIntervalSince1970,
-            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard"],
+            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard", "ScreenshotWindowHider panel hide-before-capture and restore"],
             "doubles": ["capcap OverlayWindowController/ScreenCapturer/ImageEditLauncher", "GlobalHotKey Carbon registration", "ScreenshotFocusRestorer", "ReplicaBrand constant"],
-            "not_run": ["screen capture/editor internals", "real global Carbon delivery", "UI confirm-versus-save dispatch", "actual overlay draft internals", "window hide/focus restoration"]]
+            "not_run": ["screen capture/editor internals", "real global Carbon delivery", "UI confirm-versus-save dispatch", "actual overlay draft internals", "focus restoration"]]
         print(String(data: try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
     }
 }

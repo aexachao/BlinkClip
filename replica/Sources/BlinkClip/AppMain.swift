@@ -51,7 +51,6 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     private var hotKeyStatus: OSStatus = noErr
     private var stackHotKeyStatus: OSStatus = noErr
     private var hotKeyObservation: AnyCancellable?
-    private var panelVisibilityObservation: AnyCancellable?
     private var lastHotKeyConfiguration: [KeyboardShortcut?]?
     private var isRecordingHotKey = false
     private let arguments = ProcessInfo.processInfo.arguments
@@ -121,7 +120,6 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
             }
             ui.panelDidShow = { [weak self] in self?.rememberPanelApplication() }
             ui.panelWillClose = { [weak self] restore in self?.restorePanelApplication(restore: restore) }
-            ui.panelDidLoad = { [weak self] in self?.installPanelVisibilityObservation() }
             ui.copiedItemsHandler = {
                 ReplicaCopiedOSD.showCopied()
                 NSApp.deactivate()
@@ -162,9 +160,17 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
             hotKey.action = { [weak self] in self?.togglePanel(nil) }
             stackHotKey.action = { [weak self] in
                 guard let self else { return }
-                if NSApp.isActive, self.ui.isPanelKeyWindow, self.store.preferences.stackShortcut == .stackDefault {
-                    self.ui.copySelection(plainTextOnly: true)
-                } else { self.ui.showStack() }
+                // 面板可见时这条热键**不再注销**（注销后 Carbon 收不到按键，面板内的 ⇧⌘C
+                // 也会一起失效）。面板 key window 下的「复制为纯文本」语义由
+                // `StackHotKeyRouting` 决定，和 `ReplicaUIController.handleKey` 的
+                // `CollectionShortcutActions.copyOptions` 对齐。
+                switch StackHotKeyRouting.route(
+                    isAppActive: NSApp.isActive,
+                    isPanelKeyWindow: self.ui.isPanelKeyWindow,
+                    isDefaultStackShortcut: self.store.preferences.stackShortcut == .stackDefault) {
+                case .copySelection: self.ui.copySelection(plainTextOnly: true)
+                case .showStack: self.ui.showStack()
+                }
             }
             hotKeyObservation = store.$preferences.sink { [weak self] _ in
                 // @Published 在赋值前通知，下一轮读取完整的新偏好。
@@ -303,24 +309,14 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         updateStatus()
     }
 
-    private func installPanelVisibilityObservation() {
-        panelVisibilityObservation = ui.$isPanelVisible.sink { [weak self] visible in
-            self?.panelVisibilityChanged(visible)
-        }
-    }
-
-    // consumes _pasteStackShortcut, not the activation shortcut.
-    private func panelVisibilityChanged(_ visible: Bool) {
-        guard let shortcut = store.preferences.stackShortcut else { return }
-        if visible {
-            stackHotKey.unregister()
-        } else if !isRecordingHotKey, !arguments.contains("--no-global-hotkey") {
-            stackHotKeyStatus = shortcut.isValidGlobal
-                ? stackHotKey.register(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, identifier: 2)
-                : OSStatus(-50)
-        }
-        updateStatus()
-    }
+    // 面板可见性**不再参与**全局热键的注册生命周期。
+    //
+    // 这里曾经有 `installPanelVisibilityObservation` + `panelVisibilityChanged(_:)`：
+    // 面板一显示就 `stackHotKey.unregister()`、收起再注册，注释写的是「面板内的 ⇧⌘C
+    // 是复制、不是打开 Stack」。但 Panel 是 `NSPanel(.nonactivatingPanel)`，Carbon 热键
+    // 是唯一入口：注销之后按键既到不了 `AppMain`，也到不了 `ReplicaPanel.keyHandler`，
+    // 面板可见期间的 ⇧⌘C 就此彻底失效（`stackHotKey.action` 里的 `.copySelection` 分支
+    // 变成死代码）。语义分歧改由 `StackHotKeyRouting` 在动作里判断，注册保持不动。
 
     private func configureStackPasteShortcut() {
         let enabled = ui.isStackVisible && !ui.state.stackItemIDs.isEmpty && !isRecordingHotKey

@@ -11,6 +11,7 @@ compile_native_test_harness ui-interaction \
   "$replica_root/Sources/BlinkClip/SourceAppColor.swift" \
   "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" \
   "$replica_root/Sources/BlinkClip/BackgroundService.swift" \
+  "$replica_root/Sources/BlinkClip/GlobalHotKey.swift" \
   "$replica_root/Tests/Native/UIInteractionHarness.swift"
 run_native_test_harness "$@" | tee "$test_root/result.log"
 python3 - "$test_root/result.log" <<'PY'

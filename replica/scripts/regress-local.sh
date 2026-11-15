@@ -59,6 +59,7 @@ if run('build', ['bash', str(replica / 'scripts/build-app.sh')], timeout=300) ==
         suites = [
             ('core', [str(binary_root / 'blinkclip-core-tests')]),
             ('hotkey', ['bash', str(replica / 'scripts/test-hotkey.sh')]),
+            ('panel-hotkey', ['bash', str(replica / 'scripts/test-panel-hotkey.sh')]),
             ('shortcut', ['bash', str(replica / 'scripts/test-shortcut-model.sh')]),
             ('window', ['bash', str(replica / 'scripts/test-window-policy.sh')]),
             ('ui', ['bash', str(replica / 'scripts/test-ui-interaction.sh')]),
