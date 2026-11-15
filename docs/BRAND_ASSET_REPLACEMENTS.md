@@ -20,7 +20,7 @@
 | A3 普通本地化 | 17 个 `Resources/*.lproj/Localizable.strings`，各 123 键，已从仓库删除。 | `branding/BlinkClipLocalization/` 独立中英各 123 键，已核动态 key / 占位符。用户明确选择其他界面语言回退英文；不声称已原创翻译全部 17 语言。 |
 | A4 复数本地化 | 同上 17 份 `Localizable.stringsdict`，每份四项，已从仓库删除。 | 自写中英各四项，保留格式和复数消费合同。 |
 | A5 权限拼图 | `Resources/BlinkClipOtherApps@2x.png`，授权记录不足，已从仓库删除。 | 新生成 `BlinkClipPermissions@2x.png`，480×288 透明通用窗口 / 内容卡片，无真实第三方 Logo、文字或锁。 |
-| A6 音效 | 原 `Copy.aiff` / `Paste.aiff` 未随既有包发行。 | 当前按用户最终选择使用 macOS 自带 Purr，运行时按名称加载，不复制苹果音频文件；不读旧音、不用 Pop、无时间节流。实际听感待确认。 |
+| A6 音效 | 原 `Copy.aiff` / `Paste.aiff` 未随既有包发行。 | 复制（含多选聚合与剪切）播随包分发的 Write（`CopySound.mp3`），粘贴（含直接粘贴与 Stack 粘贴）播随包分发的 Knock（`PasteSound.mp3`），两者在 Core 资源包内由 `SoundEffects` 运行时加载，不读旧音、不用 Pop、无时间节流；没有调用点分类的其它成功动作仍用 macOS 自带 Purr，运行时按名称加载，不复制苹果音频文件。音频由本项目维护者提供，不是苹果系统音频（来源说明见 `NOTICE.md`「反馈音效来源」）。实际听感待确认。 |
 
 新生成源、提示词与包装：`branding/BlinkClipGeneratedAssets/PROVENANCE.md`；历史几何与旧图标来源：`branding/BlinkClipAssets/PROVENANCE.md`；语言 key / 占位符：`branding/BlinkClipLocalization/`。
 
