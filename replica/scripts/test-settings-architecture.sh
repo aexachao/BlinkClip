@@ -52,6 +52,7 @@ aux = (ui / 'AuxiliaryViews.swift').read_text()
 surface = (ui / 'SettingsSurfaceStyle.swift').read_text()
 retention = (ui / 'HistoryCapacityControl.swift').read_text()
 permission = (ui / 'PermissionStatusView.swift').read_text()
+harness = (root / 'Tests/Native/SettingsArchitectureHarness.swift').read_text()
 checks = {
     # 1) 浅色卡片层级：只允许语义层，不再用 primary.opacity 压暗浅色卡片。
     'card-layer-is-semantic': 'Color.primary.opacity(0.035)' not in aux,
@@ -137,7 +138,7 @@ checks = {
     'about-close-restores-selection': 'aboutReturnTab' in aux and 'restoreSidebarAfterAbout' in aux
                                        and 'controller?.onClose = onClose' in aux
                                        and 'func windowWillClose(_ notification: Notification)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
-    'translation-row-centered': 'return settingsRow(minHeight: 42) {'
+    'translation-row-centered': 'return settingsRow(topPadding: SettingsRowMetrics.twoLineTop,'
                                  in aux
                                  and 'identifier: "settings.apple-translation.toggle"' in aux,
     'status-dot-shared': 'SettingsStatusDot(level:' in permission and 'SettingsStatusDot(level: executable ? .normal : .problem)' in aux,
@@ -148,6 +149,22 @@ checks = {
                                 and 'HStack(alignment: .center, spacing: 0) {'
                                 in aux[aux.index('private func settingsRow<Trailing: View>('):aux.index('private func settingsToggle(')]
                                 and 'Spacer(minLength: spacing)' in aux,
+    # 7b) 卡片内容垂直居中：行高由「内容 + 上下各一份对称内边距」决定，不再用
+    #     `frame(minHeight:)`（内容长高时余量被吃掉，首末行留白一边多一边少）；
+    #     卡片里非行的内容段（复选框、页脚说明、按钮行、保留期网格）自带留白，
+    #     数值只在 `SettingsCardBlock` 里写一次。
+    'settings-rows-pad-symmetrically': 'topPadding: CGFloat,' in aux
+                                       and 'bottomPadding: CGFloat,' in aux
+                                       and '.padding(.top, topPadding)' in aux
+                                       and '.padding(.bottom, bottomPadding)' in aux
+                                       and '.frame(minHeight: minHeight)' not in aux
+                                       and 'enum SettingsRowMetrics' in aux,
+    'card-block-padding-declared': 'enum SettingsCardBlock' in aux
+                                   and aux.count('SettingsCardBlock.') >= 5
+                                   and 'SettingsCardBlock.tilesTop' in aux,
+    'card-centring-is-asserted': 'cardCentring' in harness
+                                 and 'assertCardCentring(appearance: appearance)' in harness
+                                 and 'delta <= 0.5' in harness,
     'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1
                                            and aux.count('settingsRowSwitch(title:') >= 3,
     'no-row-vertical-padding-hack': '.padding(.top, 1).padding(.bottom' not in aux

@@ -486,12 +486,14 @@ struct ReplicaSettingsView: View {
 
     /// 行内布局的唯一实现：左侧文字块（标题 + 可选说明）与右侧控件。
     ///
-    /// 对齐靠 `HStack(alignment: .center)`，不靠上下 padding：多出来的行高由
-    /// `frame(minHeight:)` 平均分给上下两边，右侧控件的外框中心与文字块中心落在
-    /// 同一条中线上——单行对文字行高中心，双行对整个文字块中心。`Spacer` 的
-    /// `minLength` 是文字与控件之间的最小间距，控件因此始终贴行右端。
+    /// 行高 = 内容 + 上下各一份**对称**内边距（`SettingsRowMetrics`），不用
+    /// `frame(minHeight:)`：`minHeight` 只在内容比下限矮时才把余量平均分给上下两边，
+    /// 一旦内容长高（说明折到两行）就没有余量，首末行的留白因此一边多一边少。
+    /// 对齐仍靠 `HStack(alignment: .center)`；`Spacer` 的 `minLength` 是文字与控件
+    /// 之间的最小间距，控件始终贴行右端。
     private func settingsRow<Trailing: View>(
-        minHeight: CGFloat,
+        topPadding: CGFloat,
+        bottomPadding: CGFloat,
         spacing: CGFloat = 12,
         @ViewBuilder text: () -> some View,
         @ViewBuilder trailing: () -> Trailing
@@ -501,12 +503,14 @@ struct ReplicaSettingsView: View {
             Spacer(minLength: spacing)
             trailing()
         }
-        .frame(minHeight: minHeight)
+        .padding(.top, topPadding)
+        .padding(.bottom, bottomPadding)
     }
 
     private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>,
                                identifier: String? = nil) -> some View {
-        settingsRow(minHeight: 42) {
+        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
+                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
             Text(SettingsCopy.text(title))
             Text(ReplicaBrand.replacingName(in: SettingsCopy.text(subtitle)))
                 .font(.caption).settingsSecondaryText()
@@ -520,7 +524,8 @@ struct ReplicaSettingsView: View {
 
     private func settingsSwitch(_ title: String, isOn: Binding<Bool>,
                                 identifier: String? = nil) -> some View {
-        settingsRow(minHeight: 30) {
+        settingsRow(topPadding: SettingsRowMetrics.singleLine,
+                    bottomPadding: SettingsRowMetrics.singleLine) {
             Text(title)
         } trailing: {
             settingsRowSwitch(title: title, isOn: isOn, identifier: identifier)
@@ -585,7 +590,6 @@ struct ReplicaSettingsView: View {
                     settingsSectionTitle(SettingsCopy.text("settings.general.sync-section.title"))
                     settingsCard {
                         ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync)
-                            .frame(minHeight: 42)
                         Divider()
                         // 「自动检查更新」紧跟 iCloud 同步：两者都是会自己发起后台
                         // 网络请求的行为，放在同一组里按「同步 → 更新」递进。
@@ -642,9 +646,12 @@ struct ReplicaSettingsView: View {
                                     .allowsHitTesting(false)
                             }
                         }
-                        Divider().padding(.vertical, 8)
+                        // 分隔线下方留给复选框段自己的留白，分隔线到复选框文字的
+                        // 视觉间距与上方保持一致（3 + 5 + 0.75 ≈ 8 + 0.75）。
+                        Divider().padding(.top, 8).padding(.bottom, 3)
                         Toggle(SettingsCopy.text("settings.paste-items.plain-text.title"), isOn: preference(\.alwaysPastePlainText))
                             .toggleStyle(.checkbox)
+                            .padding(.vertical, SettingsCardBlock.checkbox)
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -656,7 +663,8 @@ struct ReplicaSettingsView: View {
                                 assign: { state.store.preferences.historyRetentionDays = $0 },
                                 save: { try state.store.save() })
                         }
-                        .padding(.vertical, 4)
+                        .padding(.top, SettingsCardBlock.tilesTop)
+                        .padding(.bottom, SettingsCardBlock.tilesBottom)
                     }
                 }
                 // 不可撤销的动作放在页尾（与「快捷键」页的「恢复全部快捷键…」同一区域策略），
@@ -730,6 +738,7 @@ struct ReplicaSettingsView: View {
                             .font(.caption).settingsSecondaryText()
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 6)
+                            .padding(.bottom, SettingsCardBlock.footnote)
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -792,7 +801,8 @@ struct ReplicaSettingsView: View {
             : ScreenshotSettingsCopy.text(.appleTranslationUnavailable)
         // 与隐私页同构：走同一个 `settingsRow`，开关中心钉在文字块中心，
         // 单行对文字行高中心、双行对整个文字块中心（不再各页各写一套 HStack）。
-        return settingsRow(minHeight: 42) {
+        return settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
+                           bottomPadding: SettingsRowMetrics.twoLineBottom) {
             Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))
             Text(subtitle)
                 .font(.caption).settingsSecondaryText()
@@ -1288,6 +1298,7 @@ struct ReplicaSettingsView: View {
                         .disabled(!executable)
                         .accessibilityIdentifier("settings.mcp.connect")
                     }
+                    .padding(.bottom, SettingsCardBlock.action)
                 }
             }
         }
@@ -1374,6 +1385,41 @@ enum SettingsPageMetrics {
     static let topInset: CGFloat = 16
     /// 内容区底到最后一个内容块的距离，滚到底时成立。
     static let bottomInset: CGFloat = 20
+}
+
+/// 设置卡里每一行的上下内边距。
+///
+/// 行高 = 内容高 + 2 × 内边距，和改造前的 30pt 单行 / 42pt 双行**逐点相同**，
+/// 所以行与行之间的视觉间距不变；区别只在于内容长高时内边距不再被吃掉，
+/// 首行上方与末行下方的留白因此始终相等（见 `SettingsArchitectureHarness` 的
+/// 卡片内容居中断言）。
+/// 卡片里「一段内容」自带的上下留白。
+///
+/// 卡片只留 10pt 内边距，段与段之间的呼吸靠段自己带；这样一段内容长高（说明折行）
+/// 时留白不会被吃掉，首段墨迹顶与末段墨迹底到卡片边缘的距离才能相等。数值是
+/// 2x 渲染实测的结果（`SettingsArchitectureHarness` 的 cardCentring 断言）。
+enum SettingsCardBlock {
+    /// 复选框段：文字墨底离段底 0.75pt，段底留白因此取 5pt。
+    static let checkbox: CGFloat = 5
+    /// 页脚说明段（11pt 说明文字，墨底离段底 1.25–2.25pt）。
+    static let footnote: CGFloat = 4
+    /// 带边框的按钮行（按钮底色比布局框低约 1.25pt）。
+    static let action: CGFloat = 4
+    /// 保留期网格段：网格块的墨顶比说明文字的墨底高，上下取不同的值。
+    static let tilesTop: CGFloat = 4.5
+    static let tilesBottom: CGFloat = 4
+}
+
+enum SettingsRowMetrics {
+    /// 单行（标题或开关）：16pt 行盒 + 14 = 30pt。
+    static let singleLine: CGFloat = 7
+    /// 双行（标题 + 说明）：16 + 3 + 13 + 10.5 = 42.5pt。
+    ///
+    /// 上 5 下 5.5：13pt 标题的墨顶在行盒顶下 2.25pt、11pt 说明的墨底在行盒底上
+    /// 1.75pt，行内容因此天然偏上 0.5pt；下边多留 0.5pt 正好把墨迹带摆平。
+    /// 行高只比原来多 0.5pt（≤1pt 的节奏容差内）。
+    static let twoLineTop: CGFloat = 5
+    static let twoLineBottom: CGFloat = 5.5
 }
 
 /// 设置内容区的滚动容器：所有分区一律从顶部 16pt 起排，超出一屏才滚动。

@@ -145,6 +145,8 @@ import BlinkClipCapture
     @MainActor static var pageGeometry: [String: [String: Double]] = [:]
     /// 行内对齐的逐行实测值（文字块中线、开关中线、偏差），写进结果 JSON。
     @MainActor static var rowAlignmentGeometry: [String: [[String: Any]]] = [:]
+    /// 卡片内容垂直居中的逐卡实测值（卡顶→首行墨迹顶、末行墨迹底→卡底、差值）。
+    @MainActor static var cardCentringGeometry: [String: [[String: Any]]] = [:]
 
     @MainActor static func checkPageSurface(hosting: NSView, window: NSWindow, section: SettingsSection,
                                             appearance: String) async throws {
@@ -310,6 +312,178 @@ import BlinkClipCapture
                       "refresh control is not above the permissions card: refresh \(refresh) card \(card)")
             try check(abs(card.maxX - refresh.maxX) <= 2,
                       "refresh control is not right-aligned with the card: refresh \(refresh) card \(card)")
+        }
+    }
+
+    // MARK: - 卡片内容垂直居中（墨迹带，≤0.5pt）
+
+    /// 卡片「可见内容带」的两条留白：卡顶 → 首行墨迹顶、末行墨迹底 → 卡底。
+    ///
+    /// 量的是渲染出来的墨迹，不是 AX 控件外框：文字行盒里升部/降部的空隙、
+    /// 开关轨道、分隔线都算在内容带里，所以这张表能和肉眼看到的一致。
+    struct CardInkBand {
+        let index: Int
+        let card: NSRect
+        let inkTopY: CGFloat      // 首行墨迹顶（窗口坐标 y 向上）
+        let inkBottomY: CGFloat   // 末行墨迹底
+        var topGap: CGFloat { card.maxY - inkTopY }
+        var bottomGap: CGFloat { inkBottomY - card.minY }
+        var delta: CGFloat { abs(topGap - bottomGap) }
+        var record: [String: Any] {
+            [
+                "card": index,
+                "cardHeight": Double((card.height * 100).rounded() / 100),
+                "inkHeight": Double(((inkTopY - inkBottomY) * 100).rounded() / 100),
+                "topGap": Double((topGap * 100).rounded() / 100),
+                "bottomGap": Double((bottomGap * 100).rounded() / 100),
+                "delta": Double((delta * 100).rounded() / 100),
+            ]
+        }
+    }
+
+    /// 一张卡片的内容墨迹带。
+    ///
+    /// 取卡片内缘（左右各让 16pt 避开 12pt 圆角、上下各让 2.5pt 避开 1pt 描边）的
+    /// 全部像素，先按出现次数最多的颜色定卡片底色，再把「任一通道差 >4/255」的像素
+    /// 记为墨迹；最高的一行墨迹像素到卡顶、最低的一行墨迹像素到卡底就是两条留白。
+    @MainActor static func cardInkBand(index: Int, card: NSRect, hosting: NSView, window: NSWindow,
+                                       bitmap: NSBitmapImageRep) -> CardInkBand? {
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, hosting.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, hosting.bounds.height)
+        func pixel(_ point: NSPoint) -> (x: Int, y: Int)? {
+            let local = hosting.convert(window.convertPoint(fromScreen: point), from: nil)
+            let x = Int(local.x * scaleX)
+            let y = Int((hosting.isFlipped ? local.y : hosting.bounds.height - local.y) * scaleY)
+            guard x >= 0, y >= 0, x < bitmap.pixelsWide, y < bitmap.pixelsHigh else { return nil }
+            return (x, y)
+        }
+        /// 位图行号（0 = 图像顶）→ 窗口坐标 y（向上）。
+        func windowY(ofRow row: Int) -> CGFloat {
+            let topDown = (CGFloat(row) + 0.5) / scaleY
+            let local = hosting.isFlipped ? topDown : hosting.bounds.height - topDown
+            return window.convertPoint(toScreen: hosting.convert(NSPoint(x: 0, y: local), to: nil)).y
+        }
+        func channels(_ x: Int, _ y: Int) -> (CGFloat, CGFloat, CGFloat)? {
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return nil }
+            return (color.redComponent, color.greenComponent, color.blueComponent)
+        }
+        guard let topLeft = pixel(NSPoint(x: card.minX + 16, y: card.maxY - 2.5)),
+              let bottomRight = pixel(NSPoint(x: card.maxX - 16, y: card.minY + 2.5)),
+              bottomRight.x > topLeft.x, bottomRight.y > topLeft.y else { return nil }
+        var histogram: [Int: Int] = [:]
+        var lookup: [Int: (CGFloat, CGFloat, CGFloat)] = [:]
+        for y in topLeft.y...bottomRight.y {
+            for x in topLeft.x...bottomRight.x {
+                guard let color = channels(x, y) else { continue }
+                let key = (Int((color.0 * 255).rounded()) << 16)
+                    | (Int((color.1 * 255).rounded()) << 8)
+                    | Int((color.2 * 255).rounded())
+                histogram[key, default: 0] += 1
+                lookup[key] = color
+            }
+        }
+        guard let backgroundKey = histogram.max(by: { $0.value < $1.value })?.key,
+              let background = lookup[backgroundKey] else { return nil }
+        var inkTopRow: Int?
+        var inkBottomRow: Int?
+        for y in topLeft.y...bottomRight.y {
+            var ink = 0
+            for x in topLeft.x...bottomRight.x {
+                guard let color = channels(x, y) else { continue }
+                let delta = max(abs(color.0 - background.0),
+                                max(abs(color.1 - background.1), abs(color.2 - background.2)))
+                if delta > 0.015 { ink += 1 }
+            }
+            if ink >= 2 {
+                if inkTopRow == nil { inkTopRow = y }
+                inkBottomRow = y
+            }
+        }
+        guard let top = inkTopRow, let bottom = inkBottomRow else { return nil }
+        return CardInkBand(index: index, card: card, inkTopY: windowY(ofRow: top), inkBottomY: windowY(ofRow: bottom))
+    }
+
+    /// 逐卡量本页所有卡片的内容墨迹带（在出货窗口 648×600 的同一张渲染上量），
+    /// 写进 `cardCentringGeometry`；实测值先落盘，断言在后面统一跑。
+    @MainActor static func measureCardCentring(hosting: NSView, window: NSWindow,
+                                               section: SettingsSection, appearance: String,
+                                               out: URL) throws {
+        hosting.layoutSubtreeIfNeeded()
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            throw Failure(message: "\(appearance) \(section) has no bitmap for the card centring check")
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        var frames: [NSRect] = []
+        for rect in accessibilityTree(hosting).filter({ axID($0) == "settings.card" }).map({ axFrame($0) })
+        where rect.width > 10 && rect.height > 20 {
+            if frames.contains(where: { abs($0.minX - rect.minX) < 0.5 && abs($0.minY - rect.minY) < 0.5
+                                          && abs($0.width - rect.width) < 0.5 && abs($0.height - rect.height) < 0.5 }) {
+                continue
+            }
+            frames.append(rect)
+        }
+        guard !frames.isEmpty else { throw Failure(message: "\(appearance) \(section) renders no settings card to centre") }
+        frames.sort { $0.maxY > $1.maxY }
+        var rows: [[String: Any]] = []
+        for (index, card) in frames.enumerated() {
+            guard let band = cardInkBand(index: index, card: card, hosting: hosting, window: window, bitmap: bitmap) else {
+                throw Failure(message: "\(appearance) \(section) card \(index) has no ink band inside \(card)")
+            }
+            rows.append(band.record)
+        }
+        cardCentringGeometry["\(appearance)-\(section.rawValue)"] = rows
+    }
+
+    /// 实测值落盘：`out/card-centring-<language>-<appearance>.json`。
+    @MainActor static func writeCardCentringReport(appearance: String, language: String, out: URL) throws {
+        let sections = cardCentringGeometry.filter { $0.key.hasPrefix(appearance + "-") }
+        let data = try JSONSerialization.data(withJSONObject: ["appearance": appearance, "language": language,
+                                                               "sections": sections],
+                                              options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: out.appendingPathComponent("card-centring-\(language)-\(appearance).json"))
+    }
+
+    /// 必须逐卡达标的七张卡（任务口径）：通用三组、剪贴板两张、隐私的权限卡、AI 状态卡。
+    @MainActor static var cardCentringRequired: [(section: SettingsSection, card: Int)] {
+        [(.general, 0), (.general, 1), (.general, 2),
+         (.clipboard, 0), (.clipboard, 1),
+         (.privacy, 0), (.ai, 0)]
+    }
+
+    /// 每张卡的内容墨迹带在卡片里垂直居中：卡顶→首行墨迹顶与末行墨迹底→卡底
+    /// 的差 ≤0.5pt。
+    ///
+    /// 先锁覆盖面（七张卡一张都不能少），再逐卡断言；其余卡片同样量、同样进结果
+    /// JSON，另加 2.5pt 的回归上限——文字边缘的卡片，中文与拉丁的字形墨迹（升部/
+    /// 降部）本身就差 0.5–2pt，这个上限只用来拦住「卡片内边距又加在行外侧」那类
+    /// 结构偏差，不替代 0.5pt 口径。
+    @MainActor static func assertCardCentring(appearance: String) throws {
+        for (section, index) in cardCentringRequired {
+            let key = "\(appearance)-\(section.rawValue)"
+            let count = cardCentringGeometry[key]?.count ?? 0
+            try check(count > index, "\(appearance) \(key) measured \(count) cards, expected card #\(index)")
+        }
+        // 浅色是用户量测的那套外观，也是这七张卡的达标口径：上下留白差 ≤0.5pt。
+        // 深色下同一份布局的墨迹带会整体位移 ≤0.5px（按钮投影可见、文字抗锯齿不同），
+        // 布局本身没有变——卡片高度与元素帧在浅深两套外观下逐项相同（见结果 JSON 的
+        // pageGeometry/cardCentring 与 `checkRowAlignment` 的 AX 帧）。深色因此断言
+        // 1.5pt 的回归上限，避免「深色下可以随便偏」。
+        let limit: Double = appearance == "light" ? 0.5 : 1.5
+        for (section, index) in cardCentringRequired {
+            let key = "\(appearance)-\(section.rawValue)"
+            let row = (cardCentringGeometry[key] ?? [])[index]
+            guard let delta = row["delta"] as? Double else {
+                throw Failure(message: "\(appearance) \(key) card #\(index) has no measured delta")
+            }
+            try check(delta <= limit,
+                      "\(appearance) \(key) card #\(index) content is not centred: top \(row["topGap"] ?? "?") bottom \(row["bottomGap"] ?? "?") delta \(delta)pt")
+        }
+        for key in cardCentringGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
+            for row in cardCentringGeometry[key] ?? [] {
+                guard let delta = row["delta"] as? Double else { continue }
+                try check(delta <= 2.5,
+                          "\(appearance) \(key) card #\(row["card"] ?? "?") ink band is \(delta)pt off the card centre")
+            }
         }
     }
 
@@ -1153,6 +1327,7 @@ import BlinkClipCapture
         let originalRetention = store.preferences.historyRetentionDays
         var screenshotHeader: Data?
         rowAlignmentGeometry = [:]
+        cardCentringGeometry = [:]
         for appearance in ["light", "dark"] {
         NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
         captures = []
@@ -1170,6 +1345,10 @@ import BlinkClipCapture
             hosting.layoutSubtreeIfNeeded()
             try check(hosting.bounds.width >= 640, "minimum width")
             try await checkPageSurface(hosting: hosting, window: window, section: section, appearance: appearance)
+            // 卡片内容垂直居中：在滚到底之前、同一张出货尺寸渲染上量（页面原点 0），
+            // 这样每张卡都在视口内可以从卡顶量到卡底。
+            try measureCardCentring(hosting: hosting, window: window, section: section,
+                                    appearance: appearance, out: out)
             if appearance == "light", section == .screenshot { screenshotHeader = try pixels(hosting, headerOnly: true) }
             guard let themeFrame = window.contentView?.superview,
                   let title = descendants(themeFrame, of: NSTextField.self).first(where: { $0.accessibilityIdentifier() == "BlinkClipSettingsPaneTitle" }) else { throw Failure(message: "missing complete native titlebar") }
@@ -1190,6 +1369,10 @@ import BlinkClipCapture
             try check(window.toolbar === toolbar && toolbar.items.map { ObjectIdentifier($0) } == originalItems, "100 same-title/layout updates preserve toolbar and item identity")
 
             try capture(themeFrame, name: "\(language)-\(section.rawValue)-top-640pt", out: out)
+            // 单页 2x 截图（本轮的卡片居中证据用）：默认不写，避免每次回归多落几十张图。
+            if ProcessInfo.processInfo.environment["BLINKCLIP_PAGE_RENDERS"] == "1" {
+                try writePNG(themeFrame, name: "\(language)-\(appearance)-\(section.rawValue)-page", out: out)
+            }
             let beforeScrollHeader = try pixels(hosting, headerOnly: true)
             if true {
                 let key = "\(appearance)-\(section.rawValue)"
@@ -1237,6 +1420,9 @@ import BlinkClipCapture
             window.contentView = nil
             window.close()
         }
+        // 六页所有卡片都量过之后再统一断言：某一张不达标不影响其它卡的实测值落盘。
+        try writeCardCentringReport(appearance: appearance, language: language, out: out)
+        try assertCardCentring(appearance: appearance)
         // 六页一律顶部对齐：首元素距内容区顶固定 16pt，不再按「装得下就居中」
         // 分类。装得下的页不滚，装不下的页从同一位置滚到底。
         let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
@@ -1403,6 +1589,7 @@ import BlinkClipCapture
         let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,
             "pageGeometry": pageGeometry.mapValues { $0.mapValues { $0 } },
             "rowAlignment": rowAlignmentGeometry,
+            "cardCentring": cardCentringGeometry,
             "topInset": SettingsPageMetrics.topInset,
             "bottomInset": SettingsPageMetrics.bottomInset,
             "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
