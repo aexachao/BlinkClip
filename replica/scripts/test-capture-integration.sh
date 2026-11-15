@@ -82,6 +82,17 @@ checks = {
     # 不入图：写入口被钉死，且上屏前后各钉一次。
     'sharing-type-is-pinned': 'override var sharingType' in code(toast)
                               and code(toast).count('toast.sharingType = .none') >= 2,
+    # 停留时长不能挂在主线程上：整段「停留 + 淡出」必须是渲染服务器推进的 CA 时间线，
+    # 计时锚点是「首帧已提交」的那一刻，收起按墙钟补刀（1.0.19 的 NSAnimationContext
+    # 写法在主线程忙时把「已复制截图」拖到 2.72s）。
+    'timeline-is-render-server-driven': 'CAKeyframeAnimation' in code(toast)
+                                        and code(toast).count('CATransaction.flush()') >= 1
+                                        and 'NSAnimationContext' not in code(toast)
+                                        and 'animator().alphaValue' not in code(toast),
+    'hold-clock-anchored-at-first-frame': 'lastVisibleAt = Date()' in code(toast)
+                                          and 'toast.displayIfNeeded()' in code(toast),
+    'dismiss-is-wall-clock-decoupled': 'orderOutAfterTimeline' in code(toast)
+                                       and 'holdDuration + Self.fadeDuration' in code(toast),
     # 位置/时长是规范里的数字，不是各处随手写。
     'toast-geometry-constants': all(name in code(toast) for name in
                                     ('bottomInset: CGFloat = 120', 'holdDuration: TimeInterval = 1.3',

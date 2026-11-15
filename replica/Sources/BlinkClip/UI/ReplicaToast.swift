@@ -50,6 +50,22 @@ final class ReplicaToast {
     private var panel: ReplicaToastPanel?
     /// 「下一次收起」的计时；每次 `present` 都取消旧的重排一个新的。
     private var dismissWorkItem: DispatchWorkItem?
+    /// 「淡出开始」的一次性动作（把窗口切成不吃点击）；同样随 `present` / `hide` 重排。
+    private var fadeStartWorkItem: DispatchWorkItem?
+    /// 停留 + 淡出整段动画在图层上的键；重新 `present` / `hide` 时先摘掉它。
+    private static let timelineAnimationKey = "blinkclip.toast.timeline"
+
+    /// 计时锚点：**第一帧真正提交给窗口服务器**（`CATransaction.flush()`）的那一刻。
+    /// 不是 `present()` 被调用的那一刻——调用点之前/之后都可能有落库、写剪贴板、
+    /// 拆编辑器、还焦点这些主线程重活。
+    private(set) var lastVisibleAt: Date?
+    /// `orderOut` 的时刻（整段动画走完后的墙钟补刀，见 `orderOutAfterTimeline`）。
+    private(set) var lastDismissedAt: Date?
+    /// 上屏 → 收起的墙钟时长；harness 用它断言 1.3–1.7s。
+    var lastVisibleDuration: TimeInterval? {
+        guard let lastVisibleAt, let lastDismissedAt else { return nil }
+        return lastDismissedAt.timeIntervalSince(lastVisibleAt)
+    }
     /// 连续触发的次数，测试用来确认是「重置」而不是「再开一个」。
     private(set) var presentationCount = 0
     /// 当前文案/图标；测试读它核对文案与图标语义。
@@ -58,13 +74,18 @@ final class ReplicaToast {
     /// 当前是否可点（有动作）。
     var isInteractive: Bool { currentAction != nil }
     private var currentAction: (() -> Void)?
-    /// 每次 `present` 递增。淡出动画的 completion 只在「还是同一代」时才真的
-    /// orderOut——否则一次还没结束的淡出会把紧接着弹出来的新 toast 收掉。
+    /// 每次 `present` 递增。收起只在「还是同一代」时才真的 orderOut——
+    /// 否则一次还没走完的收起会把紧接着弹出来的新 toast 收掉。
     private var generation = 0
 
     /// 供 harness 断言窗口属性（类、级别、`sharingType`、`ignoresMouseEvents`、frame）。
     var window: NSPanel? { panel }
     var isVisible: Bool { panel?.isVisible == true }
+    /// 整段「停留 + 淡出」是不是挂在图层上的 CA 动画（由渲染服务器按墙钟推进），
+    /// 而不是主线程推进的 `NSAnimationContext`。harness 在 `present` 之后立刻断言它。
+    var usesRenderServerTimeline: Bool {
+        panel?.contentView?.layer?.animation(forKey: Self.timelineAnimationKey) != nil
+    }
 
     /// 展示一次 toast；已可见时复用同一窗口、重置计时。
     ///
@@ -86,12 +107,28 @@ final class ReplicaToast {
         if let target = screen ?? Self.screenUnderMouse() ?? NSScreen.main {
             toast.setFrameOrigin(Self.origin(for: size, on: target))
         }
+        // 上一次淡出留在图层上的透明度和动画必须先清掉，否则新 toast 一上屏就是透明的。
         toast.alphaValue = 1
+        if let layer = toast.contentView?.layer {
+            layer.removeAnimation(forKey: Self.timelineAnimationKey)
+            layer.opacity = 1
+        }
         // `orderFrontRegardless` 不激活 App，也不会成为 key window：不抢焦点。
         toast.orderFrontRegardless()
         // 上屏前/后各钉一次：窗口服务器只认真正设置过的那一次，而首次上屏
         // （`didExpose`）会让 `WindowSharingPolicy` 把 sharingType 写回 `.readOnly`。
         toast.sharingType = .none
+        // 关键：第一帧在**这一次调用里**就交给窗口服务器。`displayIfNeeded()` 把内容画出来，
+        // `CATransaction.flush()` 立刻提交这一帧；否则要等本次 RunLoop 结束才提交，
+        // 调用点后面还有落库/写剪贴板/拆编辑器/还焦点等主线程重活时，首帧会被一起拖走
+        // （真机 1.0.19：计时早早开始、画面晚到，可见时长被算错）。
+        toast.displayIfNeeded()
+        // 整段「停留 + 淡出」的图层动画也放进同一次提交：主线程紧接着被重活占住时，
+        // 动画已经在渲染服务器手里按墙钟走，不会再等下一次 RunLoop。
+        startTimelineAnimation()
+        CATransaction.flush()
+        lastVisibleAt = Date()
+        lastDismissedAt = nil
         presentationCount += 1
         generation += 1
         scheduleDismiss()
@@ -101,9 +138,14 @@ final class ReplicaToast {
     func hide() {
         dismissWorkItem?.cancel()
         dismissWorkItem = nil
+        fadeStartWorkItem?.cancel()
+        fadeStartWorkItem = nil
+        panel?.contentView?.layer?.removeAnimation(forKey: Self.timelineAnimationKey)
+        panel?.contentView?.layer?.opacity = 1
         panel?.orderOut(nil)
         panel?.alphaValue = 1
         currentAction = nil
+        lastDismissedAt = Date()
     }
 
     /// 盘面左下角的位置：水平在可用区域内居中（Dock 在左/右时也不会压住），
@@ -120,30 +162,64 @@ final class ReplicaToast {
 
     // MARK: - 计时
 
+    /// 停留 + 淡出：整段交给渲染服务器的一条图层动画，前 `holdDuration` 保持不透明，
+    /// 后 `fadeDuration` 淡到 0；`orderOut` 另按墙钟补一刀。
+    ///
+    /// 为什么不用 `NSAnimationContext` + `animator().alphaValue`（1.0.19 的写法）：
+    /// 那条路径的窗口淡出由**主线程**推进，并且「淡出结束」只由它的 completionHandler
+    /// 通知。截图 toast 弹出时 BlinkClip 还是当前 App（截图编辑器刚关、焦点还没还回去），
+    /// 恰好在停留到点前后主线程被收尾重活占住（拆遮罩/还原窗口/还焦点），0.2s 的淡出
+    /// 就跟着卡：真机实测「已复制截图」停留 **2.72s**（1.3 停留 + 1.2 卡顿 + 0.2 淡出）。
+    /// 另外三条 toast 弹出时 App 不在前台，淡出走窗口服务器，所以一直是 1.44–1.59s。
+    /// 改成 CA 之后动画时长由渲染服务器按墙钟推进，主线程再忙也只有 `orderOut` 晚一点，
+    /// 而那时窗口早已不可见。
     private func scheduleDismiss() {
         dismissWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.fadeOut() }
+        fadeStartWorkItem?.cancel()
+        // 停留到点＝淡出开始：此刻起这块窗口不再吃点击（即使 orderOut 被主线程挤晚）。
+        let fadeStart = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.panel?.ignoresMouseEvents = true }
         }
-        dismissWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDuration, execute: item)
-    }
-
-    private func fadeOut() {
-        guard let panel, panel.isVisible else { return }
-        let fading = generation
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fadeDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            context.allowsImplicitAnimation = true
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
+        fadeStartWorkItem = fadeStart
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDuration, execute: fadeStart)
+        let scheduledGeneration = generation
+        let item = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.generation == fading else { return }
-                self.panel?.orderOut(nil)
-                self.panel?.alphaValue = 1
+                guard let self, self.generation == scheduledGeneration else { return }
+                self.orderOutAfterTimeline()
             }
         }
+        dismissWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDuration + Self.fadeDuration, execute: item)
+    }
+
+    /// 在图层上挂「停留 + 淡出」的显式 CA 动画（渲染服务器按墙钟推进，主线程卡住照走）。
+    private func startTimelineAnimation() {
+        guard let layer = panel?.contentView?.layer else { return }
+        let total = Self.holdDuration + Self.fadeDuration
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 1, 0]
+        fade.keyTimes = [0, NSNumber(value: Self.holdDuration / total), 1]
+        fade.duration = total
+        fade.timingFunctions = [CAMediaTimingFunction(name: .linear),
+                                CAMediaTimingFunction(name: .easeOut)]
+        fade.fillMode = .forwards
+        fade.isRemovedOnCompletion = false
+        // 从「第一帧已提交」的那一刻开始计时；与窗口服务器的时间基准对齐。
+        fade.beginTime = CACurrentMediaTime()
+        layer.add(fade, forKey: Self.timelineAnimationKey)
+        // 模型值落到 0：动画被系统摘掉（切后台/重绘）时也不会又亮回去。
+        layer.opacity = 0
+    }
+
+    /// 计时到点后真正收起。与动画完成解耦：晚到也只是不可见的窗口多留一会儿。
+    private func orderOutAfterTimeline() {
+        guard let panel, panel.isVisible else { return }
+        panel.orderOut(nil)
+        // 只摘动画，不把透明度写回 1：万一窗口被系统重新排上屏（面板类窗口会），
+        // 它保持透明，不会闪回一块挡住桌面两秒的盘面。下一次 `present` 才恢复成 1。
+        panel.contentView?.layer?.removeAnimation(forKey: Self.timelineAnimationKey)
+        lastDismissedAt = Date()
     }
 
     // MARK: - 窗口

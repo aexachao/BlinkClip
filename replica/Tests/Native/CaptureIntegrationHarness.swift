@@ -485,6 +485,52 @@ enum ReplicaBrand {
             try require(abs(view.iconFrame.minY - view.textFrame.maxY - ReplicaToastView.iconTextSpacing) <= 0.5,
                         "icon-to-copy spacing stays 16pt when the copy wraps")
         }
+        // --- T3：停留时长（墙钟）---------------------------------------------------
+        // 「1.3s 停留 + 0.2s 淡出」必须从**真正上屏可见**那一刻起算，并且不能因为主线程
+        // 忙就被拉长：1.0.19 真机上「已复制截图」实测 2.72s（= 1.3 + 1.2 卡顿 + 0.2），
+        // 原因是淡出与 orderOut 都挂在主线程的 `NSAnimationContext` 回调上。
+        // 这里按真实 RunLoop 逐轮询 `isVisible`，量「上屏 → 收起」的墙钟，四条 toast 全覆盖。
+        func measureToastWallClock(_ what: String, _ present: @MainActor () -> Void) throws -> TimeInterval {
+            let start = Date()
+            present()
+            let deadline = Date().addingTimeInterval(3.5)
+            while toast.isVisible && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            let wall = Date().timeIntervalSince(start)
+            try require(!toast.isVisible, "\(what): toast really orderOuts itself")
+            let recorded = toast.lastVisibleDuration ?? -1
+            try require(abs(recorded - wall) <= 0.2,
+                        "\(what): the recorded on-screen duration (\(String(format: "%.3f", recorded))s) matches the wall clock (\(String(format: "%.3f", wall))s)")
+            try require(wall >= 1.3 && wall <= 1.7,
+                        "\(what): stays 1.3–1.7s on screen (1.3 hold + 0.2 fade), got \(String(format: "%.3f", wall))s")
+            return wall
+        }
+        // 机制断言：整段时长必须交给渲染服务器，锚点是「首帧已提交」而不是 present 被调用。
+        ReplicaCopiedOSD.showScreenshotCopied()
+        try require(toast.usesRenderServerTimeline,
+                    "the hold + fade timeline is a layer CA animation driven by the render server (not a main-thread NSAnimationContext)")
+        try require(toast.lastVisibleAt != nil,
+                    "the hold clock is anchored at the committed first frame, not at the present() call")
+        try require(toast.isVisible, "the flushed first frame is on screen synchronously after present")
+        let anchorDrift = abs((toast.lastVisibleAt ?? .distantPast).timeIntervalSinceNow)
+        try require(anchorDrift < 0.1,
+                    "the hold-clock anchor is the just-committed frame (drift \(String(format: "%.3f", anchorDrift))s)")
+        var toastDurations: [String: TimeInterval] = [:]
+        toastDurations["copied"] = try measureToastWallClock("copy toast") { ReplicaCopiedOSD.showCopied() }
+        toastDurations["paused"] = try measureToastWallClock("paused toast") { ReplicaCopiedOSD.showPaused(resumeDate: nil) }
+        toastDurations["resumed"] = try measureToastWallClock("resumed toast") { ReplicaCopiedOSD.showResumed() }
+        // 截图那条是唯一「BlinkClip 还是当前 App（截图编辑器刚关）」时弹的 toast，
+        // 也是 1.0.19 超时的那个：连测三轮，确认不是偶发。
+        for round in 1...3 {
+            toastDurations["screenshot-eligible-\(round)"] = try measureToastWallClock("screenshot toast round \(round)") {
+                ReplicaCopiedOSD.showScreenshotCopied()
+            }
+        }
+        let durationBand = toastDurations.values.min()!...toastDurations.values.max()!
+        try require(durationBand.lowerBound >= 1.3 && durationBand.upperBound <= 1.7,
+                    "all four toasts stay inside 1.3–1.7s: \(toastDurations.mapValues { String(format: "%.3f", $0) })")
+
         let presentationsBeforeCapture = toast.presentationCount
 
         // 连续截图：上一颗 toast 必须在新截图抓屏前收起——这是「toast 不进成图」的兜底
@@ -507,6 +553,30 @@ enum ReplicaBrand {
         try require(toast.isVisible, "toast is still visible just before the hold elapses")
         RunLoop.current.run(until: Date().addingTimeInterval(ReplicaToast.fadeDuration + 0.45))
         try require(!toast.isVisible, "toast disappears after hold + fade")
+        try require(toast.presentationCount == presentationsBeforeCapture + 1,
+                    "one screenshot presents exactly one toast (no second present resetting the timer)")
+
+        // 三轮真实截图循环：每轮都量「截图上屏 → 收起」的墙钟，确认 2.72s 不是偶发。
+        var captureRoundDurations: [TimeInterval] = []
+        for round in 1...3 {
+            let before = toast.presentationCount
+            coordinator.startRegionCapture()
+            drain()
+            let start = Date()
+            CaptureProbe.complete(image)
+            let deadline = Date().addingTimeInterval(3.5)
+            while toast.isVisible && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            let wall = Date().timeIntervalSince(start)
+            try require(!toast.isVisible && toast.presentationCount == before + 1,
+                        "capture round \(round): exactly one present and it orderOuts itself")
+            try require(wall >= 1.3 && wall <= 1.7,
+                        "capture round \(round): screenshot toast stays 1.3–1.7s on screen, got \(String(format: "%.3f", wall))s")
+            captureRoundDurations.append(wall)
+        }
+        try require((captureRoundDurations.max() ?? 9) - (captureRoundDurations.min() ?? 0) <= 0.2,
+                    "three screenshot rounds agree on the stay duration (spread <= 0.2s): \(captureRoundDurations.map { String(format: "%.3f", $0) })")
         let bridge = ScreenshotHistoryBridge(store: store)
         try require(bridge.blinkclipImageEntries().count == 1 && bridge.blinkclipImage(forLocator: bridge.blinkclipImageEntries()[0].locator) != nil,
                     "history bridge reads real image locator and decodes payload")
