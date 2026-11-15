@@ -102,7 +102,11 @@ struct ScreenshotFocusRestorer {
     static func captureFrontmost() -> Self { Self() }
     func restore() {}
 }
-enum ReplicaBrand { static let name = "BlinkClip" }
+enum ReplicaBrand {
+    static let name = "BlinkClip"
+    /// `ReplicaCopiedOSD` 会把品牌名替换成应用显示名；harness 里没有品牌替换，原样返回。
+    static func replacingName(in text: String) -> String { text }
+}
 
 @main struct CaptureIntegrationHarness {
     enum Failure: Error { case assertion(String) }
@@ -288,6 +292,52 @@ enum ReplicaBrand { static let name = "BlinkClip" }
         let saved = store.items.first!
         try require(saved.kind == .image && saved.plainText == nil && Set(saved.payloads.keys) == ["public.png"], "completion creates PNG image record in real Store")
         try require(pb.data(forType: .png) == saved.payloads["public.png"], "completion writes same PNG via real Store to private pasteboard")
+
+        // --- W2：截图成功 toast -------------------------------------------------
+        // 成功 = 落库 + 写剪贴板都成功；失败分支只 beep，不弹这条。
+        let toast = ReplicaCaptureToast.shared
+        let toastCopy = ScreenshotSettingsCopy.text(.screenshotCopiedToast)
+        try require(ReplicaCaptureToast.holdDuration >= 1.2 && ReplicaCaptureToast.holdDuration <= 1.5,
+                    "toast hold time stays inside the 1.2–1.5s band")
+        try require(toast.isVisible, "successful screenshot presents the copied toast")
+        try require(toast.currentTitle == toastCopy && !toastCopy.isEmpty
+                    && toastCopy != ScreenshotSettingsCopy.Key.screenshotCopiedToast.rawValue,
+                    "toast text is the copied-screenshot copy from the trilingual table")
+        try require(toast.isVisible && toast.presentationCount == 1, "the first successful screenshot presents exactly one toast")
+        let toastWindow = toast.window
+        try require(toastWindow?.ignoresMouseEvents == true, "toast ignores mouse events so it never takes focus")
+        try require(toastWindow?.canBecomeKey == false && toastWindow?.canBecomeMain == false,
+                    "toast can never become key or main")
+        try require(toastWindow.map({ $0.sharingType == NSWindow.SharingType.none }) == true,
+                    "toast is excluded from screen capture via sharingType")
+        // capcap 的编辑器浮层是 `.screenSaver + 3/+4`；toast 必须比它们更高一级。
+        try require((toastWindow?.level.rawValue ?? 0) > NSWindow.Level.screenSaver.rawValue + 4,
+                    "toast sits above the screenshot editor overlay windows")
+        if let screen = NSScreen.main, let frame = toastWindow?.frame {
+            try require(abs(frame.midX - screen.frame.midX) <= 1,
+                        "toast is horizontally centred on the screen")
+            let topGap = screen.visibleFrame.maxY - frame.maxY
+            try require(topGap >= 0 && topGap <= 40,
+                        "toast sits at the top of the screen, below the menu bar")
+        }
+        // 连续截图：上一颗 toast 必须在新截图抓屏前收起——这就是「toast 不入成图」的保证
+        // （H1 的排除集合只含这次会话自有的遮罩/HUD，toast 不在其中）。
+        var toastVisibleAtCaptureEntry: Bool?
+        CaptureProbe.onCaptureEntry = { toastVisibleAtCaptureEntry = toast.isVisible }
+        coordinator.startRegionCapture()
+        drain()
+        CaptureProbe.onCaptureEntry = nil
+        try require(toastVisibleAtCaptureEntry == false,
+                    "a new capture hides the visible toast before the screen is snapshotted")
+        CaptureProbe.complete(image)
+        try require(toast.isVisible && toast.presentationCount == 2 && toast.window === toastWindow,
+                    "a second quick screenshot reuses and resets the same toast instead of stacking")
+        try require(NSApp.windows.filter { $0 === toast.window }.count == 1,
+                    "only one toast window exists for two consecutive screenshots")
+        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaCaptureToast.holdDuration - 0.15))
+        try require(toast.isVisible, "toast is still visible just before the hold elapses")
+        RunLoop.current.run(until: Date().addingTimeInterval(ReplicaCaptureToast.fadeDuration + 0.45))
+        try require(!toast.isVisible, "toast disappears after hold + fade")
         let bridge = ScreenshotHistoryBridge(store: store)
         try require(bridge.blinkclipImageEntries().count == 1 && bridge.blinkclipImage(forLocator: bridge.blinkclipImageEntries()[0].locator) != nil,
                     "history bridge reads real image locator and decodes payload")
@@ -448,9 +498,9 @@ enum ReplicaBrand { static let name = "BlinkClip" }
                 "reopened": repeatedReopened.items.first { $0.id == saved.id }!.updatedAt.timeIntervalSince1970],
             "no_op_revision_unchanged": beforeNoOpRevision == afterNoOpRevision,
             "sync_apply_explicit_date": syncDate.timeIntervalSince1970,
-            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard", "ScreenshotWindowHider panel hide-before-capture and restore"],
+            "real": ["ScreenshotSettings", "CaptureEntry", "HistoryManagerBridge", "ScreenshotCoordinator", "ScreenshotHistoryBridge", "ClipboardStore", "UserDefaults fresh-process reads", "private NSPasteboard", "ScreenshotWindowHider panel hide-before-capture and restore", "ReplicaCaptureToast screenshot-copied toast (window level/geometry/sharingType/hold and fade/reuse)"],
             "doubles": ["capcap OverlayWindowController/ScreenCapturer/ImageEditLauncher", "GlobalHotKey Carbon registration", "ScreenshotFocusRestorer", "ReplicaBrand constant"],
-            "not_run": ["screen capture/editor internals", "real global Carbon delivery", "UI confirm-versus-save dispatch", "actual overlay draft internals", "focus restoration"]]
+            "not_run": ["screen capture/editor internals", "real global Carbon delivery", "UI confirm-versus-save dispatch", "actual overlay draft internals", "focus restoration", "toast pixels inside a real captured image (asserted via hide-before-capture + sharingType)"]]
         print(String(data: try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
     }
 }

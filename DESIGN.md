@@ -86,6 +86,7 @@
 - 刷新入口的作用范围要能被读出来：与卡片标题同一行、右对齐、压在卡片上方，明确刷新整张卡片，不缩进卡片底部假装只刷新某一行。验收：与标题中位差 ≤3pt、与卡片右缘差 ≤2pt。（2026-11-15 断言核对：`SettingsArchitectureHarness.swift`）
 - 冲突与错误提示落在触发行正下方 ≤8pt（现为 4pt），文案指名对象（「此快捷键已被“历史面板”占用」）；被拒的组合不写进偏好、不结束录制态，不另设整页共享错误条。（2026-11-15 源码核对：`AuxiliaryViews.swift` 的行错误与冲突判定）
 - 状态图标只有一种语义：7pt 实心圆点，圆点与文字间距 5pt，圆点对读屏隐藏、语义由文字承担；沿用「组件与交互」的图标条目，这里只补间距与读屏口径。（2026-11-15 源码核对：`PermissionStatusView.swift` 的 `SettingsStatusDot`）
+- 截图成功反馈固定为 toast：截图落库并写剪贴板**都成功后**，在屏幕上方居中弹「已复制截图 / Screenshot copied / 截圖已複製」，停留 1.3s 再 0.2s 淡出（验收区间 1.2–1.5s）。**不抢焦点**（`.nonactivatingPanel` + `ignoresMouseEvents`，`canBecomeKey/Main = false`，`orderFrontRegardless` 不激活 App）、**不入图**（`sharingType = .none`，且每次截图开始前先收起——H1 的排除集合只含那次会话自有的遮罩/HUD，toast 不在其中，靠「先收起」保证不进底图）。连续快速截图复用同一实例、只重置计时，不叠加第二个 toast。位置按屏幕 frame 居中、放菜单栏下方 16pt，窗口级别取 `.screenSaver + 5`，比 capcap 截图编辑器的浮层（`.screenSaver + 3/+4`）更高，所以编辑器打开也盖不住它。与「播放操作提示音」无关：声音偏好照旧生效，toast 与声音各自独立；失败分支仍只 beep，不弹「已复制截图」。（2026-11-15 W2；源码 `ReplicaCopiedOSD.swift` 的 `ReplicaCaptureToast`、`ScreenshotCoordinator.complete` / `present`；断言 `CaptureIntegrationHarness.swift`、`SettingsLocalizationHarness.swift`；实测见 `evidence/patches/w2-report.md`）
 
 ## 浅深一致性验收
 - 同一元素在两套外观下的间距、字号、控件尺寸像素一致（≤1px）：切外观只换颜色，不换布局。验收：同一页分别按浅、深渲染，对同名 AX 元素帧逐项比对，差值 ≤1pt；现有逐页契约（首元素顶边距 ≥16pt／短页居中、录制器 120×24、保留期 44pt 块）在两套外观下各跑一遍。（2026-11-15 断言核对：`SettingsArchitectureHarness.swift`）
@@ -110,4 +111,5 @@ A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立�
 - 2026-11-15 Z1：卡片内容垂直居中（上下留白差 ≤0.5pt）。行高改成「内容 + 上下对称内边距」（`SettingsRowMetrics`），卡片里的复选框/页脚说明/按钮行/保留期网格自带留白（当时的 `SettingsCardBlock`，该结构已被 2026-11-15 的「行自带留白」重构取代并删除）；补 `assertCardCentring` 逐卡断言与源码门。
 - 2026-11-15 Z3a：关于改为设置页内容区的第七页，独立关于窗口与其展示路径删除；「状态行 + 检查更新」整体移到链接/许可之上，页面只剩一个主按钮；`.blinkClipOpenAbout` 补上生产观察者，三个入口落到同一页。「关于页几何」按新形态改写，并记下「图标墨迹不能当布局证据」这条工程约束。
 - 2026-11-15 Z3b：通用页新增「外观与语言」组（主题、语言）；主题写 `preferences.appearance` 并立刻应用，语言写 `appLanguage` 并发同名通知让整页重算。通用页分组由三组变四组，逐卡居中断言按卡片身份重新点名（原三张仍在严格名单），另加说明文字卡 1.5pt 降部上限与行内选择器对齐 ≤0.5pt。
+- 2026-11-15 W2：截图成功后新增「已复制截图」toast（屏幕上方居中、1.2–1.5s、不抢焦点、不入图、连续截图不叠加）；三语文案进 `ScreenshotSettingsCopy` 的 33 键表，补 `CaptureIntegrationHarness` 的 15 条 toast 断言与三语本地化断言。
 - 2026-11-15 T1：行自带上下留白后恢复逐卡覆盖。留白常量收进 `SettingsSurfaceStyle.swift` 的 `SettingsRowMetrics`（单行 9 / 带说明 8 / 成段内容 12），权限页与同步控制器共用这一份；`assertCardCentring` 按新结构重写为「首行上留白、末行下留白必须等于该行自己的常量，卡片不加上下内边距」＋「每行上下留白相等 ≤0.5pt」，覆盖面由 `cardCentringCoverage` 点名五页十二张卡（通用四组、剪贴板两张、截图两张、隐私三张、AI 一张），逐行表扩到开关、菜单选择器与复选框 13 行；关于页补「身份 → 更新卡 20pt 节奏、更新卡 → 页脚 ≥20pt」三层间距断言。字形墨迹带继续落盘（`cardCentringGeometry` 的 `inkTopGap` / `inkBottomGap` / `inkDelta`）作为证据，但按上面「以行和控件的框为准」的口径不再承担判定。

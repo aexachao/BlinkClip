@@ -27,7 +27,8 @@ compile_native_test_harness capture-integration \
   "$source_file" "$replica_root/Sources/BlinkClip/Screenshot/ScreenshotCoordinator.swift" \
   "$replica_root/Sources/BlinkClip/Screenshot/ScreenshotWindowHider.swift" \
   "$replica_root/Sources/BlinkClip/Screenshot/ScreenshotHistoryBridge.swift" \
-  "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift"
+  "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" \
+  "$replica_root/Sources/BlinkClip/UI/ReplicaCopiedOSD.swift"
 # Each invocation needs an empty Store, including repeats inside one guarded task.
 export CAPTURE_STORE_ROOT="$ARTIFACT_TASK_DIR/build/store-$(uuidgen)"
 "$test_harness" > "$ARTIFACT_TASK_DIR/out/result.json"

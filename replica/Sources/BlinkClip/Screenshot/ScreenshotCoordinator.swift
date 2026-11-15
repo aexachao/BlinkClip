@@ -111,6 +111,8 @@ final class ScreenshotCoordinator {
         isStarted = false
         // 退出时（`applicationWillTerminate`）若还有一次截图没走完，窗口不能留在屏幕外。
         windowHider.restore()
+        // 退出时别把「已复制截图」的 toast 留在屏幕上。
+        ReplicaCopiedOSD.hideScreenshotCopied()
         // `suspendedCapture` 不清：退出热键注册不等于用户放弃草稿，重新 start 后仍可恢复。
     }
 
@@ -331,6 +333,10 @@ final class ScreenshotCoordinator {
         // `orderOut` 同步生效；再让出一轮主线程，确保窗口服务器已经把它撤下再开始抓屏。
         // 面板不可见时这里什么都没收，`restore()` 也自然是空操作。
         isPresenting = true
+        // W2：截图开始前先收起上一次的「已复制截图」toast。
+        // 它不属于本次截图会话（H1 的排除集合只含会话自有的遮罩/HUD），
+        // 不收起就会跟着桌面一起被截进底图；顺带也保证连续触发不会看到两个 toast。
+        ReplicaCopiedOSD.hideScreenshotCopied()
         windowHider.hideVisibleBlinkClipWindows()
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
@@ -413,6 +419,9 @@ final class ScreenshotCoordinator {
             // 复用 BlinkClip 自己的写剪贴板路径：它会同步 capture state 的 changeCount，
             // 避免 ClipboardMonitor 把这次写入当成新的拷贝再收一条。
             try store.writeToPasteboard(ids: [id], pasteboard: pasteboard, plainTextOnly: false)
+            // W2：落库 + 写剪贴板都成功才给可见反馈。失败分支仍然只 beep，
+            // 不弹「已复制截图」——那时候并没有复制成功。
+            ReplicaCopiedOSD.showScreenshotCopied(ScreenshotSettingsCopy.text(.screenshotCopiedToast))
         } catch {
             Self.logger.error("screenshot save failed kind=\(stage, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             NSSound.beep()

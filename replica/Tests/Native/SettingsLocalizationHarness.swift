@@ -6,7 +6,7 @@ import BlinkClipCore
 //
 // Two providers are covered here, and both are trilingual now:
 //  * `SettingsCopy` — the settings chrome's own trilingual table.
-//  * `ScreenshotSettingsCopy` — its own 32-key table, also three languages, and
+//  * `ScreenshotSettingsCopy` — its own 33-key table, also three languages, and
 //    it takes the current language from the same `SettingsLanguage` resolver, so
 //    the screenshot pane and the rest of the settings page can never disagree.
 // Expected strings are written out here per language instead of being read back
@@ -72,12 +72,13 @@ struct SettingsLocalizationHarness {
             record("settings.\(key)", !value.isEmpty && value != key, value)
         }
 
-        // --- screenshot provider: 32 keys, one table per language ------------
+        // --- screenshot provider: 33 keys, one table per language ------------
         let expectedTable: String
         let expectedTitle: String
         let expectedRegionLabel: String
         let expectedFullScreenLabel: String
         let expectedDisabledHelp: String
+        let expectedCopiedToast: String
         switch language {
         case "zh-Hans":
             expectedTable = "zh-Hans"
@@ -85,18 +86,21 @@ struct SettingsLocalizationHarness {
             expectedRegionLabel = "区域截图快捷键"
             expectedFullScreenLabel = "全屏截图快捷键"
             expectedDisabledHelp = "本次运行已停用全局快捷键。"
+            expectedCopiedToast = "已复制截图"
         case "zh-Hant":
             expectedTable = "zh-Hant"
             expectedTitle = "設定"
             expectedRegionLabel = "區域截圖快捷鍵"
             expectedFullScreenLabel = "全螢幕截圖快捷鍵"
             expectedDisabledHelp = "本次執行已停用全域快捷鍵。"
+            expectedCopiedToast = "截圖已複製"
         default:
             expectedTable = "en"
             expectedTitle = "Settings"
             expectedRegionLabel = "Region capture shortcut"
             expectedFullScreenLabel = "Full-screen capture shortcut"
             expectedDisabledHelp = "Global shortcuts are disabled for this run."
+            expectedCopiedToast = "Screenshot copied"
         }
         // The screenshot pane resolves its language through the same resolver
         // as the rest of the settings page, so both must agree in one process.
@@ -116,6 +120,9 @@ struct SettingsLocalizationHarness {
         }
         let disabledHelp = ScreenshotSettingsCopy.text(.hotKeysDisabledForRun)
         record("disabled-run-help", disabledHelp == expectedDisabledHelp, disabledHelp)
+        // W2：截图成功 toast 的文案也必须逐语言写对，不能只靠「非空」放行。
+        let copiedToast = ScreenshotSettingsCopy.text(.screenshotCopiedToast)
+        record("screenshot-copied-toast", copiedToast == expectedCopiedToast, copiedToast)
         for key in ScreenshotSettingsCopy.Key.allCases {
             let value = ScreenshotSettingsCopy.text(key)
             record("resolved." + key.rawValue, !value.isEmpty && value != key.rawValue, value)

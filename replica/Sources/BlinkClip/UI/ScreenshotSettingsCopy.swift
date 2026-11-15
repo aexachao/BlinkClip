@@ -41,6 +41,9 @@ enum ScreenshotSettingsCopy {
         case hotKeyUnknownKey = "screenshot.shortcuts.unknown-key"
         // 「快捷键」分区「恢复默认…」：默认值撞上截图热键时跳过该条并提示。
         case defaultShortcutConflictFormat = "shortcut.restore-default.conflict-format"
+        // W2：截图成功后在屏幕上方弹出的轻提示。与设置页共用同一张表，
+        // 三语齐全（简繁「截图/截圖」由这张表统一）。
+        case screenshotCopiedToast = "screenshot.toast.copied"
     }
 
     /// 三张完整表；每个 key 在 `entries` 里必须同时给出三种语言，结构上不可能缺键。
@@ -149,5 +152,6 @@ enum ScreenshotSettingsCopy {
         .defaultShortcutConflictFormat: Entry("Default %@ (%@) conflicts with a screenshot shortcut, so it was not applied.",
                                               "默认值 %@（%@）与截图热键冲突，未应用。",
                                               "預設值 %@（%@）與截圖快捷鍵衝突，未套用。"),
+        .screenshotCopiedToast: Entry("Screenshot copied", "已复制截图", "截圖已複製"),
     ]
 }
