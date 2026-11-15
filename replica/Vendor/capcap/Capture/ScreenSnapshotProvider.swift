@@ -109,7 +109,15 @@ final class ScreenSnapshotProvider: ScreenSnapshotProviding {
                 )
                 guard !Task.isCancelled else { return }
                 let excludedWindows = content.windows.filter { excludingWindowIDs.contains($0.windowID) }
-                guard Set(excludedWindows.map(\.windowID)) == excludingWindowIDs else {
+                // Every session-owned window must really be excluded: a miss
+                // would bake our own HUD or selection mask into the frozen
+                // desktop. Windows contributed by a twin instance (see
+                // `OverlayWindowController.twinInstanceChromeWindowNumbers`) may
+                // legitimately quit between enumeration and this fetch, so a
+                // missing one is dropped instead of failing the whole capture.
+                let ownWindowIDs = Self.processOwnWindowNumbers()
+                let missing = excludingWindowIDs.subtracting(excludedWindows.map(\.windowID))
+                guard missing.subtracting(ownWindowIDs).isEmpty else {
                     throw ScreenSnapshotProviderError.excludedWindowsNotFound
                 }
 
@@ -186,6 +194,25 @@ final class ScreenSnapshotProvider: ScreenSnapshotProviding {
         } catch {
             return .failure(displayID: target.displayID, error: error)
         }
+    }
+
+    /// Window numbers owned by this process, used to tell "our chrome is
+    /// missing from the exclusion" (fatal) from "a twin instance's window went
+    /// away" (harmless). Central-process query so it is safe off the main actor.
+    private static func processOwnWindowNumbers() -> Set<CGWindowID> {
+        let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        var result: Set<CGWindowID> = []
+        for entry in info {
+            guard let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t, ownerPID == ownPID,
+                  let number = entry[kCGWindowNumber as String] as? Int, number > 0
+            else { continue }
+            result.insert(CGWindowID(number))
+        }
+        return result
     }
 
     static func makeStreamConfiguration(

@@ -1162,6 +1162,24 @@ final class ReplicaUIController {
     }
 
     private func panelDidResignKey() {
+        // 展示还没结算就收到的 resign-key 不是「用户把焦点移走了」，而是**应用此刻不在前台**
+        // 引起的假事件：`showPanel` 先 `orderFront`，滑入动画跑完（150ms）才在
+        // `panelDidShow` → `rememberPanelApplication` 里 `NSApp.activate()`。中间这段时间
+        // 非激活 App 拿不住 key，窗口服务器把 key 交还前台 App，于是面板刚探出就被这里
+        // `hidePanel()` 收回去——现象是热键（⇧⌘V）从别的 App 呼出时 4/4 毫无反应，
+        // 而先有别的窗口（应用已激活）时同一个热键立刻生效。
+        //
+        // 展示尚未结算不是「用户把焦点移走了」，所以不能就地收起；但也不能直接丢掉：
+        // 结算后（`panelDidShow` 已经 `NSApp.activate()`）如果面板仍然既不是 key
+        // window、应用也没激活，那这次失焦就是真的，补一次判定再收。
+        guard isPanelVisible else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self, self.isPanelVisible, !self.isPanelClosing,
+                      !self.panel.isKeyWindow, !NSApp.isActive else { return }
+                self.hidePanel()
+            }
+            return
+        }
         // checks these guards in the window notification callback.
         // Its one-shot suppression setter belongs to the excluded Handoff path.
         guard panel.sheets.isEmpty, NSApp.modalWindow == nil,

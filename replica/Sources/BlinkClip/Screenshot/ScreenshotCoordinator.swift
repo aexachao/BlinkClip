@@ -282,7 +282,16 @@ final class ScreenshotCoordinator {
     }
 
     private func requestFromHotKey(isRegion: Bool) {
-        guard isStarted, !isRecordingHotKey, overlayController == nil, !isPresenting else { return }
+        // 四个守卫以前是静默 return：热键「按了没反应」时日志里一条线索都没有，
+        // 只能靠猜是没注册、被别的 App 吞掉，还是上一轮截图把状态卡住了。
+        guard isStarted, !isRecordingHotKey, overlayController == nil, !isPresenting else {
+            Self.logger.info("""
+                screenshot trigger ignored isRegion=\(isRegion, privacy: .public) \
+                started=\(self.isStarted, privacy: .public) recording=\(self.isRecordingHotKey, privacy: .public) \
+                overlay=\(self.overlayController != nil, privacy: .public) presenting=\(self.isPresenting, privacy: .public)
+                """)
+            return
+        }
         if let menu = trackingStatusMenu {
             guard pendingMenuCaptureIsRegion == nil else { return }
             pendingMenuCaptureIsRegion = isRegion
@@ -374,6 +383,13 @@ final class ScreenshotCoordinator {
         windowHider.reattachDelegates()
         guard let controller else {
             // 抓屏失败（多为「屏幕录制」未授权）：不产生任何条目，窗口还回去。
+            // 这里必须留痕：`present` 只在创建遮罩前把窗口移出屏幕，失败时用户看到的
+            // 同样是「按了没反应」（外加一声 Purr／beep），日志里没有就无从判断是
+            // 权限、注册还是别的原因。
+            Self.logger.error("""
+                screenshot capture failed isRegion=\(isRegion, privacy: .public) \
+                screenRecording=\(CGPreflightScreenCaptureAccess(), privacy: .public)
+                """)
             windowHider.restore()
             NSSound.beep()
             // 这也是一次「截图结束」：挂起的热键变更不能等下一次成功截图才生效。

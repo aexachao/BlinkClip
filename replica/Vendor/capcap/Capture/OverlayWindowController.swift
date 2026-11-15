@@ -493,15 +493,47 @@ class OverlayWindowController {
         snapshotDeadline = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + snapshotTimeout, execute: deadline)
         let captureChrome = [magnifierLensPanel, chipWindow].compactMap { $0 }
+        // Display capture composites every process's windows, and
+        // `SCContentFilter`'s exclusion list is the only way to omit them. A
+        // *second* BlinkClip instance (installed app + a dev build, or an agent
+        // fixture instance) shows its own cursor HUD at a floating-or-above
+        // level; without this it is baked into the frozen desktop and the user
+        // sees the crosshair/info panel inside the screenshot.
+        let twinInstanceChrome = Self.twinInstanceChromeWindowNumbers()
         let excludedWindowIDs = Set((windows + Array(preparedOverlayPanels.values) + captureChrome).compactMap { window in
             window.windowNumber > 0 ? CGWindowID(window.windowNumber) : nil
-        })
+        }).union(twinInstanceChrome)
         snapshotCancellation = snapshotProvider.capture(targets: targets, excludingWindowIDs: excludedWindowIDs) { [weak self] event in
             context?.mark(.snapshotResultReady)
             MainRunLoopScheduler.perform {
                 self?.handleSnapshotEvent(event, generation: generation)
             }
         }
+    }
+
+    /// On-screen windows that belong to *another process of this same product*
+    /// (same bundle identifier) and sit at a floating-or-above level. Those are
+    /// exactly the cursor HUDs / hint chips of a twin instance — never document
+    /// content — so they are safe to omit from the frozen desktop.
+    private static func twinInstanceChromeWindowNumbers() -> Set<CGWindowID> {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return [] }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        var result: Set<CGWindowID> = []
+        for entry in info {
+            guard let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID != ownPID,
+                  let number = entry[kCGWindowNumber as String] as? Int, number > 0,
+                  let layer = entry[kCGWindowLayer as String] as? Int,
+                  layer >= Int(NSWindow.Level.floating.rawValue),
+                  NSRunningApplication(processIdentifier: ownerPID)?.bundleIdentifier == bundleID
+            else { continue }
+            result.insert(CGWindowID(number))
+        }
+        return result
     }
 
     private static func snapshotTargets() -> [ScreenSnapshotTarget] {
