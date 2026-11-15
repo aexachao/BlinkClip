@@ -157,7 +157,10 @@ struct ICloudSyncGeneralRow: View {
     }
 
     var body: some View {
-        HStack {
+        // 与设置页其它行同一条口径：`HStack(alignment: .center)` 把开关外框中心
+        // 钉在「标题 + 说明」整块文字的中心，不靠上下 padding 挪。单行文字对行高
+        // 中心，双行对整个文字块中心。
+        HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"))
                     .accessibilityIdentifier("settings.icloud.title")

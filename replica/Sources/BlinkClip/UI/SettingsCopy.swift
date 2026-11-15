@@ -91,6 +91,10 @@ enum SettingsCopy {
         "general.help-center": ("帮助与指南", "說明與指南", "Help & Guides"),
         "replica.settings.privacy.saved-link-preview.title": ("已保存的预览图", "已儲存的預覽圖", "Saved Preview Images"),
         "replica.settings.privacy.saved-link-preview.subtitle": ("显示记录中已经保存的链接预览。", "顯示記錄中已經儲存的連結預覽。", "Display link previews already stored with your items."),
+        // 通用页按职责拆成三组：启动与运行 / 同步与更新 / 声音。
+        "settings.general.startup-section.title": ("启动与运行", "啟動與執行", "Startup & Running"),
+        "settings.general.sync-section.title": ("同步与更新", "同步與更新", "Sync & Updates"),
+        "settings.general.sound-section.title": ("声音", "聲音", "Sound"),
         "settings.open-at-login.title": ("登录时启动", "登入時啟動", "Launch at Login"),
         "settings.privacy.screensharing.title": ("共享屏幕时显示闪贴", "共享螢幕時顯示閃貼", "Show BlinkClip While Sharing Screen"),
         "settings.privacy.screensharing.subtitle": ("面板打开时，允许共享屏幕的观看者看到闪贴面板。", "面板開啟時，允許共享螢幕的觀看者看到閃貼面板。", "Let shared-screen viewers see the BlinkClip panel when it is open."),

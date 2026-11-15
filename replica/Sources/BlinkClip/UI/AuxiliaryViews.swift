@@ -484,29 +484,56 @@ struct ReplicaSettingsView: View {
         .contentShape(Rectangle())
     }
 
-    private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>,
-                               identifier: String? = nil) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(SettingsCopy.text(title))
-                Text(ReplicaBrand.replacingName(in: SettingsCopy.text(subtitle)))
-                    .font(.caption).settingsSecondaryText()
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            Toggle(SettingsCopy.text(title), isOn: isOn)
-                .labelsHidden().toggleStyle(.switch).controlSize(.mini)
-                .accessibilityIdentifierIfPresent(identifier)
+    /// 行内布局的唯一实现：左侧文字块（标题 + 可选说明）与右侧控件。
+    ///
+    /// 对齐靠 `HStack(alignment: .center)`，不靠上下 padding：多出来的行高由
+    /// `frame(minHeight:)` 平均分给上下两边，右侧控件的外框中心与文字块中心落在
+    /// 同一条中线上——单行对文字行高中心，双行对整个文字块中心。`Spacer` 的
+    /// `minLength` 是文字与控件之间的最小间距，控件因此始终贴行右端。
+    private func settingsRow<Trailing: View>(
+        minHeight: CGFloat,
+        spacing: CGFloat = 12,
+        @ViewBuilder text: () -> some View,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) { text() }
+            Spacer(minLength: spacing)
+            trailing()
         }
-        .frame(minHeight: 42)
+        .frame(minHeight: minHeight)
     }
 
-    private func settingsSwitch(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack {
+    private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>,
+                               identifier: String? = nil) -> some View {
+        settingsRow(minHeight: 42) {
+            Text(SettingsCopy.text(title))
+            Text(ReplicaBrand.replacingName(in: SettingsCopy.text(subtitle)))
+                .font(.caption).settingsSecondaryText()
+                .fixedSize(horizontal: false, vertical: true)
+                // 说明行带自己的键做标识：行内对齐断言按「标题 + 说明」整块量中线。
+                .accessibilityIdentifier(subtitle)
+        } trailing: {
+            settingsRowSwitch(title: SettingsCopy.text(title), isOn: isOn, identifier: identifier)
+        }
+    }
+
+    private func settingsSwitch(_ title: String, isOn: Binding<Bool>,
+                                identifier: String? = nil) -> some View {
+        settingsRow(minHeight: 30) {
             Text(title)
-            Spacer()
-            Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
-        }.frame(minHeight: 30)
+        } trailing: {
+            settingsRowSwitch(title: title, isOn: isOn, identifier: identifier)
+        }
+    }
+
+    /// 行内开关：与其它行控件同一写法（`.mini` 外观、隐藏标签），
+    /// 外框即 26×15 的轨道，中心可被 AX 断言直接量到。
+    private func settingsRowSwitch(title: String, isOn: Binding<Bool>,
+                                   identifier: String?) -> some View {
+        Toggle(title, isOn: isOn)
+            .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+            .accessibilityIdentifierIfPresent(identifier)
     }
 
     private func excludedApplication(_ identifier: String) -> some View {
@@ -529,34 +556,55 @@ struct ReplicaSettingsView: View {
         state.perform { try state.store.save() }
     }
 
+    /// 通用页：按职责拆成三组小标题卡片，与剪贴板等页的
+    /// `settingsSectionTitle` + `settingsCard` 模式一致。
+    ///
+    /// 「启动与运行」是应用生命周期，「同步与更新」是后台数据与网络行为，
+    /// 「声音」是纯本地反馈：一张卡最多两项，超过就分组，避免单卡里塞五种
+    /// 不同性质的行为。组内保留分隔线，组间只用 20pt 间距，不再加 Divider。
     private var general: some View {
         SettingsPageScroll {
-            VStack(alignment: .leading, spacing: 32) {
-                settingsCard {
-                    settingsSwitch(SettingsCopy.text("settings.open-at-login.title"), isOn: Binding(get: { state.store.preferences.launchAtLogin },
-                        set: { value in setLaunchAtLogin(value) }))
-                    Divider()
-                    settingsSwitch(SettingsCopy.text("settings.run-in-background.title"), isOn: Binding(get: { backgroundEnabled }, set: { value in
-                        BackgroundService.setEnabled(value)
-                    }))
-                    .onReceive(BackgroundService.enabledChanges) { backgroundEnabled = $0 }
-                    Divider()
-                    ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync)
-                        .frame(minHeight: 30)
-                    Divider()
-                    // 「自动检查更新」排在 iCloud 同步之后、「播放操作提示音」之前：
-                    // 前三条都是「这个应用做什么」，第四条是唯一一个会自己跑网络请求的
-                    // 后台行为，紧接着再回到纯本地的提示音，信息层级从「启动/常驻/同步」
-                    // 到「更新」再到「音效」是递进的。
-                    settingsToggle("settings.automatic-updates.title",
-                                   subtitle: "settings.automatic-updates.subtitle",
-                                   isOn: automaticUpdatesBinding,
-                                   identifier: "settings.automatic-updates.toggle")
-                    Divider()
-                    // Same trilingual table as the rest of this pane: the Core
-                    // bundle has no zh-Hant table, so String(localized:) would
-                    // fall back to English for a Traditional reader.
-                    settingsSwitch(SettingsCopy.text("settings.sound-effects.title"), isOn: preference(\.playSounds))
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(SettingsCopy.text("settings.general.startup-section.title"))
+                    settingsCard {
+                        settingsSwitch(SettingsCopy.text("settings.open-at-login.title"),
+                                       isOn: Binding(get: { state.store.preferences.launchAtLogin },
+                                                     set: { value in setLaunchAtLogin(value) }),
+                                       identifier: "settings.open-at-login.toggle")
+                        Divider()
+                        settingsSwitch(SettingsCopy.text("settings.run-in-background.title"),
+                                       isOn: Binding(get: { backgroundEnabled }, set: { value in
+                                           BackgroundService.setEnabled(value)
+                                       }),
+                                       identifier: "settings.run-in-background.toggle")
+                        .onReceive(BackgroundService.enabledChanges) { backgroundEnabled = $0 }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(SettingsCopy.text("settings.general.sync-section.title"))
+                    settingsCard {
+                        ICloudSyncGeneralRow(sync: state.originalCloudSync, drive: state.cloudSync)
+                            .frame(minHeight: 42)
+                        Divider()
+                        // 「自动检查更新」紧跟 iCloud 同步：两者都是会自己发起后台
+                        // 网络请求的行为，放在同一组里按「同步 → 更新」递进。
+                        settingsToggle("settings.automatic-updates.title",
+                                       subtitle: "settings.automatic-updates.subtitle",
+                                       isOn: automaticUpdatesBinding,
+                                       identifier: "settings.automatic-updates.toggle")
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(SettingsCopy.text("settings.general.sound-section.title"))
+                    settingsCard {
+                        // Same trilingual table as the rest of this pane: the Core
+                        // bundle has no zh-Hant table, so String(localized:) would
+                        // fall back to English for a Traditional reader.
+                        settingsSwitch(SettingsCopy.text("settings.sound-effects.title"),
+                                       isOn: preference(\.playSounds),
+                                       identifier: "settings.sound-effects.toggle")
+                    }
                 }
             }
         }
@@ -742,21 +790,19 @@ struct ReplicaSettingsView: View {
         let subtitle = available
             ? ScreenshotSettingsCopy.text(.appleTranslationSubtitle)
             : ScreenshotSettingsCopy.text(.appleTranslationUnavailable)
-        // 与隐私页同构：标题+说明行里的开关垂直居中，和 42pt 行高对齐，
-        // 不像旧实现那样贴到行顶（两处开关一高一低）。
-        return HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))
-                Text(subtitle)
-                    .font(.caption).settingsSecondaryText()
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            Toggle(ScreenshotSettingsCopy.text(.appleTranslationTitle),
-                   isOn: appleTranslationEnabledBinding)
-                .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+        // 与隐私页同构：走同一个 `settingsRow`，开关中心钉在文字块中心，
+        // 单行对文字行高中心、双行对整个文字块中心（不再各页各写一套 HStack）。
+        return settingsRow(minHeight: 42) {
+            Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))
+            Text(subtitle)
+                .font(.caption).settingsSecondaryText()
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.apple-translation.subtitle")
+        } trailing: {
+            settingsRowSwitch(title: ScreenshotSettingsCopy.text(.appleTranslationTitle),
+                              isOn: appleTranslationEnabledBinding,
+                              identifier: "settings.apple-translation.toggle")
         }
-        .frame(minHeight: 42)
         // 系统不到 macOS 15：整行禁用，副标题直接写原因，避免「打开了但不生效」。
         .disabled(!available)
     }
@@ -933,9 +979,9 @@ struct ReplicaSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(SettingsCopy.trilingual("显示与预览", "顯示與預覽", "Display and Previews"))
                     settingsCard {
-                    settingsToggle("settings.privacy.screensharing.title", subtitle: "settings.privacy.screensharing.subtitle", isOn: preference(\.showDuringScreenSharing))
+                    settingsToggle("settings.privacy.screensharing.title", subtitle: "settings.privacy.screensharing.subtitle", isOn: preference(\.showDuringScreenSharing), identifier: "settings.privacy.screensharing.toggle")
                     Divider()
-                    settingsToggle("replica.settings.privacy.saved-link-preview.title", subtitle: "replica.settings.privacy.saved-link-preview.subtitle", isOn: preference(\.linkPreviewsEnabled))
+                    settingsToggle("replica.settings.privacy.saved-link-preview.title", subtitle: "replica.settings.privacy.saved-link-preview.subtitle", isOn: preference(\.linkPreviewsEnabled), identifier: "settings.privacy.saved-link-preview.toggle")
                 }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -1214,7 +1260,8 @@ struct ReplicaSettingsView: View {
                 settingsCard {
                     // 「正常/不正常」的图标语言与隐私页统一：同一个 7pt 状态圆点，
                     // 语义不同由文字区分（「本机服务可用」≠「已授权」）。
-                    HStack(spacing: SettingsStatusDot.textSpacing) {
+                    // `.center` 显式对齐：圆点中心 = 状态标题文字中心（≤0.5pt）。
+                    HStack(alignment: .center, spacing: SettingsStatusDot.textSpacing) {
                         SettingsStatusDot(level: executable ? .normal : .problem)
                         Text(executable
                              ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available")
@@ -1318,30 +1365,32 @@ private extension View {
 
 /// 设置内容区的内边距：六个分区共用一套节奏。
 ///
-/// 上下取同一个值是有意的：内容不足一屏时内容块会被居中，多出来的留白平均分给
-/// 上下两边，`top: 16 / bottom: 20` 那种不对称的写法会让居中后的上下留白差出 4pt。
+/// 内容**顶部对齐**：第一个内容块距内容区顶 16pt（`topInset`），底边留 20pt
+/// 收尾，内容超出一屏时从顶部起滚动。上下不再取同一个值——那是「装得下就
+/// 居中」规则留下的写法，页面级居中已撤销，余量不再需要平分。
 enum SettingsPageMetrics {
     static let horizontalInset: CGFloat = 20
-    static let verticalInset: CGFloat = 16
+    /// 内容区顶到第一个内容块的固定距离（回归断言直接量这一值）。
+    static let topInset: CGFloat = 16
+    /// 内容区底到最后一个内容块的距离，滚到底时成立。
+    static let bottomInset: CGFloat = 20
 }
 
-/// 设置内容区的滚动容器：内容不足一屏时垂直居中，超出一屏时从顶部开始并可滚动。
+/// 设置内容区的滚动容器：所有分区一律从顶部 16pt 起排，超出一屏才滚动。
 ///
-/// 居中的做法只有一句：把「带内边距的内容块」放进一个最小高度等于可视高度的
-/// `frame` 里。内容比可视区矮时，多出来的留白由 `.center` 平均分给上下两边，
-/// 两边留白相等；内容比可视区高时这个 `frame` 不产生任何额外高度，文档视图就是
-/// 内容本身的高度，布局与原来从 16pt 顶部起、可滚到底完全一致。
+/// 这里只做「内边距 + ScrollView」，不套 `GeometryReader`、不做
+/// `frame(minHeight:alignment: .center)`：上一轮把内容块放进最小高度等于
+/// 可视高度的 frame 里求垂直居中，结果是短页整体浮在内容区中间，与「设置项
+/// 在自己的行内居中」是两件事。页面从头对齐后，六页的顶部节奏只有一个值。
 struct SettingsPageScroll<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                content
-                    .padding(.horizontal, SettingsPageMetrics.horizontalInset)
-                    .padding(.vertical, SettingsPageMetrics.verticalInset)
-                    .frame(minHeight: proxy.size.height, alignment: .center)
-            }
+        ScrollView {
+            content
+                .padding(.horizontal, SettingsPageMetrics.horizontalInset)
+                .padding(.top, SettingsPageMetrics.topInset)
+                .padding(.bottom, SettingsPageMetrics.bottomInset)
         }
         .accessibilityIdentifier("settings.page-scroll")
     }
