@@ -100,16 +100,16 @@ import BlinkClipCapture
     }
     @MainActor static var firstElementOffsets: [String: CGFloat] = [:]
 
-    /// Per-page surface + geometry contract (P7: short pages are vertically centred):
-    /// - a page whose content is shorter than the visible area is centred inside it:
-    ///   the gap above the first element equals the gap below the last one (<=2pt),
-    ///   and the document is exactly one viewport tall (nothing to scroll);
-    /// - a page whose content is taller than the visible area starts at the same
-    ///   16pt top offset it always had, really scrolls, and its last element is
-    ///   fully visible once scrolled to the bottom;
-    /// - `centredSections` / `topAlignedSections` pin the four pages the change is
-    ///   judged by, so a page silently growing or shrinking cannot reclassify
-    ///   itself and still pass;
+    /// Per-page surface + geometry contract (top-aligned pages):
+    /// - every page starts at the same fixed top offset: the gap above the first
+    ///   content element is `SettingsPageMetrics.topInset` (16pt) within 0.5pt,
+    ///   whether the page fits one screen or not; there is no "centre it if it
+    ///   fits" rule any more (the previous round's page-level centring is gone);
+    /// - a page whose content is taller than the visible area scrolls from that
+    ///   same 16pt offset; scrolled to the bottom its last element sits
+    ///   `bottomInset` (20pt) above the content area's bottom;
+    /// - row alignment is measured separately (`checkRowAlignment`): the trailing
+    ///   switch's frame centre must sit on the row text block's centre (<=0.5pt);
     /// - the rendered card is brighter than the page margin in both appearances;
     /// - the retention grid is one fixed 4-column grid (10pt gaps, empty last cell);
     /// - the AI connect action sits inside its status card and aligns with the title;
@@ -140,12 +140,11 @@ import BlinkClipCapture
         return (top, bottom)
     }
 
-    /// 648×600（出货窗口尺寸）下装得下 therefore 居中的分区，以及唯一超出一屏、
-    /// 仍从 16pt 顶部起的分区。实测值见 `pageGeometry`；这份清单是**显式**的，
-    /// 某一页内容长高或缩水都必须重新确认，不会自动改分类还照样通过。
-    static let centredSections: Set<SettingsSection> = [.general, .screenshot, .clipboard, .shortcuts, .ai]
-    static let topAlignedSections: Set<SettingsSection> = [.privacy]
+    /// 648×600（出货窗口尺寸）下六页的内容高度分类：全部只影响「是否滚动」，
+    /// 不影响首元素位置——页面一律从顶部 16pt 起排。实测值见 `pageGeometry`。
     @MainActor static var pageGeometry: [String: [String: Double]] = [:]
+    /// 行内对齐的逐行实测值（文字块中线、开关中线、偏差），写进结果 JSON。
+    @MainActor static var rowAlignmentGeometry: [String: [[String: Any]]] = [:]
 
     @MainActor static func checkPageSurface(hosting: NSView, window: NSWindow, section: SettingsSection,
                                             appearance: String) async throws {
@@ -187,25 +186,16 @@ import BlinkClipCapture
             "viewportHeight": Double(viewportHeight),
             "fitsOneScreen": fitsOneScreen ? 1 : 0,
         ]
-        try check(!(centredSections.contains(section) && topAlignedSections.contains(section)),
-                  "\(section) is classified as both centred and top aligned")
-        if centredSections.contains(section) {
-            try check(fitsOneScreen, "\(appearance) \(section) no longer fits one screen (\(documentHeight) of \(viewportHeight))")
-            try check(abs(offset - bottomGap) <= 2,
-                      "\(appearance) \(section) is not vertically centred: top gap \(offset) bottom gap \(bottomGap)")
-            try check(offset >= SettingsPageMetrics.verticalInset - 0.5,
-                      "\(appearance) \(section) centred content lost its floor: top gap \(offset)")
-        } else if topAlignedSections.contains(section) {
-            try check(!fitsOneScreen, "\(appearance) \(section) fits one screen now, so the top-aligned rule no longer covers it (\(documentHeight) of \(viewportHeight))")
-            try check(offset >= 14 && offset <= 21,
-                      "\(appearance) \(section) first element offset \(offset) outside 16-20pt")
-        } else if fitsOneScreen {
-            // 其余分区也遵守同一条规则：装得下就居中，上下留白必须相等。
-            try check(abs(offset - bottomGap) <= 2,
-                      "\(appearance) \(section) fits one screen but is not centred: top \(offset) bottom \(bottomGap)")
+        try check(abs(offset - SettingsPageMetrics.topInset) <= 0.5,
+                  "\(appearance) \(section) first element offset \(offset) is not the fixed \(SettingsPageMetrics.topInset)pt top inset")
+        // 页面级居中已撤销：任何页都不再按「装得下/装不下」改首元素位置。
+        // 装得下只意味着不需要滚动；装不下才滚动，但起点仍是同一个 16pt。
+        if fitsOneScreen {
+            try check(bottomGap >= SettingsPageMetrics.bottomInset - 1,
+                      "\(appearance) \(section) bottom inset \(bottomGap) is under the \(SettingsPageMetrics.bottomInset)pt page inset")
         } else {
-            try check(offset >= 14 && offset <= 21,
-                      "\(appearance) \(section) overflows one screen but is not top aligned: offset \(offset)")
+            try check(pageScroll.contentView.bounds.origin.y == 0,
+                      "\(appearance) \(section) does not start at the top: origin \(pageScroll.contentView.bounds.origin.y)")
         }
 
         // Rendered surface: sample the card fill in the top-right padding and the
@@ -321,6 +311,176 @@ import BlinkClipCapture
             try check(abs(card.maxX - refresh.maxX) <= 2,
                       "refresh control is not right-aligned with the card: refresh \(refresh) card \(card)")
         }
+    }
+
+    // MARK: - 行内垂直对齐（右侧控件 ↔ 行文字块，≤0.5pt）
+
+    /// 一行「标题 + 可选说明 + 右侧控件」的对齐规格。
+    ///
+    /// `title` 按当前语言的文案找标题（单行行只有标题）；`detailIdentifier` 是
+    /// 说明行的稳定标识（双行行才有）。两者都取不到就判失败，不做「找不到就跳过」。
+    struct AlignmentRow {
+        let toggle: String
+        let title: String
+        let detailIdentifier: String?
+        var lines: Int { detailIdentifier == nil ? 1 : 2 }
+    }
+
+    static func alignmentRows(for section: SettingsSection) -> [AlignmentRow] {
+        switch section {
+        case .general:
+            return [
+                AlignmentRow(toggle: "settings.open-at-login.toggle",
+                             title: SettingsCopy.text("settings.open-at-login.title"),
+                             detailIdentifier: nil),
+                AlignmentRow(toggle: "settings.run-in-background.toggle",
+                             title: SettingsCopy.text("settings.run-in-background.title"),
+                             detailIdentifier: nil),
+                AlignmentRow(toggle: "settings.icloud.toggle",
+                             title: SettingsCopy.trilingual("iCloud 同步", "iCloud 同步", "iCloud Sync"),
+                             detailIdentifier: "settings.icloud.summary"),
+                AlignmentRow(toggle: "settings.automatic-updates.toggle",
+                             title: SettingsCopy.text("settings.automatic-updates.title"),
+                             detailIdentifier: "settings.automatic-updates.subtitle"),
+                AlignmentRow(toggle: "settings.sound-effects.toggle",
+                             title: SettingsCopy.text("settings.sound-effects.title"),
+                             detailIdentifier: nil),
+            ]
+        case .screenshot:
+            return [
+                AlignmentRow(toggle: "settings.apple-translation.toggle",
+                             title: ScreenshotSettingsCopy.text(.appleTranslationTitle),
+                             detailIdentifier: "settings.apple-translation.subtitle"),
+            ]
+        case .privacy:
+            return [
+                AlignmentRow(toggle: "settings.privacy.screensharing.toggle",
+                             title: SettingsCopy.text("settings.privacy.screensharing.title"),
+                             detailIdentifier: "settings.privacy.screensharing.subtitle"),
+                AlignmentRow(toggle: "settings.privacy.saved-link-preview.toggle",
+                             title: SettingsCopy.text("replica.settings.privacy.saved-link-preview.title"),
+                             detailIdentifier: "replica.settings.privacy.saved-link-preview.subtitle"),
+            ]
+        default:
+            return []
+        }
+    }
+
+    @MainActor static func axRole(_ element: NSObject) -> String {
+        let selector = NSSelectorFromString("accessibilityRole")
+        if element.responds(to: selector),
+           let role = element.perform(selector)?.takeUnretainedValue() as? String { return role }
+        return element.accessibilityAttributeValue(.role) as? String ?? ""
+    }
+
+    @MainActor static func axText(_ element: NSObject) -> String {
+        // SwiftUI 的文字节点把文案暴露在 NSAccessibility 协议的 `accessibilityValue`
+        // / `accessibilityLabel` 上，旧的 AXValue 属性在这里是 nil；两条都试。
+        for name in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+            let selector = NSSelectorFromString(name)
+            if element.responds(to: selector),
+               let value = element.perform(selector)?.takeUnretainedValue() as? String,
+               !value.isEmpty { return value }
+        }
+        for attribute in [NSAccessibility.Attribute.value, .title, .description] {
+            if let value = element.accessibilityAttributeValue(attribute) as? String, !value.isEmpty { return value }
+        }
+        return ""
+    }
+
+    /// 逐行断言：开关外框中心 == 该行文字块中心（单行对文字行高中心，双行对
+    /// 标题 + 说明整块的中心），误差 ≤0.5pt。实测值写进 `rowAlignmentGeometry`。
+    @MainActor static func checkRowAlignment(hosting: NSView, section: SettingsSection,
+                                              appearance: String) throws {
+        let rows = alignmentRows(for: section)
+        guard !rows.isEmpty else { return }
+        hosting.layoutSubtreeIfNeeded()
+        let tree = accessibilityTree(hosting)
+        var measured: [[String: Any]] = []
+        for row in rows {
+            guard let toggle = tree.filter({ node in
+                axID(node) == row.toggle && ["AXCheckBox", "AXButton", "AXSwitch"].contains(axRole(node))
+            }).map({ axFrame($0) }).filter({ $0.width > 10 && $0.height > 10 })
+                .max(by: { $0.width < $1.width }) else {
+                throw Failure(message: "\(appearance) \(section) is missing the row switch \(row.toggle)")
+            }
+            guard let title = tree.filter({ node in
+                guard axRole(node) == "AXStaticText" else { return false }
+                let text = axText(node)
+                return text == row.title || text.hasSuffix("| " + row.title)
+            }).map({ axFrame($0) }).filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else {
+                throw Failure(message: "\(appearance) \(section) row \(row.toggle) is missing its title: \(row.title)")
+            }
+            var block = title
+            if let detail = row.detailIdentifier {
+                guard let detailFrame = tree.filter({ axID($0) == detail }).map({ axFrame($0) })
+                    .filter({ $0.width > 2 }).max(by: { $0.width < $1.width }) else {
+                    throw Failure(message: "\(appearance) \(section) row \(row.toggle) is missing its detail \(detail)")
+                }
+                block = block.union(detailFrame)
+            }
+            let delta = abs(block.midY - toggle.midY)
+            measured.append(["row": row.toggle, "lines": row.lines,
+                             "textCenter": Double((block.midY * 100).rounded() / 100),
+                             "switchCenter": Double((toggle.midY * 100).rounded() / 100),
+                             "delta": Double((delta * 100).rounded() / 100)])
+            try check(delta <= 0.5,
+                      "\(appearance) \(section) row \(row.toggle) switch centre \(toggle.midY) is \(delta)pt off its \(row.lines)-line text block centre \(block.midY)")
+        }
+        rowAlignmentGeometry["\(appearance)-\(section.rawValue)"] = measured
+    }
+
+    /// AI 页状态行：7pt 圆点（绘制出来的实心圆，读屏隐藏）与状态标题文字
+    /// 同一条中线，误差 ≤0.5pt。用渲染像素量，因为圆点不暴露 AX 帧。
+    @MainActor static func checkAIStatusDotAlignment(hosting: NSView, appearance: String) throws {
+        let tree = accessibilityTree(hosting)
+        guard let status = tree.first(where: { axID($0) == "settings.mcp.status" }).map({ axFrame($0) }),
+              let window = hosting.window else {
+            throw Failure(message: "\(appearance) AI page has no status title to align the dot with")
+        }
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            throw Failure(message: "\(appearance) AI page has no bitmap for the status dot")
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, hosting.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, hosting.bounds.height)
+        var top = CGFloat.greatestFiniteMagnitude, bottom = -CGFloat.greatestFiniteMagnitude
+        // 圆点在标题左侧：标题行上下各放宽 6pt，横向从卡片内文左缘到标题左缘。
+        let search = NSRect(x: status.minX - 24, y: status.minY - 6,
+                            width: 22, height: status.height + 12)
+        var y = search.minY
+        while y <= search.maxY {
+            var x = search.minX
+            while x <= search.maxX {
+                let local = hosting.convert(window.convertPoint(fromScreen: NSPoint(x: x, y: y)), from: nil)
+                let px = Int(local.x * scaleX)
+                let py = Int((hosting.isFlipped ? local.y : hosting.bounds.height - local.y) * scaleY)
+                if px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh,
+                   let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) {
+                    // 圆点是该区域里唯一的饱和色（正常=系统绿、异常=系统红），
+                    // 文字/背景都是灰阶：按「最大与最小通道差」判定，不挑色相。
+                    let channels = [color.redComponent, color.greenComponent, color.blueComponent]
+                    if (channels.max() ?? 0) - (channels.min() ?? 0) > 0.25 {
+                        let screenY = window.convertPoint(toScreen: hosting.convert(
+                            NSPoint(x: local.x, y: hosting.isFlipped ? local.y : hosting.bounds.height - local.y), to: nil)).y
+                        top = min(top, screenY)
+                        bottom = max(bottom, screenY)
+                    }
+                }
+                x += 1
+            }
+            y += 1
+        }
+        guard top <= bottom else { throw Failure(message: "\(appearance) AI status dot is not rendered") }
+        let dotCenter = (top + bottom) / 2
+        try check(abs(dotCenter - status.midY) <= 0.5,
+                  "\(appearance) AI status dot centre \(dotCenter) is \(abs(dotCenter - status.midY))pt off the title centre \(status.midY)")
+        rowAlignmentGeometry["\(appearance)-ai-dot"] = [[
+            "row": "settings.mcp.status.dot", "lines": 1,
+            "textCenter": Double((status.midY * 100).rounded() / 100),
+            "switchCenter": Double((dotCenter * 100).rounded() / 100),
+            "delta": Double((abs(dotCenter - status.midY) * 100).rounded() / 100),
+        ]]
     }
 
     // MARK: - P7「自动检查更新」
@@ -992,6 +1152,7 @@ import BlinkClipCapture
         }
         let originalRetention = store.preferences.historyRetentionDays
         var screenshotHeader: Data?
+        rowAlignmentGeometry = [:]
         for appearance in ["light", "dark"] {
         NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
         captures = []
@@ -1052,7 +1213,7 @@ import BlinkClipCapture
                 let hidden = max(0, (pageScroll.documentView?.bounds.height ?? 0) - pageScroll.contentView.bounds.height)
                 if fitsOneScreen {
                     try check(hidden <= 0.5 && pageScroll.contentView.bounds.origin.y == 0,
-                              "\(appearance) \(section) is centred but still scrolled by \(pageScroll.contentView.bounds.origin.y) of \(hidden)")
+                              "\(appearance) \(section) fits one screen but still scrolled by \(pageScroll.contentView.bounds.origin.y) of \(hidden)")
                 } else {
                     try check(pageScroll.contentView.bounds.origin.y >= hidden - 1,
                               "\(appearance) \(section) did not reach the bottom: origin \(pageScroll.contentView.bounds.origin.y) hidden \(hidden)")
@@ -1061,38 +1222,31 @@ import BlinkClipCapture
                         throw Failure(message: "\(appearance) \(section) has no content bottom after scrolling")
                     }
                     let gapAfterScroll = edges.bottom - contentBottom
-                    try check(gapAfterScroll >= SettingsPageMetrics.verticalInset - 1.5
-                              && gapAfterScroll <= SettingsPageMetrics.verticalInset + 4,
-                              "\(appearance) \(section) bottom inset after scrolling is \(gapAfterScroll), expected \(SettingsPageMetrics.verticalInset)")
+                    try check(gapAfterScroll >= SettingsPageMetrics.bottomInset - 1.5
+                              && gapAfterScroll <= SettingsPageMetrics.bottomInset + 4,
+                              "\(appearance) \(section) bottom inset after scrolling is \(gapAfterScroll), expected \(SettingsPageMetrics.bottomInset)")
                 }
+            }
+            // 行内对齐：右侧开关外框中心 == 该行文字块中心（单行对文字行高中心，
+            // 双行对标题+说明整块中心），误差 ≤0.5pt。
+            try checkRowAlignment(hosting: hosting, section: section, appearance: appearance)
+            if section == .ai {
+                try checkAIStatusDotAlignment(hosting: hosting, appearance: appearance)
             }
             window.orderOut(nil)
             window.contentView = nil
             window.close()
         }
-        // 出货尺寸下：五个分区装得下（居中，上下留白相等），隐私页超出一屏
-        // （顶对齐、可滚）。跨页的 16pt 顶部节奏在 648×380 的长页面检查里比较，
-        // 那里才有多个超出一屏的分区。
+        // 六页一律顶部对齐：首元素距内容区顶固定 16pt，不再按「装得下就居中」
+        // 分类。装得下的页不滚，装不下的页从同一位置滚到底。
         let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
         try check(pageOffsets.count == SettingsSection.allCases.count,
                   "\(appearance) only \(pageOffsets.count) pages measured: \(pageOffsets.keys.sorted())")
         for key in pageOffsets.keys {
             guard let geometry = pageGeometry[key] else { throw Failure(message: "\(key) has no geometry") }
-            if geometry["fitsOneScreen"] == 1 {
-                try check(abs(geometry["topGap"]! - geometry["bottomGap"]!) <= 2,
-                          "\(appearance) \(key) is centred but has unequal gaps: \(geometry)")
-            } else {
-                try check(geometry["topGap"]! >= 14 && geometry["topGap"]! <= 21,
-                          "\(appearance) \(key) overflows but is not top aligned: \(geometry)")
-            }
+            try check(abs(geometry["topGap"]! - Double(SettingsPageMetrics.topInset)) <= 0.5,
+                      "\(appearance) \(key) is not top aligned at \(SettingsPageMetrics.topInset)pt: \(geometry)")
         }
-        try check(!topAlignedSections.isEmpty, "the top-aligned contract must keep at least one page to hold")
-        try check(centredSections.allSatisfy {
-                      pageGeometry["\(appearance)-\($0.rawValue)"]?["fitsOneScreen"] == 1 },
-                  "\(appearance) a section promised to be centred no longer measures as one screen tall")
-        try check(topAlignedSections.allSatisfy {
-                      pageGeometry["\(appearance)-\($0.rawValue)"]?["fitsOneScreen"] == 0 },
-                  "\(appearance) a section promised to overflow one screen now fits")
         if !captures.isEmpty {
             let cell = NSSize(width: 648, height: 622)
             let sheet = NSImage(size: NSSize(width: cell.width * 4, height: cell.height * 3))
@@ -1248,8 +1402,9 @@ import BlinkClipCapture
         try check(reopened.preferences.historyRetentionDays == originalRetention, "persisted retention unchanged")
         let result: [String: Any] = ["passed":true,"assertions":assertions,"language":language,"runID":runID,"fixtureDirectory":fixture.path,
             "pageGeometry": pageGeometry.mapValues { $0.mapValues { $0 } },
-            "centredSections": centredSections.sorted { $0.rawValue < $1.rawValue }.map(\.title),
-            "topAlignedSections": topAlignedSections.sorted { $0.rawValue < $1.rawValue }.map(\.title),
+            "rowAlignment": rowAlignmentGeometry,
+            "topInset": SettingsPageMetrics.topInset,
+            "bottomInset": SettingsPageMetrics.bottomInset,
             "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))

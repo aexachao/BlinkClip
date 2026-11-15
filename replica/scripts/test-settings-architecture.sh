@@ -64,17 +64,23 @@ checks = {
                               and 'static let tileSpacing: CGFloat = 10' in retention,
     'retention-single-width-formula': retention.count('gridColumns - 1) * Self.tileSpacing') == 1,
     'retention-no-count-3-row': 'index < 4 ? 0 : 1' not in retention and 'row == 0 ? 4 : 3' not in retention,
-    # 3) 六页统一 16pt 顶部节奏 + P7 垂直居中规则：短页居中、长页顶对齐。
+    # 3) 六页统一 16pt 顶部节奏，页面**顶部对齐**（上一轮的「装得下就居中」已撤销）：
     #    内边距只在 `SettingsPageMetrics` 写一次，六个分区共用同一个容器；
-    #    居中必须靠在「带内边距的内容块」外面加 minHeight 的 frame 实现，
-    #    长页因此拿不到任何额外高度（不会把长页也居中）。
+    #    容器里不得再出现 GeometryReader / minHeight 等于可视高度的居中 frame。
     'six-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 6,
     'page-insets-defined-once': aux.count('horizontalInset: CGFloat = 20') == 1
-                                and aux.count('verticalInset: CGFloat = 16') == 1,
-    'centres-only-short-pages': 'padding(.vertical, SettingsPageMetrics.verticalInset)\n                    .frame(minHeight: proxy.size.height, alignment: .center)' in aux,
+                                and aux.count('topInset: CGFloat = 16') == 1
+                                and aux.count('bottomInset: CGFloat = 20') == 1,
+    'pages-start-16pt-from-the-top': '.padding(.top, SettingsPageMetrics.topInset)'
+                                     in aux
+                                     and '.padding(.bottom, SettingsPageMetrics.bottomInset)' in aux,
+    'no-page-level-centring': 'frame(minHeight: proxy.size.height, alignment: .center)' not in aux
+                              and 'GeometryReader { proxy in' not in aux,
     'no-page-content-max-height-centring': 'frame(maxHeight: .infinity, alignment: .center)' not in aux
                                            and 'frame(minHeight: 0, alignment: .center)' not in aux,
-    'no-asymmetric-page-padding': '.padding(.top, 16).padding(.bottom, 20)' not in aux,
+    'no-hardcoded-page-padding': '.padding(.top, 16).padding(.bottom, 20)' not in aux
+                                 and '.padding(.vertical, SettingsPageMetrics.verticalInset)' not in aux
+                                 and '.padding(.horizontal, 20)' not in aux,
     'six-pages-no-8pt-top': '.padding(.top, 8).padding(.bottom, 20)' not in aux,
     # P7：「自动检查更新」写在 iCloud 之后、提示音之前，且落到 Sparkle 自己的键上。
     'auto-update-row-between-icloud-and-sound': aux.index('ICloudSyncGeneralRow(')
@@ -131,9 +137,32 @@ checks = {
     'about-close-restores-selection': 'aboutReturnTab' in aux and 'restoreSidebarAfterAbout' in aux
                                        and 'controller?.onClose = onClose' in aux
                                        and 'func windowWillClose(_ notification: Notification)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
-    'translation-row-centered': 'return HStack {\n            VStack(alignment: .leading, spacing: 3) {\n                Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))' in aux,
+    'translation-row-centered': 'return settingsRow(minHeight: 42) {'
+                                 in aux
+                                 and 'identifier: "settings.apple-translation.toggle"' in aux,
     'status-dot-shared': 'SettingsStatusDot(level:' in permission and 'SettingsStatusDot(level: executable ? .normal : .problem)' in aux,
     'ai-no-checkmark-icon': '"checkmark.circle"' not in aux and '"exclamationmark.circle"' not in aux,
+    # 7) 行内垂直对齐：所有「标题[+说明] + 右侧开关」的行只经一个 `settingsRow`，
+    #    对齐靠 `HStack(alignment: .center)`，不靠上下 padding 挪控件。
+    'single-row-layout-helper': 'private func settingsRow<Trailing: View>(' in aux
+                                and 'HStack(alignment: .center, spacing: 0) {'
+                                in aux[aux.index('private func settingsRow<Trailing: View>('):aux.index('private func settingsToggle(')]
+                                and 'Spacer(minLength: spacing)' in aux,
+    'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1
+                                           and aux.count('settingsRowSwitch(title:') >= 3,
+    'no-row-vertical-padding-hack': '.padding(.top, 1).padding(.bottom' not in aux
+                                    and '.offset(y:' not in aux,
+    # 8) 通用页按职责拆成「启动与运行 / 同步与更新 / 声音」三组小标题卡片。
+    'general-splits-into-three-groups': aux.count('settings.general.startup-section.title') == 1
+                                        and aux.count('settings.general.sync-section.title') == 1
+                                        and aux.count('settings.general.sound-section.title') == 1,
+    'general-groups-keep-divider-only-inside-a-card': aux[
+        aux.index('private var general: some View'):aux.index('/// 「自动检查更新」')].count('Divider()') == 2,
+    'general-groups-are-trilingual': all(
+        f'"{key}": (' in (ui / 'SettingsCopy.swift').read_text()
+        for key in ('settings.general.startup-section.title',
+                    'settings.general.sync-section.title',
+                    'settings.general.sound-section.title')),
 }
 failures = {name: value for name, value in checks.items() if not value}
 assert not failures, failures
