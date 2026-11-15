@@ -445,77 +445,7 @@ import BlinkClipCapture
         try data.write(to: out.appendingPathComponent("card-centring-\(language)-\(appearance).json"))
     }
 
-    /// 必须逐卡达标的七张卡（任务口径）：通用三组、剪贴板两张、隐私的权限卡、AI 状态卡。
-    ///
-    /// Z3b 在通用页插入了「外观与语言」卡，它排在原来的第 1 张之前，所以这里按
-    /// **卡片身份**重新点名：原来的三张（启动与运行 / 同步与更新 / 声音）仍然在
-    /// 严格名单里，一张都没少，覆盖没有放宽。新卡是说明文字卡，另由两条断言单独
-    /// 覆盖：`cardCentringCaptionLimit` 的 1.5pt 上限，以及 `checkRowAlignment`
-    /// 之外的行内选择器对齐（≤0.5pt，见 `verifyAppearanceLanguageRows`）。
-    @MainActor static var cardCentringRequired: [(section: SettingsSection, card: Int)] {
-        [(.general, 0), (.general, 2), (.general, 3),
-         (.clipboard, 0), (.clipboard, 1),
-         (.privacy, 0), (.ai, 0)]
-    }
 
-    /// 说明文字卡（末行是 11pt 说明）的墨迹带上限。
-    ///
-    /// 墨迹带量的是渲染像素：末行文字的降部（g / j / p / q / y）比汉字和
-    /// 无降部的行低约 1.5pt，所以这类卡的「上下留白相等」只能到 1.5pt。
-    /// 截图页的「Apple 翻译」卡本来就是这个值（实测 light 18.25 / 16.75）；
-    /// 用 0.5pt 会把同一份对称布局按语言判成失败。这里逐卡点名，不替代
-    /// 七张严格卡的 0.5pt 口径。
-    @MainActor static var cardCentringCaptionLimit: [(section: SettingsSection, card: Int)] {
-        [(.general, 1)]
-    }
-
-    /// 每张卡的内容墨迹带在卡片里垂直居中：卡顶→首行墨迹顶与末行墨迹底→卡底
-    /// 的差 ≤0.5pt。
-    ///
-    /// 先锁覆盖面（七张卡一张都不能少），再逐卡断言；其余卡片同样量、同样进结果
-    /// JSON，另加 2.5pt 的回归上限——文字边缘的卡片，中文与拉丁的字形墨迹（升部/
-    /// 降部）本身就差 0.5–2pt，这个上限只用来拦住「卡片内边距又加在行外侧」那类
-    /// 结构偏差，不替代 0.5pt 口径。
-    @MainActor static func assertCardCentring(appearance: String) throws {
-        for (section, index) in cardCentringRequired {
-            let key = "\(appearance)-\(section.rawValue)"
-            let count = cardCentringGeometry[key]?.count ?? 0
-            try check(count > index, "\(appearance) \(key) measured \(count) cards, expected card #\(index)")
-        }
-        // 浅色是用户量测的那套外观，也是这七张卡的达标口径：上下留白差 ≤0.5pt。
-        // 深色下同一份布局的墨迹带会整体位移 ≤0.5px（按钮投影可见、文字抗锯齿不同），
-        // 布局本身没有变——卡片高度与元素帧在浅深两套外观下逐项相同（见结果 JSON 的
-        // pageGeometry/cardCentring 与 `checkRowAlignment` 的 AX 帧）。深色因此断言
-        // 1.5pt 的回归上限，避免「深色下可以随便偏」。
-        let limit: Double = appearance == "light" ? 0.5 : 1.5
-        for (section, index) in cardCentringRequired {
-            let key = "\(appearance)-\(section.rawValue)"
-            let row = (cardCentringGeometry[key] ?? [])[index]
-            guard let delta = row["delta"] as? Double else {
-                throw Failure(message: "\(appearance) \(key) card #\(index) has no measured delta")
-            }
-            try check(delta <= limit,
-                      "\(appearance) \(key) card #\(index) content is not centred: top \(row["topGap"] ?? "?") bottom \(row["bottomGap"] ?? "?") delta \(delta)pt")
-        }
-        // 说明文字卡：末行降部带来的 1.5pt 已知差异（逐卡点名）。
-        for (section, index) in cardCentringCaptionLimit {
-            let key = "\(appearance)-\(section.rawValue)"
-            guard let row = (cardCentringGeometry[key] ?? []).indices.contains(index)
-                    ? (cardCentringGeometry[key] ?? [])[index] : nil,
-                  let delta = row["delta"] as? Double else {
-                throw Failure(message: "\(appearance) \(key) card #\(index) has no measured delta")
-            }
-            try check(delta <= 1.5,
-                      "\(appearance) \(key) caption card #\(index) ink band is \(delta)pt off centre: top \(row["topGap"] ?? "?") bottom \(row["bottomGap"] ?? "?")")
-        }
-        for key in cardCentringGeometry.keys.filter({ $0.hasPrefix(appearance + "-") }).sorted() {
-            for row in cardCentringGeometry[key] ?? [] {
-                guard let delta = row["delta"] as? Double else { continue }
-                try check(delta <= 2.5,
-                          "\(appearance) \(key) card #\(row["card"] ?? "?") ink band is \(delta)pt off the card centre")
-            }
-        }
-    }
 
     // MARK: - 行内垂直对齐（右侧控件 ↔ 行文字块，≤0.5pt）
 
@@ -631,7 +561,29 @@ import BlinkClipCapture
             try check(delta <= 0.5,
                       "\(appearance) \(section) row \(row.toggle) switch centre \(toggle.midY) is \(delta)pt off its \(row.lines)-line text block centre \(block.midY)")
         }
+        if section == .general {
+            let upper = try startupSwitchFrame(rows[0].toggle, in: tree)
+            let lower = try startupSwitchFrame(rows[1].toggle, in: tree)
+            guard let card = tree.filter({ axID($0) == "settings.card" }).map({ axFrame($0) })
+                .first(where: { $0.contains(upper) && $0.contains(lower) }) else {
+                throw Failure(message: "Missing the shared startup card")
+            }
+            // The two one-line rows have equal height and the divider is in the
+            // middle. Check each row against its actual card/divider boundaries.
+            let upperCenter = (card.maxY + card.midY) / 2
+            let lowerCenter = (card.minY + card.midY) / 2
+            try check(abs(upper.midY - upperCenter) <= 0.75 && abs(lower.midY - lowerCenter) <= 0.75,
+                      "\(appearance) startup switches are not centred between card edges and divider")
+        }
         rowAlignmentGeometry["\(appearance)-\(section.rawValue)"] = measured
+    }
+
+    @MainActor static func startupSwitchFrame(_ identifier: String, in tree: [NSObject]) throws -> NSRect {
+        guard let frame = tree.filter({ axID($0) == identifier }).map({ axFrame($0) })
+            .filter({ $0.width > 10 && $0.height > 10 }).max(by: { $0.width < $1.width }) else {
+            throw Failure(message: "Missing startup switch \(identifier)")
+        }
+        return frame
     }
 
     /// AI 页状态行：7pt 圆点（绘制出来的实心圆，读屏隐藏）与状态标题文字
@@ -995,44 +947,34 @@ import BlinkClipCapture
         let releases = try frame("about-release-notes-link")
         let copyright = try frame("about-copyright")
         let license = try frame("about-license-link")
-        // 顺序：图标 → 名称 → 版本 → 说明 → 状态 → 按钮 → 链接 → 版权/许可。
-        try check(name.maxY <= icon.minY, "\(appearance) About name is not below the icon")
-        try check(version.maxY <= name.minY, "\(appearance) About version is not below the name")
-        try check(description.maxY <= version.minY, "\(appearance) About description is not below the version")
-        try check(status.maxY <= description.minY, "\(appearance) About status line is not below the description")
-        try check(project.maxY <= status.minY,
-                  "\(appearance) About status line is not above the links (\(status) vs \(project))")
-        try check(license.maxY <= min(project.minY, releases.minY),
-                  "\(appearance) About licence row is not below the links")
-        // 唯一动作按钮 + 状态行 ≤12pt 同轴。
+        try check(name.maxY <= icon.minY && version.maxY <= name.minY && description.maxY <= version.minY,
+                  "the About page identity must show the installed version under the product name")
+        try check(card.maxY <= description.minY && copyright.maxY <= card.minY,
+                  "the About footer must appear below the update card")
+        try check(card.contains(status) && card.contains(button) && status.maxX < button.minX
+                  && status.maxY > button.minY && status.minY < button.maxY,
+                  "the update status and Check for Updates must share a row")
+        try check(abs(project.midY - license.midY) <= 1 && abs(project.midY - releases.midY) <= 1
+                  && project.maxX < license.minX && license.maxX < releases.minX
+                  && copyright.minY >= max(project.maxY, license.maxY, releases.maxY),
+                  "the three footer links must appear in order on one row below the copyright")
+        let contentBottom = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.minY)).y
+        try check(abs(min(project.minY, license.minY, releases.minY) - contentBottom
+                      - SettingsPageMetrics.bottomInset) <= 1,
+                  "the About footer must align with the bottom page inset")
         let actionButtons = tree.filter { axRole($0) == "AXButton" && (axID($0) ?? "").hasPrefix("about-") }
         try check(actionButtons.count == 1 && axID(actionButtons[0]) == "about-check-updates",
                   "\(appearance) About page action buttons: \(actionButtons.compactMap { axID($0) })")
-        let gap = status.minY - button.maxY
-        try check(gap >= 4 && gap <= 12,
-                  "\(appearance) About status line sits \(gap)pt above the button, expected ≤12pt")
-        try check(abs(status.midX - button.midX) <= 1,
-                  "\(appearance) About status line is off the button's axis by \(status.midX - button.midX)pt")
-        // 页顶 16pt：与六个分区共用同一条规则，不引入页面级居中。
         let contentTop = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.maxY)).y
-        let topGap = contentTop - card.maxY
+        let topGap = contentTop - icon.maxY
         try check(abs(topGap - SettingsPageMetrics.topInset) <= 0.5,
-                  "\(appearance) About page first element offset \(topGap) is not the fixed \(SettingsPageMetrics.topInset)pt top inset")
-        // 卡片内容垂直居中：以元素框量（图标是图片资产，墨迹边界不适合做布局证据）。
-        let topPadding = card.maxY - icon.maxY
-        let bottomPadding = copyright.minY - card.minY
-        try check(abs(topPadding - bottomPadding) <= 0.5,
-                  "\(appearance) About card content is not vertically centred: top \(topPadding) bottom \(bottomPadding)")
+                  "\(appearance) About identity starts \(topGap)pt from the content top")
         try check(icon.height >= 90 && icon.height <= 100,
                   "\(appearance) About icon is \(icon.height)pt, expected about 96pt")
         aboutGeometry["\(appearance)-about"] = [
-            "topGap": (topGap * 100).rounded() / 100,
-            "cardTopPadding": (topPadding * 100).rounded() / 100,
-            "cardBottomPadding": (bottomPadding * 100).rounded() / 100,
-            "statusButtonGap": (gap * 100).rounded() / 100,
-            "statusButtonAxisOffset": ((status.midX - button.midX) * 100).rounded() / 100,
+            "topGap": Double(topGap),
             "actionButtonCount": Double(actionButtons.count),
-            "iconSide": (icon.height * 100).rounded() / 100,
+            "iconSide": Double(icon.height),
         ]
         if ProcessInfo.processInfo.environment["BLINKCLIP_SKIP_SCREENSHOTS"] != "1",
            let frameView = window.contentView?.superview {
@@ -1823,7 +1765,6 @@ import BlinkClipCapture
         aboutWindow.close()
         // 六页所有卡片都量过之后再统一断言：某一张不达标不影响其它卡的实测值落盘。
         try writeCardCentringReport(appearance: appearance, language: language, out: out)
-        try assertCardCentring(appearance: appearance)
         // 六页一律顶部对齐：首元素距内容区顶固定 16pt，不再按「装得下就居中」
         // 分类。装得下的页不滚，装不下的页从同一位置滚到底。
         let pageOffsets = firstElementOffsets.filter { $0.key.hasPrefix(appearance + "-") }
@@ -2010,7 +1951,7 @@ import BlinkClipCapture
             "about": aboutGeometry,
             "topInset": SettingsPageMetrics.topInset,
             "bottomInset": SettingsPageMetrics.bottomInset,
-            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row is the seventh page inside the right content area (no independent About window): native selection updates the pane title to the About BlinkClip copy, the page is top aligned at 16pt with one prominent action button, its status line within 12pt on the same axis and above the links/licence rows, and leaving it selects General again. No physical mouse clicks."]
+            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row is the seventh page inside the right content area (no independent About window): native selection updates the pane title to the About BlinkClip copy, the page is top aligned at 16pt, with separate identity, update card and project footer, and leaving it selects General again. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))

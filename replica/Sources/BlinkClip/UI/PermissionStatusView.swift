@@ -289,7 +289,7 @@ struct PermissionStatusView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             // macOS grants Accessibility and Screen Recording independently.
             // Event posting (direct paste) is answered from the Accessibility
             // grant — `CGPreflightPostEventAccess()` reports the same source —
@@ -308,7 +308,8 @@ struct PermissionStatusView: View {
                 model.requestScreenRecording()
             }
             if showsRemediation {
-                staleRequirementCard
+                Divider()
+                staleRequirementCard.padding(.vertical, SettingsRowMetrics.withDescription)
             } else if model.hasChecked && !model.statusUnknown
                         && (!model.accessibility || !model.postEvents || !model.screenRecording) {
                 DisclosureGroup(PermissionCopy.text("授权后仍不可用？", "授權後仍無法使用？", "Still unavailable after allowing access?")) {
@@ -316,6 +317,7 @@ struct PermissionStatusView: View {
                         .font(.caption).settingsSecondaryText()
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.vertical, SettingsRowMetrics.withDescription)
 
             }
         }
@@ -397,6 +399,7 @@ struct PermissionStatusView: View {
             Button(granted ? PermissionCopy.text("系统设置…", "系統設定…", "System Settings…") : PermissionCopy.text("前往授权…", "前往授權…", "Allow Access…"), action: action)
                 .accessibilityIdentifier(identifier + "-request")
         }
+        .padding(.vertical, SettingsRowMetrics.withDescription)
     }
 }
 

@@ -183,11 +183,7 @@ struct ICloudSyncGeneralRow: View {
                 .disabled(!drive.canSync && !sync.canSync)
                 .accessibilityIdentifier("settings.icloud.toggle")
         }
-        // 双行行高 = 内容 + 上下各一份对称内边距（`SettingsRowMetrics.twoLineTop/
-        // twoLineBottom`），合计 42.5pt（原来是 `frame(minHeight: 42)`）；不写死
-        // `minHeight` 是因为说明折行时余量会被吃掉，行内容贴着行底。
-        .padding(.top, SettingsRowMetrics.twoLineTop)
-        .padding(.bottom, SettingsRowMetrics.twoLineBottom)
+        .padding(.vertical, SettingsRowMetrics.withDescription)
         .help(statusText)
     }
 }

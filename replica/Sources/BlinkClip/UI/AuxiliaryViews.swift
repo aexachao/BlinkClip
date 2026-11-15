@@ -457,28 +457,9 @@ struct ReplicaSettingsView: View {
             .accessibilityLabel(title)
     }
 
-    private func pasteDestination(_ title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(SettingsCopy.text(title))
-            Text(SettingsCopy.text(subtitle))
-                .font(.caption).settingsSecondaryText()
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    /// 行内布局的唯一实现：左侧文字块（标题 + 可选说明）与右侧控件。
-    ///
-    /// 行高 = 内容 + 上下各一份**对称**内边距（`SettingsRowMetrics`），不用
-    /// `frame(minHeight:)`：`minHeight` 只在内容比下限矮时才把余量平均分给上下两边，
-    /// 一旦内容长高（说明折到两行）就没有余量，首末行的留白因此一边多一边少。
-    /// 对齐仍靠 `HStack(alignment: .center)`；`Spacer` 的 `minLength` 是文字与控件
-    /// 之间的最小间距，控件始终贴行右端。
+    /// 文字和控件共用行中线，行自己提供对称留白，说明折行时也保持。
     private func settingsRow<Trailing: View>(
-        topPadding: CGFloat,
-        bottomPadding: CGFloat,
+        verticalPadding: CGFloat,
         spacing: CGFloat = 12,
         @ViewBuilder text: () -> some View,
         @ViewBuilder trailing: () -> Trailing
@@ -488,14 +469,12 @@ struct ReplicaSettingsView: View {
             Spacer(minLength: spacing)
             trailing()
         }
-        .padding(.top, topPadding)
-        .padding(.bottom, bottomPadding)
+        .padding(.vertical, verticalPadding)
     }
 
     private func settingsToggle(_ title: String, subtitle: String, isOn: Binding<Bool>,
                                identifier: String? = nil) -> some View {
-        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
-                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
             Text(SettingsCopy.text(title))
             Text(ReplicaBrand.replacingName(in: SettingsCopy.text(subtitle)))
                 .font(.caption).settingsSecondaryText()
@@ -509,8 +488,7 @@ struct ReplicaSettingsView: View {
 
     private func settingsSwitch(_ title: String, isOn: Binding<Bool>,
                                 identifier: String? = nil) -> some View {
-        settingsRow(topPadding: SettingsRowMetrics.singleLine,
-                    bottomPadding: SettingsRowMetrics.singleLine) {
+        settingsRow(verticalPadding: SettingsRowMetrics.singleLine) {
             Text(title)
         } trailing: {
             settingsRowSwitch(title: title, isOn: isOn, identifier: identifier)
@@ -614,8 +592,7 @@ struct ReplicaSettingsView: View {
     /// 下一轮 runloop；这里在写完偏好后直接调一次同一份 `applyAppearance()`，用户
     /// 点完选择器就能看到设置窗、底部面板和编辑器一起换外观。重启后由同一份偏好恢复。
     private var appearanceThemeRow: some View {
-        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
-                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
             Text(SettingsCopy.text("settings.appearance.theme.title"))
             Text(SettingsCopy.text("settings.appearance.theme.subtitle"))
                 .font(.caption).settingsSecondaryText()
@@ -642,8 +619,7 @@ struct ReplicaSettingsView: View {
     /// 设置页自己的文案要跟着换，所以这一行还必须让根视图重算（见 `body` 里的
     /// `.onReceive`）；语言名按自称显示，不随界面语言翻译。
     private var appearanceLanguageRow: some View {
-        settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
-                    bottomPadding: SettingsRowMetrics.twoLineBottom) {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
             Text(SettingsCopy.text("settings.appearance.language.title"))
             Text(SettingsCopy.text("settings.appearance.language.subtitle"))
                 .font(.caption).settingsSecondaryText()
@@ -698,13 +674,17 @@ struct ReplicaSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(SettingsCopy.text("settings.paste-items.title"))
                     settingsCard {
-                        ZStack(alignment: state.store.preferences.pasteToActiveApp ? .topTrailing : .bottomTrailing) {
-                            Picker(SettingsCopy.text("settings.paste-items.title"), selection: preference(\.pasteToActiveApp)) {
-                                pasteDestination("settings.paste-items.active-app.title", subtitle: "settings.paste-items.active-app.info").tag(true)
-                                pasteDestination("settings.paste-items.clipboard.title", subtitle: "settings.paste-items.clipboard.info").tag(false)
-                            }
-                            .pickerStyle(.radioGroup).labelsHidden()
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ZStack(alignment: .trailing) {
+                            SettingsRadioRows(
+                                title: SettingsCopy.text("settings.paste-items.title"),
+                                options: [true, false], selection: preference(\.pasteToActiveApp),
+                                label: { direct in
+                                    direct
+                                        ? (SettingsCopy.text("settings.paste-items.active-app.title"),
+                                           SettingsCopy.text("settings.paste-items.active-app.info"))
+                                        : (SettingsCopy.text("settings.paste-items.clipboard.title"),
+                                           SettingsCopy.text("settings.paste-items.clipboard.info"))
+                                })
                             .padding(.trailing, 100)
                             if let illustration = SettingsIllustrations.image(directPaste: state.store.preferences.pasteToActiveApp, dark: colorScheme == .dark) {
                                 Image(nsImage: illustration).resizable().scaledToFit()
@@ -713,12 +693,10 @@ struct ReplicaSettingsView: View {
                                     .allowsHitTesting(false)
                             }
                         }
-                        // 分隔线下方留给复选框段自己的留白，分隔线到复选框文字的
-                        // 视觉间距与上方保持一致（3 + 5 + 0.75 ≈ 8 + 0.75）。
-                        Divider().padding(.top, 8).padding(.bottom, 3)
+                        Divider()
                         Toggle(SettingsCopy.text("settings.paste-items.plain-text.title"), isOn: preference(\.alwaysPastePlainText))
                             .toggleStyle(.checkbox)
-                            .padding(.vertical, SettingsCardBlock.checkbox)
+                            .padding(.vertical, SettingsRowMetrics.singleLine)
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -730,8 +708,7 @@ struct ReplicaSettingsView: View {
                                 assign: { state.store.preferences.historyRetentionDays = $0 },
                                 save: { try state.store.save() })
                         }
-                        .padding(.top, SettingsCardBlock.tilesTop)
-                        .padding(.bottom, SettingsCardBlock.tilesBottom)
+                        .padding(.vertical, SettingsRowMetrics.sectionContent)
                     }
                 }
                 // 不可撤销的动作放在页尾（与「快捷键」页的「恢复全部快捷键…」同一区域策略），
@@ -769,10 +746,10 @@ struct ReplicaSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    private func settingsCard<Content: View>(verticalPadding: CGFloat = 10, @ViewBuilder content: () -> Content) -> some View {
+    private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: SettingsSurfaceStyle.cornerRadius)
         return VStack(alignment: .leading, spacing: 0, content: content)
-            .padding(.horizontal, SettingsSurfaceStyle.contentPadding).padding(.vertical, verticalPadding)
+            .padding(.horizontal, SettingsSurfaceStyle.contentPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(SettingsSurfaceStyle.cardBackgroundColor(dark: colorScheme == .dark), in: shape)
             .overlay(shape.strokeBorder(SettingsSurfaceStyle.cardBorderColor(dark: colorScheme == .dark),
@@ -783,28 +760,19 @@ struct ReplicaSettingsView: View {
 
     // MARK: - 关于闪贴（内容区第七页）
 
-    /// 「关于闪贴」页。
-    ///
-    /// 关于不再是独立窗口：侧栏最后一行、应用菜单「关于 闪贴」以及面板 ⋯ / 状态栏
-    /// 右键菜单的「帮助与关于」（`.blinkClipOpenAbout`）都落到这一页。页面顺序固定为
-    /// 应用图标 → 名称 → 版本 → 一句话说明 → 分隔线 → **状态行 +「检查更新」** →
-    /// 分隔线 → 链接 → 版权/许可，即「状态 + 按钮」在链接与许可之上（用户要求把两块
-    /// 调换位置）。动作只有「检查更新」一个，没有关闭按钮：设置窗口自己的关闭按钮
-    /// 就是关闭路径。
-    ///
-    /// 排版完全走设置页既有模式：`SettingsPageScroll`（页顶 16pt，页级不居中）、
-    /// `settingsCard`（12pt 圆角 + 1pt 描边 + 10pt 内边距 + `settings.card` 标识）、
-    /// 卡里各段自带对称留白（`AboutPaneMetrics`），所以卡片内容在卡里垂直居中。
+    // Product identity, update controls and project information are separate groups.
     private var about: some View {
-        SettingsPageScroll {
-            VStack(alignment: .leading, spacing: 20) {
-                settingsCard(verticalPadding: 0) {
+        GeometryReader { viewport in
+            SettingsPageScroll {
+                VStack(spacing: 20) {
                     aboutIdentity
-                    Divider()
-                    aboutStatusAndAction
-                    Divider()
+                    settingsCard { aboutStatusAndAction }
+                        .frame(maxWidth: 360)
+                    Spacer(minLength: 4)
                     aboutLinks
                 }
+                .frame(minHeight: max(0, viewport.size.height
+                    - SettingsPageMetrics.topInset - SettingsPageMetrics.bottomInset))
             }
         }
         .accessibilityElement(children: .contain)
@@ -819,7 +787,7 @@ struct ReplicaSettingsView: View {
     /// 用的是同一批字符串，不另抄一份。
     private func updatesText(_ key: String) -> String { SettingsLocalization.text(key) }
 
-    /// 身份块：应用图标 96pt、名称、版本、一句话说明，全部水平居中。
+    /// 身份区：应用图标、名称、已装版本与产品说明。
     private var aboutIdentity: some View {
         VStack(spacing: 6) {
             Image(nsImage: NSApp.applicationIconImage)
@@ -832,7 +800,7 @@ struct ReplicaSettingsView: View {
                 .font(.system(size: 22, weight: .semibold))
                 .accessibilityIdentifier("about-product-name")
             Text(aboutModel.versionText)
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: .medium))
                 .settingsSecondaryText()
                 .accessibilityIdentifier("about-current-version")
             Text(updatesText("updates.description"))
@@ -843,52 +811,44 @@ struct ReplicaSettingsView: View {
                 .accessibilityIdentifier("about-description")
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, AboutPaneMetrics.identityTop)
-        .padding(.bottom, AboutPaneMetrics.identityBottom)
     }
 
-    /// 状态行 +「检查更新」：一行状态文案压在唯一的主按钮上方，两者同一条中轴，
-    /// 间距 ≤12pt；检查中按钮置灰，状态行仍只报事实。
     private var aboutStatusAndAction: some View {
-        VStack(spacing: AboutPaneMetrics.statusButtonSpacing) {
+        settingsRow(verticalPadding: 12) {
+            Text(SettingsCopy.trilingual("软件更新", "軟體更新", "Software Update"))
+                .font(.system(size: 13, weight: .semibold))
             Text(aboutModel.statusText)
                 .font(.system(size: 12))
                 .settingsSecondaryText()
-                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("about-update-status")
+        } trailing: {
             Button(updatesText("updates.check")) { aboutModel.check() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
+                .fixedSize()
                 .disabled(aboutModel.isChecking)
                 .accessibilityIdentifier("about-check-updates")
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, AboutPaneMetrics.actionTop)
-        .padding(.bottom, AboutPaneMetrics.actionBottom)
+        .padding(.horizontal, 4)
     }
 
-    /// 链接与许可：两行都居中，排在动作块之下。
     private var aboutLinks: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 18) {
+        VStack(spacing: 6) {
+            Text(updatesText("updates.copyright"))
+                .font(.system(size: 11))
+                .settingsSecondaryText()
+                .accessibilityIdentifier("about-copyright")
+            HStack(spacing: 12) {
                 aboutLink("updates.link-project", url: Self.aboutProjectURL,
-                          identifier: "about-project-link")
-                aboutLink("updates.link-releases", url: Self.aboutReleaseNotesURL,
-                          identifier: "about-release-notes-link")
-            }
-            HStack(spacing: 8) {
-                Text(updatesText("updates.copyright"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityIdentifier("about-copyright")
+                          identifier: "about-project-link", fontSize: 11.5)
                 aboutLink("updates.link-license", url: Self.aboutLicenseURL,
                           identifier: "about-license-link", fontSize: 11.5)
+                aboutLink("updates.link-releases", url: Self.aboutReleaseNotesURL,
+                          identifier: "about-release-notes-link", fontSize: 11.5)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, AboutPaneMetrics.linksTop)
-        .padding(.bottom, AboutPaneMetrics.linksBottom)
     }
 
     private func aboutLink(_ key: String, url: URL, identifier: String,
@@ -907,22 +867,16 @@ struct ReplicaSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.postCaptureSectionTitle))
                     settingsCard {
-                        Picker(ScreenshotSettingsCopy.text(.postCaptureSectionTitle),
-                               selection: screenshotPostCaptureActionBinding) {
-                            ForEach(BlinkClipScreenshotAction.allCases, id: \.self) { action in
-                                screenshotActionOption(action).tag(action)
-                            }
-                        }
-                        // 用 `.radioGroup` 而不是 `.segmented`：内容列固定 440pt，
-                        // 五个选项名分段排不进；而且每项要带一句后果说明，
-                        // 分段控件显示不了副标题。这也与「粘贴目标」那组保持同一写法。
-                        .pickerStyle(.radioGroup).labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        SettingsRadioRows(
+                            title: ScreenshotSettingsCopy.text(.postCaptureSectionTitle),
+                            options: BlinkClipScreenshotAction.allCases,
+                            selection: screenshotPostCaptureActionBinding,
+                            label: { (screenshotActionTitle($0), screenshotActionSubtitle($0)) })
+                        Divider()
                         Text(ScreenshotSettingsCopy.text(.postCaptureFootnote))
                             .font(.caption).settingsSecondaryText()
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 6)
-                            .padding(.bottom, SettingsCardBlock.footnote)
+                            .padding(.vertical, SettingsRowMetrics.singleLine)
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -933,18 +887,6 @@ struct ReplicaSettingsView: View {
                 }
             }
         }
-    }
-
-    private func screenshotActionOption(_ action: BlinkClipScreenshotAction) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(screenshotActionTitle(action))
-            Text(screenshotActionSubtitle(action))
-                .font(.caption).settingsSecondaryText()
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
     }
 
     private func screenshotActionTitle(_ action: BlinkClipScreenshotAction) -> String {
@@ -985,8 +927,7 @@ struct ReplicaSettingsView: View {
             : ScreenshotSettingsCopy.text(.appleTranslationUnavailable)
         // 与隐私页同构：走同一个 `settingsRow`，开关中心钉在文字块中心，
         // 单行对文字行高中心、双行对整个文字块中心（不再各页各写一套 HStack）。
-        return settingsRow(topPadding: SettingsRowMetrics.twoLineTop,
-                           bottomPadding: SettingsRowMetrics.twoLineBottom) {
+        return settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
             Text(ScreenshotSettingsCopy.text(.appleTranslationTitle))
             Text(subtitle)
                 .font(.caption).settingsSecondaryText()
@@ -1233,7 +1174,7 @@ struct ReplicaSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.applicationShortcutsTitle))
-                    settingsCard(verticalPadding: 0) {
+                    settingsCard {
                         shortcutRecorder(ReplicaBrand.replacingName(in: SettingsCopy.text("settings.shortcuts.activate-paste.title")), path: \.historyShortcut)
                         Divider()
                         shortcutRecorder(ReplicaBrand.replacingName(in: SettingsCopy.text("settings.shortcuts.activate-paste-stack.title")), path: \.stackShortcut)
@@ -1242,7 +1183,7 @@ struct ReplicaSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.groupShortcutsTitle))
-                    settingsCard(verticalPadding: 0) {
+                    settingsCard {
                         shortcutRecorder(SettingsCopy.text("blinkclip.settings.shortcuts.next-group.title"), path: \.nextPinboardShortcut)
                         Divider()
                         shortcutRecorder(SettingsCopy.text("blinkclip.settings.shortcuts.previous-group.title"), path: \.previousPinboardShortcut)
@@ -1250,7 +1191,7 @@ struct ReplicaSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.pasteShortcutsTitle))
-                    settingsCard(verticalPadding: 0) {
+                    settingsCard {
                         HStack {
                             Text(SettingsCopy.text("settings.shortcuts.quick-paste.title"))
                             Spacer()
@@ -1272,7 +1213,7 @@ struct ReplicaSettingsView: View {
                     settingsSectionTitle(ScreenshotSettingsCopy.text(.hotKeySectionTitle))
                     // 冲突/校验提示都在各自那一行正下方（`shortcutHotKeyRow`/`shortcutRecorder`
                     // 的 4pt 间距），不再有「卡片下方一整组红字」：提示与行一一对应。
-                    settingsCard(verticalPadding: 0) {
+                    settingsCard {
                         screenshotHotKeyRow(.region)
                         Divider()
                         screenshotHotKeyRow(.fullScreen)
@@ -1455,25 +1396,27 @@ struct ReplicaSettingsView: View {
                     // 「正常/不正常」的图标语言与隐私页统一：同一个 7pt 状态圆点，
                     // 语义不同由文字区分（「本机服务可用」≠「已授权」）。
                     // `.center` 显式对齐：圆点中心 = 状态标题文字中心（≤0.5pt）。
-                    HStack(alignment: .center, spacing: SettingsStatusDot.textSpacing) {
-                        SettingsStatusDot(level: executable ? .normal : .problem)
-                        Text(executable
-                             ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available")
-                             : SettingsCopy.trilingual("未找到本机服务", "找不到本機服務", "Local service not found"))
-                            .font(.system(size: 13, weight: .semibold))
-                            .accessibilityIdentifier("settings.mcp.status")
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: SettingsStatusDot.textSpacing) {
+                            SettingsStatusDot(level: executable ? .normal : .problem)
+                            Text(executable
+                                 ? SettingsCopy.trilingual("本机服务可用", "本機服務可用", "Local service available")
+                                 : SettingsCopy.trilingual("未找到本机服务", "找不到本機服務", "Local service not found"))
+                                .font(.system(size: 13, weight: .semibold))
+                                .accessibilityIdentifier("settings.mcp.status")
+                        }
+                        // 说明行与状态标题文字左对齐：让出「圆点 + 间距」的宽度，
+                        // 不再像旧的 Label 那样比标题左出 19pt。
+                        Text(SettingsCopy.trilingual("允许支持 MCP 的 AI 工具搜索、读取和整理历史记录。", "允許支援 MCP 的 AI 工具搜尋、讀取和整理歷史記錄。", "Let an MCP-compatible AI tool search, read, and organize your history."))
+                            .font(.callout).settingsSecondaryText()
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, SettingsStatusDot.side + SettingsStatusDot.textSpacing)
+                            .accessibilityIdentifier("settings.mcp.description")
                     }
-                    // 说明行与状态标题文字左对齐：让出「圆点 + 间距」的宽度，
-                    // 不再像旧的 Label 那样比标题左出 19pt。
-                    Text(SettingsCopy.trilingual("允许支持 MCP 的 AI 工具搜索、读取和整理历史记录。", "允許支援 MCP 的 AI 工具搜尋、讀取和整理歷史記錄。", "Let an MCP-compatible AI tool search, read, and organize your history."))
-                        .font(.callout).settingsSecondaryText()
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.leading, SettingsStatusDot.side + SettingsStatusDot.textSpacing)
-                        .padding(.top, 6)
-                        .accessibilityIdentifier("settings.mcp.description")
+                    .padding(.vertical, SettingsRowMetrics.withDescription)
                     // 与隐私页「刷新状态」同构：分隔线 + 右对齐按钮，放在卡片底部；
                     // 不再把按钮甩到卡外、在它下面留 440pt 空白。
-                    Divider().padding(.vertical, 8)
+                    Divider()
                     HStack {
                         Spacer()
                         Button(SettingsCopy.text("settings.mcp.connect.action.connect-to")) {
@@ -1482,7 +1425,7 @@ struct ReplicaSettingsView: View {
                         .disabled(!executable)
                         .accessibilityIdentifier("settings.mcp.connect")
                     }
-                    .padding(.bottom, SettingsCardBlock.action)
+                    .padding(.vertical, SettingsRowMetrics.singleLine)
                 }
             }
         }
@@ -1571,64 +1514,73 @@ enum SettingsPageMetrics {
     static let bottomInset: CGFloat = 20
 }
 
-/// 设置卡里每一行的上下内边距。
-///
-/// 行高 = 内容高 + 2 × 内边距，和改造前的 30pt 单行 / 42pt 双行**逐点相同**，
-/// 所以行与行之间的视觉间距不变；区别只在于内容长高时内边距不再被吃掉，
-/// 首行上方与末行下方的留白因此始终相等（见 `SettingsArchitectureHarness` 的
-/// 卡片内容居中断言）。
-/// 卡片里「一段内容」自带的上下留白。
-///
-/// 卡片只留 10pt 内边距，段与段之间的呼吸靠段自己带；这样一段内容长高（说明折行）
-/// 时留白不会被吃掉，首段墨迹顶与末段墨迹底到卡片边缘的距离才能相等。数值是
-/// 2x 渲染实测的结果（`SettingsArchitectureHarness` 的 cardCentring 断言）。
-enum SettingsCardBlock {
-    /// 复选框段：文字墨底离段底 0.75pt，段底留白因此取 5pt。
-    static let checkbox: CGFloat = 5
-    /// 页脚说明段（11pt 说明文字，墨底离段底 1.25–2.25pt）。
-    static let footnote: CGFloat = 4
-    /// 带边框的按钮行（按钮底色比布局框低约 1.25pt）。
-    static let action: CGFloat = 4
-    /// 保留期网格段：网格块的墨顶比说明文字的墨底高，上下取不同的值。
-    static let tilesTop: CGFloat = 4.5
-    static let tilesBottom: CGFloat = 4
-}
-
-/// 关于页卡片的段落留白。
-///
-/// 卡片本身只留 10pt 左右内边距（`settingsCard`，这里用 `verticalPadding: 0`），
-/// 段与段之间的呼吸由每一段自己带，与其它分区的卡片同一套做法（`SettingsCardBlock`）。
-/// 上下两段的留白是**实测调平**的：卡顶 → 图标框顶 与 版权框底 → 卡底 相等
-/// （差 0，见 `SettingsArchitectureHarness` 的 about 卡居中实测）。这里刻意用元素框
-/// 而不是像素墨迹：图标是图片资产，它自身的透明边缘会随画稿变，不适合当布局证据。
 enum AboutPaneMetrics {
-    /// 应用图标边长（任务口径约 96pt）。
     static let iconSide: CGFloat = 96
-    /// 身份块：图标上留白与版权行下留白**相等**（10pt），卡片内容因此在卡里
-    /// 垂直居中（卡顶 → 图标框顶 = 版权框底 → 卡底，实测差 0）。
-    static let identityTop: CGFloat = 10
-    static let identityBottom: CGFloat = 12
-    /// 状态行与唯一主按钮的间距：≤12pt（任务口径），同一条中轴。
-    static let statusButtonSpacing: CGFloat = 8
-    /// 动作块（状态行 + 按钮）自带的上下留白。
-    static let actionTop: CGFloat = 14
-    static let actionBottom: CGFloat = 14
-    /// 链接与许可块：与身份块的上下留白配平（下留白取 10pt，与 `identityTop`
-    /// 一起构成卡片内容垂直居中的两个端点）。
-    static let linksTop: CGFloat = 14
-    static let linksBottom: CGFloat = 10
 }
 
+/// Each row supplies its own vertical inset, including at the card edges.
 enum SettingsRowMetrics {
-    /// 单行（标题或开关）：16pt 行盒 + 14 = 30pt。
-    static let singleLine: CGFloat = 7
-    /// 双行（标题 + 说明）：16 + 3 + 13 + 10.5 = 42.5pt。
-    ///
-    /// 上 5 下 5.5：13pt 标题的墨顶在行盒顶下 2.25pt、11pt 说明的墨底在行盒底上
-    /// 1.75pt，行内容因此天然偏上 0.5pt；下边多留 0.5pt 正好把墨迹带摆平。
-    /// 行高只比原来多 0.5pt（≤1pt 的节奏容差内）。
-    static let twoLineTop: CGFloat = 5
-    static let twoLineBottom: CGFloat = 5.5
+    static let singleLine: CGFloat = 9
+    static let withDescription: CGFloat = 8
+    static let sectionContent: CGFloat = 12
+}
+
+/// A native radio picker aligns its indicator with the first baseline.
+/// Lay out the visible rows directly so the indicator follows the centre of
+/// the whole text block, and keep native radio semantics for assistive input.
+private struct SettingsRadioRows<Option: Hashable>: View {
+    let title: String
+    let options: [Option]
+    @Binding var selection: Option
+    let label: (Option) -> (title: String, subtitle: String)
+    @FocusState private var focusedOption: Option?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                let copy = label(option)
+                Button {
+                    selection = option
+                } label: {
+                    HStack(alignment: .center, spacing: 8) {
+                        Image(systemName: selection == option ? "smallcircle.filled.circle" : "circle")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(selection == option ? Color.accentColor : Color.secondary)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(copy.title)
+                            Text(copy.subtitle).font(.caption).settingsSecondaryText()
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, SettingsRowMetrics.withDescription)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focused($focusedOption, equals: option)
+                if option != options.last { Divider() }
+            }
+        }
+        .onMoveCommand { direction in
+            guard direction == .up || direction == .down,
+                  let index = options.firstIndex(of: focusedOption ?? selection) else { return }
+            let next = index + (direction == .up ? -1 : 1)
+            guard options.indices.contains(next) else { return }
+            selection = options[next]
+            focusedOption = options[next]
+        }
+        .accessibilityRepresentation {
+            Picker(title, selection: $selection) {
+                ForEach(options, id: \.self) { option in
+                    Text(label(option).title)
+                        .accessibilityHint(label(option).subtitle)
+                        .tag(option)
+                }
+            }
+            .pickerStyle(.radioGroup)
+        }
+    }
 }
 
 /// 设置内容区的滚动容器：所有分区一律从顶部 16pt 起排，超出一屏才滚动。

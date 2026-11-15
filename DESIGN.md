@@ -62,25 +62,16 @@
 - 垂直节奏只有一条：`ScrollView { content.padding(.top, 16).padding(.bottom, 20) }`，内容超出一屏才滚动。**没有** `GeometryReader`、**没有** `frame(minHeight: proxy.size.height, alignment: .center)`，也不按「装得下/装不下」改首元素位置。反例（已撤销）：把带内边距的内容块放进最小高度等于可视高度的 frame 求居中，短页会整体浮在内容区中间，用户看到的是「内容区上下居中了」而不是「设置项在行内居中」。（2026-11-15 源码：`AuxiliaryViews.swift` 的 `SettingsPageScroll`；用户反馈原文：「为什么内容区域上下居中了？我说的是其中的选项」）
 - 断言口径：六页首元素距内容区顶一律 16pt（±0.5pt）；装得下的页一格都不滚且底部留白 ≥19pt；装不下的页从 origin 0 起滚，滚到底后最后一个内容块距内容区底 20pt（±1.5/4pt）。出货 648×600 下通用、截图、剪贴板、快捷键、AI 五页装得下不滚，隐私页超出一屏可滚——**位置规则相同，只差是否滚动**。（2026-11-15 断言：`SettingsArchitectureHarness.swift` 的 `checkPageSurface` 与 `topGap` 汇总）
 - 小标题作为追加层固定在卡片上方 8pt，见「组件与交互」；本条目只管内容块上下的节奏与左右 20pt 边距。
-- 卡片内部：圆角 12pt、1pt 内描边、内容左右内边距 10pt、上下默认 10pt；小标题左缩进 10pt，与卡片内文左缘对齐。反例：内边距改成 16pt 会让保留期七块各窄 24pt，与 4 列网格的块宽基准对不上。（2026-11-15 源码核对：`SettingsSurfaceStyle.swift`、`AuxiliaryViews.swift`）
-- **卡片内容垂直居中，上下留白差 ≤0.5pt**：每张卡里「卡顶 → 首行墨迹顶」与「末行墨迹底 → 卡底」必须相等（≤0.5pt）。实现是**行自带对称内边距**（`SettingsRowMetrics`：单行上下各 7pt，行高 30pt；双行上 5pt / 下 5.5pt，行高 42.5pt），卡片自己的上下 10pt 内边距不再承担行内留白；卡片里的非行内容（复选框段、页脚说明、带边框的按钮行、保留期网格）也各带一份留白（`SettingsCardBlock`），所以说明折行、内容长高时留白不会被吃掉。反例（已撤销）：`settingsRow(minHeight:)` 只在内容比下限矮时才把余量分给上下两边，内容一长高首末行留白就一边多一边少；`settingsCard` 的内边距只加在行外侧时，卡片首/末行的可见留白比行内间距多 4–5pt。（2026-11-15 用户反馈「卡片内内容不垂直居中」；实测与断言：`SettingsArchitectureHarness.swift` 的 `measureCardCentring` / `assertCardCentring`，七张卡（通用三组 + 剪贴板两张 + 隐私权限卡 + AI 状态卡）浅色实测全部 ≤0.5pt，另设 2.5pt 全局回归上限）
-- 以上「墨迹」是**字形墨迹**，不是行盒：中文与拉丁的升部/降部差 1–1.5pt，因此在文字压在卡片上/下边缘的多行卡（截图页翻译行、隐私页两张说明卡）上，墨迹差会停在 1.0–1.5pt；这些卡的布局与上面七张同构，行盒与控件帧逐项相同，差异只来自字形墨迹与按钮投影，不改布局。（2026-11-15 实测：`cardCentring` 逐卡数值）
+- 卡片圆角 12pt、1pt 内描边、左右内边距 10pt；小标题左缩进 10pt，与卡片内文左缘对齐。
+- **每行在自己的可见区域内垂直居中**：行的上下边界由卡片外边缘或相邻分隔线确定。留白由每行各自提供，卡片不在首行和末行外额外加上下留白；单行上下各 9pt，带说明的行各 8pt。内容折行时行随内容长高，文字和控件继续共用中线。剪贴板与截图页的单选圆点也对齐标题和说明的整体中线，读屏仍使用原生单选组语义。验收以行和控件的框为准，字形升部与降部的像素差不作为布局误差。
 - 选项组固定 4 列网格：七块等宽、块高 44pt、行与列间距统一 10pt、第二行末格留空，列数不随窗口宽度变化。验收：七块宽度集合只有一个值、列间与行间差 ≤0.01pt、第二行只有三块且末列无块。（2026-11-15 断言核对：`HistoryCapacityControl.swift`、`SettingsArchitectureHarness.swift`）
 - 行内控件与文字块**垂直居中（误差 ≤0.5pt）**：每一行（标题 + 可选说明 + 右侧控件）里，右侧开关/下拉/按钮的外框中心必须与该行文字块中心同一条中线——**单行对文字中心，多行对整块中心**（如「iCloud 同步」标题 +「上次同步 10:00」说明，开关对两行整块的中心，不是只对标题）。对齐只用布局：`HStack(alignment: .center)` + 文字块与控件同处一个行高，禁止用上下 padding/offset 把控件「看起来挪正」。（2026-11-15 用户反馈 / 像素与 AX 实测：通用页 5 行 + 截图页 1 行 + 隐私页 2 行、AI 页状态圆点，全部 ≤0.5pt；源码 `AuxiliaryViews.swift` 的 `settingsRow` / `settingsRowSwitch`、`CloudKitSyncController.swift` 的 `ICloudSyncGeneralRow`；断言 `SettingsArchitectureHarness.swift` 的 `checkRowAlignment` / `checkAIStatusDotAlignment`）
 - 行内开关独占行右端、与文字间距 ≥12pt（`Spacer(minLength: 12)`），不贴行底、不挤标题。验收：开关左边减行文字右边 ≥11.5pt。
 - 标题区沿用 52pt 不透明条，新增页面不靠额外内边距补高度；52pt 的实测值与取舍见「组件与交互」，此处不重复论证。（沿用「组件与交互」实测值）
 
 ## 关于页几何
-- **关于是设置页内的第七页，独立关于窗口已移除**：侧栏最后一行、应用菜单「关于 闪贴」与面板 ⋯ / 状态栏右键菜单的「帮助与关于」（`.blinkClipOpenAbout`）都落到设置窗口右侧内容区的同一页；没有第二个窗口，也没有第二份状态（原窗口的检查模型迁到 `BlinkClipAboutModel`，上次检查时间/检查中/有新版本三种状态照旧）。页面顺序固定：应用图标（约 96pt）→ 名称 → 版本 `%@` → 一句话说明 → 分隔线 → **状态行 +「检查更新」** → 分隔线 → 链接行 → 版权/许可，即「状态 + 按钮」在链接与许可**之上**（用户要求把这两块调换位置）。动作只有「检查更新」一个主按钮（`.borderedProminent`，检查中 `.disabled`），没有关闭按钮（设置窗口自己的关闭按钮就是关闭路径）。排版沿用设置页既有模式：页顶 16pt、`settingsCard`、卡片内容垂直居中；状态行压在按钮上方 8pt、与按钮同一条中轴，间距 ≤12pt。（2026-11-15 用户反馈「设置中的关于应该直接在右侧内容区域显示」「截图中两块红框的内容应该调换一下位置」；源码：`AuxiliaryViews.swift` 的 `about` / `AboutPaneMetrics`、`BlinkClipAboutWindowController.swift` 的 `BlinkClipAboutModel`、`AppMain.swift` 的 `about(_:)`、`ReplicaUIController.swift` 的 `installAboutPaneObserver`；断言：`AppUpdateHarness.swift` 的 `assertAboutPageLayout`、`SettingsArchitectureHarness.swift` 的 `checkAboutPage`）
-- 关于页实测（648×600 出货窗口，浅/深两套外观，en / zh-Hans / zh-Hant 三语）：页顶→卡片顶 16pt（±0.5）、卡顶→图标框顶 10pt 与版权框底→卡底 10pt（差 0，卡片内容垂直居中）、状态行底→按钮顶 8pt、状态行中线与按钮中线差 ≤0.25pt、动作按钮恰好 1 个、页面里没有 `about-close`。（2026-11-15 断言实测：`SettingsArchitectureHarness` 的 `about` 结果 JSON 与 `AppUpdateHarness` 的 `about_page_layout`）
-- 工程约束：关于页的图标是图片资产，像素墨迹边界取决于图标自身的透明边缘，**不能**当布局证据；卡片内容居中按元素框量（图标框 / 版权框）。反例：用墨迹带量这张卡，会把图标画稿的留白算进「卡顶留白」，读数随图标资产变化。
-- 下面几条是「独立关于窗口」时代的几何记录（380×420 窗口、28pt 标题栏、默认按钮与 Esc 关窗），随窗口一起失效，保留作历史对照；它们不再是现行规范。
-- 内容区 380×420，加 28pt 系统标题栏后窗口框 380×448；标题栏保持不透明系统样式，不加工具栏。（2026-11-15 实测：`.titled, .closable` 的 420pt 内容区对应 frame 448pt；`AppUpdateHarness.swift` 断言内容区 380×420）
-- 状态行属于按钮组：与按钮行间距 8pt（帧到帧 9pt），与按钮组同轴居中，不在按钮上方留空让它漂在空白里。验收：状态行底到按钮组顶 8–12pt，中线差 ≤1pt。（2026-11-15 源码 / 断言核对：`BlinkClipAboutWindowController.swift:182,202-205`、`AppUpdateHarness.swift:259-262`）
-- 按钮组整体居中、左右留白取齐：内容栈左右各 28pt，按钮行在容器内居中。验收：左右留白差 ≤1pt。（2026-11-15 源码 / 断言核对：`BlinkClipAboutWindowController.swift:26,187-188,204-206`、`AppUpdateHarness.swift:263-264`）
-- 动作行只剩**一个**主按钮「检查更新」：按钮行在容器内居中、左右留白取齐（内容栈左右各内缩 28pt，按钮最小宽 104pt），没有次按钮，也不再有关闭按钮。（2026-11-15 订正：P7 删掉「关闭」，旧稿「次按钮 Escape」已无对应控件。源码：`BlinkClipAboutWindowController.swift:26` `horizontalInset = 28`、`:150-151` 单按钮行、`:211` 按钮最小宽 104pt；断言：`AppUpdateHarness.swift:255-264` 动作按钮数恒为 1 且左右留白差 ≤1pt）
-- 「检查更新」在两套外观下都是默认按钮（Return），强调是窗口级决定，不按外观或构图改。反例：只在浅色设默认按钮，深色下 Return 落空；为 Esc 再塞一个「关闭」按钮，则把唯一动作降权成二选一，且 Esc 的键盘等价物被该按钮截走。（2026-11-15 源码／断言：`BlinkClipAboutWindowController.swift:143-148,218`；`AppUpdateHarness.swift:553-554,557-561,577-584`）
-- 单按钮下的状态行：压在按钮上方 8pt（帧到帧 9pt）、与按钮同一条中轴居中，即上文「状态行属于按钮组」的口径；Esc 与 ⌘W 走窗口级关窗（无按钮承载 Esc 快捷键，由窗口的键盘等价物与 `cancelOperation(_:)` 接住，标题栏关闭按钮照常）。（2026-11-15 源码：`BlinkClipAboutWindowController.swift:182` `setCustomSpacing(8, after: statusLabel)`、`:202-205` 同轴、`:277-282` `cancelOperation`、`:299-312` `AboutWindow.performKeyEquivalent`；断言 `AppUpdateHarness.swift:259-264` 状态行 8–12pt 与中线差 ≤1pt、`:562-565` 无控件认领 Esc）
+- 关于沿用设置窗口右侧的第七页，所有现有入口都落到同一页。按任务分三层：顶部依次展示闪贴图标、名称、已装版本和说明。软件更新卡片左侧显示状态，右侧放「检查更新」。关于页页脚贴齐内容区底部，空间不足时随页面滚动。版权在上，GitHub 项目、AGPL-3.0 许可证与更新日志在下一行居中并排。
+- 顶部沿用 16pt 页边距；图标按布局框量，资产透明边缘不参与测量。更新操作始终只有一个主按钮；检查中禁用，检查状态继续由同一份模型提供。
 - 状态文案必须带时间戳或具体事实：「上次检查 HH:mm」用 24 小时制、语言无关，完成过检查才出现；未检查前只写「尚未检查更新」，不得断言“已是最新”——Sparkle 自己的弹窗已经说过，内联不再重复。（2026-11-15 核对：`BlinkClipUpdateChecker.swift`、`AppUpdateHarness.swift`）
 
 ## 危险动作

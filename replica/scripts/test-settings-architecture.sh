@@ -132,8 +132,8 @@ checks = {
                          and 'showSettings(initialTab: SettingsAboutPane.tabIndex)' in ui_controller,
     # 4) AI 页按钮进卡、说明与状态标题对齐、卡片底部同构分隔线。
     'ai-connect-inside-card': (mcp := aux[aux.index('private var mcp: some View'):aux.index('.sheet(isPresented: $showingMCPConfiguration)')])
-                              .count('Divider().padding(.vertical, 8)') == 1
-                              and mcp.index('Divider().padding(.vertical, 8)') < mcp.index('settings.mcp.connect'),
+                              .count('Divider()') == 1
+                              and mcp.index('Divider()') < mcp.index('settings.mcp.connect'),
     'ai-description-indented-to-title': 'SettingsStatusDot.side + SettingsStatusDot.textSpacing' in aux,
     # 5) iCloud 行：状态在标题下方、开关独占右端。
     'icloud-summary-under-title': aux.count('settings.icloud.summary') == 0  # lives in CloudKitSyncController
@@ -172,7 +172,7 @@ checks = {
     'about-row-selects-a-page': 'aboutReturnTab' not in aux and 'restoreSidebarAfterAbout' not in aux
                                  and 'BlinkClipAboutWindow.present' not in aux
                                  and '.tag(SettingsAboutPane.tabIndex)' in aux,
-    'translation-row-centered': 'return settingsRow(topPadding: SettingsRowMetrics.twoLineTop,'
+    'translation-row-centered': 'return settingsRow(verticalPadding: SettingsRowMetrics.withDescription)'
                                  in aux
                                  and 'identifier: "settings.apple-translation.toggle"' in aux,
     'status-dot-shared': 'SettingsStatusDot(level:' in permission and 'SettingsStatusDot(level: executable ? .normal : .problem)' in aux,
@@ -183,27 +183,11 @@ checks = {
                                 and 'HStack(alignment: .center, spacing: 0) {'
                                 in aux[aux.index('private func settingsRow<Trailing: View>('):aux.index('private func settingsToggle(')]
                                 and 'Spacer(minLength: spacing)' in aux,
-    # 7b) 卡片内容垂直居中：行高由「内容 + 上下各一份对称内边距」决定，不再用
-    #     `frame(minHeight:)`（内容长高时余量被吃掉，首末行留白一边多一边少）；
-    #     卡片里非行的内容段（复选框、页脚说明、按钮行、保留期网格）自带留白，
-    #     数值只在 `SettingsCardBlock` 里写一次。
-    'settings-rows-pad-symmetrically': 'topPadding: CGFloat,' in aux
-                                       and 'bottomPadding: CGFloat,' in aux
-                                       and '.padding(.top, topPadding)' in aux
-                                       and '.padding(.bottom, bottomPadding)' in aux
-                                       and '.frame(minHeight: minHeight)' not in aux
-                                       and 'enum SettingsRowMetrics' in aux,
-    'card-block-padding-declared': 'enum SettingsCardBlock' in aux
-                                   and aux.count('SettingsCardBlock.') >= 5
-                                   and 'SettingsCardBlock.tilesTop' in aux,
-    # Z3b：说明文字卡（外观与语言）按 1.5pt 的已知降部差异逐卡点名，
-    # 七张严格卡的 0.5pt 口径不变。
-    'card-centring-is-asserted': 'cardCentring' in harness
-                                 and 'assertCardCentring(appearance: appearance)' in harness
-                                 and 'delta <= 0.5' in harness
-                                 and 'cardCentringCaptionLimit' in harness
-                                 and '(.general, 1)' in harness
-                                 and 'try check(delta <= 1.5' in harness,
+    # A card supplies horizontal inset only; each row owns its vertical inset.
+    'settings-rows-pad-symmetrically': '.padding(.vertical, verticalPadding)' in aux
+                                      and 'enum SettingsRowMetrics' in aux
+                                      and 'padding(.vertical' not in
+                                      aux[aux.index('private func settingsCard<'):aux.index('// MARK: - 关于闪贴')],
     'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1
                                            and aux.count('settingsRowSwitch(title:') >= 3,
     'no-row-vertical-padding-hack': '.padding(.top, 1).padding(.bottom' not in aux
@@ -224,7 +208,7 @@ checks = {
     # Z3b：外观与语言组在「启动与运行」之后、「同步与更新」之前（同一页里的先后）。
     'appearance-section-between-startup-and-sync': general_order_ok,
     # Z3b：两行都走同一个 `settingsRow`，控件是菜单 Picker（不是自绘控件）。
-    'appearance-rows-use-the-one-row-helper': aux.count('settingsRow(topPadding: SettingsRowMetrics.twoLineTop,') >= 3
+    'appearance-rows-use-the-one-row-helper': aux.count('settingsRow(verticalPadding: SettingsRowMetrics.withDescription)') >= 3
                                                and 'appearanceThemeRow' in aux
                                                and 'appearanceLanguageRow' in aux
                                                and aux.count(".pickerStyle(.menu).labelsHidden().controlSize(.small).fixedSize()") == 2

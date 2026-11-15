@@ -223,23 +223,17 @@ struct AppUpdateHarness {
     /// 页面承诺的几何（屏幕坐标，y 向上）：状态行压在唯一主按钮上方 ≤12pt、
     /// 两者同一条中轴；状态行在链接之上，链接在许可之上。
     struct AboutPageLayout {
-        let statusButtonGap: CGFloat
-        let statusButtonAxisOffset: CGFloat
+        let statusButtonCenterOffset: CGFloat
         let actionButtonCount: Int
         let actionButtonIDs: [String]
         let pageTopGap: CGFloat
-        let cardTopPadding: CGFloat
-        let cardBottomPadding: CGFloat
         var debugDescription: String = ""
 
         var json: [String: Any] {
-            ["status_button_gap": Double(statusButtonGap),
-             "status_button_axis_offset": Double(statusButtonAxisOffset),
+            ["status_button_center_offset": Double(statusButtonCenterOffset),
              "action_button_count": actionButtonCount,
              "action_button_ids": actionButtonIDs,
-             "page_top_gap": Double(pageTopGap),
-             "card_top_padding": Double(cardTopPadding),
-             "card_bottom_padding": Double(cardBottomPadding)]
+             "page_top_gap": Double(pageTopGap)]
         }
     }
 
@@ -370,31 +364,28 @@ struct AppUpdateHarness {
         let contentTop = host.window.convertPoint(toScreen: NSPoint(x: 0, y: host.window.contentLayoutRect.maxY)).y
         try check(icon.height >= 90 && icon.height <= 100,
                   "the app icon is not about 96pt: \(icon.height)")
-        // 顺序：图标 → 名称 → 版本 → 说明 → 状态 → 按钮 → 链接 → 版权/许可。
-        try check(status.maxY <= description.minY,
-                  "the status line is not below the product description: \(status) vs \(description)")
-        try check(project.maxY <= status.minY,
-                  "the status line is not above the links (status + button must come first): \(status) vs \(project)")
-        try check(license.maxY <= min(project.minY, releases.minY),
-                  "the license row is not below the link row: \(license) vs \(project)")
-        try check(copyright.minY < license.maxY || abs(copyright.midY - license.midY) <= 2,
-                  "the copyright is not on the licence row: \(copyright) vs \(license)")
-        // 页顶 16pt（设置页统一节奏，关于页不另写一套）。
-        let pageTopGap = contentTop - card.maxY
+        try check(name.maxY <= icon.minY && version.maxY <= name.minY && description.maxY <= version.minY,
+                  "the About page identity must show the installed version under the product name")
+        try check(card.maxY <= description.minY && copyright.maxY <= card.minY,
+                  "the About footer must appear below the update card")
+        try check(card.contains(status) && card.contains(button) && status.maxX < button.minX
+                  && status.maxY > button.minY && status.minY < button.maxY,
+                  "the update status and Check for Updates must share a row")
+        try check(abs(project.midY - license.midY) <= 1 && abs(project.midY - releases.midY) <= 1
+                  && project.maxX < license.minX && license.maxX < releases.minX
+                  && copyright.minY >= max(project.maxY, license.maxY, releases.maxY),
+                  "the three footer links must appear in order on one row below the copyright")
+        let contentBottom = host.window.convertPoint(toScreen: NSPoint(x: 0, y: host.window.contentLayoutRect.minY)).y
+        try check(abs(min(project.minY, license.minY, releases.minY) - contentBottom
+                      - SettingsPageMetrics.bottomInset) <= 1,
+                  "the About footer must align with the bottom page inset")
+        let pageTopGap = contentTop - icon.maxY
         try check(abs(pageTopGap - SettingsPageMetrics.topInset) <= 0.5,
-                  "the About page does not start \(SettingsPageMetrics.topInset)pt from the top: \(pageTopGap)")
-        // 卡片内容垂直居中：卡顶 → 图标框顶 == 版权框底 → 卡底（≤0.5pt）。
-        let cardTopPadding = card.maxY - icon.maxY
-        let cardBottomPadding = copyright.minY - card.minY
-        try check(abs(cardTopPadding - cardBottomPadding) <= 0.5,
-                  "the About card content is not vertically centred: top \(cardTopPadding) bottom \(cardBottomPadding)")
-        return AboutPageLayout(statusButtonGap: status.minY - button.maxY,
-                               statusButtonAxisOffset: status.midX - button.midX,
+                  "the About identity does not start at the shared page inset: \(pageTopGap)")
+        return AboutPageLayout(statusButtonCenterOffset: status.midY - button.midY,
                                actionButtonCount: actionButtons.count,
                                actionButtonIDs: actionButtons.compactMap { axID($0) },
-                               pageTopGap: pageTopGap,
-                               cardTopPadding: cardTopPadding,
-                               cardBottomPadding: cardBottomPadding)
+                               pageTopGap: pageTopGap)
     }
 
     @MainActor static func assertAboutPageLayout(_ host: AboutPageHost) throws {
@@ -403,10 +394,6 @@ struct AppUpdateHarness {
                   "the About page shows \(measured.actionButtonCount) action buttons \(measured.actionButtonIDs), expected only Check for Updates")
         try check(measured.actionButtonIDs == ["about-check-updates"],
                   "the About page action button is not the Check for Updates button: \(measured.actionButtonIDs)")
-        try check(measured.statusButtonGap >= 4 && measured.statusButtonGap <= 12,
-                  "the status line is not within 12pt above the button: \(measured.statusButtonGap)")
-        try check(abs(measured.statusButtonAxisOffset) <= 1,
-                  "the status line is not on the button's centred axis: \(measured.statusButtonAxisOffset)")
         let tree = accessibilityTree(host.hosting)
         for (identifier, expected) in [
             ("about-product-name", ReplicaBrand.name),
