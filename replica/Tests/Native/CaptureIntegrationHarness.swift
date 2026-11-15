@@ -84,11 +84,19 @@ import BlinkClipCapture
 @MainActor final class GlobalHotKey {
     static var events: [String] = []
     static var status: OSStatus = 0
+    static var pressedDuringTracking: UInt32?
+    private var registeredIdentifier: UInt32?
     var action: (() -> Void)?
     func register(keyCode: UInt32, modifiers: NSEvent.ModifierFlags, identifier: UInt32) -> OSStatus {
-        Self.events.append("register:\(identifier):\(keyCode):\(modifiers.rawValue)"); return Self.status
+        Self.events.append("register:\(identifier):\(keyCode):\(modifiers.rawValue)")
+        registeredIdentifier = Self.status == 0 ? identifier : nil
+        return Self.status
     }
-    func unregister() { Self.events.append("unregister") }
+    func isPressedDuringMenuTracking() -> Bool {
+        guard let registeredIdentifier else { return false }
+        return registeredIdentifier == Self.pressedDuringTracking
+    }
+    func unregister() { registeredIdentifier = nil; Self.events.append("unregister") }
 }
 struct ScreenshotFocusRestorer {
     static func captureFrontmost() -> Self { Self() }
@@ -231,6 +239,20 @@ enum ReplicaBrand { static let name = "BlinkClip" }
         // Preserve this suite's existing custom-pair assertions below.
         BlinkClipScreenshotSettings.regionShortcut = custom
         BlinkClipScreenshotSettings.fullScreenShortcut = .init(keyCode: 41, modifierRawValue: custom.modifierRawValue)
+
+        let beforeMenuCapture = CaptureProbe.activations
+        var activationsWhileTracking = -1
+        coordinator.trackStatusMenu(NSMenu()) {
+            GlobalHotKey.pressedDuringTracking = 101
+            RunLoop.current.run(mode: .eventTracking, before: Date().addingTimeInterval(0.1))
+            activationsWhileTracking = CaptureProbe.activations
+        }
+        GlobalHotKey.pressedDuringTracking = nil
+        drain()
+        try require(activationsWhileTracking == beforeMenuCapture
+                    && CaptureProbe.activations == beforeMenuCapture + 1,
+                    "region shortcut sampled in menu tracking launches only after the menu returns")
+        CaptureProbe.complete(nil)
 
         coordinator.startRegionCapture()
         GlobalHotKey.events.removeAll()

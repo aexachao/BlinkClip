@@ -342,9 +342,16 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     @objc private func statusClicked(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = PanelShortcutMenuBuilder.makeMenu(panelShortcutMenuContext, target: self)
-            statusItem.menu = menu
-            statusItem.button?.performClick(nil)
-            statusItem.menu = nil
+            let show = {
+                self.statusItem.menu = menu
+                self.statusItem.button?.performClick(nil)
+                self.statusItem.menu = nil
+            }
+            if let screenshotCoordinator {
+                screenshotCoordinator.trackStatusMenu(menu, show: show)
+            } else {
+                show()
+            }
         } else { togglePanel(sender) }
     }
 

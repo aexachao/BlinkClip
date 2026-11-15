@@ -40,6 +40,10 @@ final class ScreenshotCoordinator {
     private let pasteboard: NSPasteboard
     private let regionHotKey = GlobalHotKey()
     private let fullScreenHotKey = GlobalHotKey()
+    private weak var trackingStatusMenu: NSMenu?
+    private var pendingMenuCaptureIsRegion: Bool?
+    private var menuRegionWasPressed = false
+    private var menuFullScreenWasPressed = false
     /// 编辑器/遮罩强引用；capcap 的 `OverlayWindowController` 不被窗口自持。
     private var overlayController: AnyObject?
     /// 触发瞬间的前台 App；编辑器跑起来之后前台就变成 BlinkClip 自己了。
@@ -85,8 +89,8 @@ final class ScreenshotCoordinator {
         }
         // 与既有全局快捷键保持同一开关：`--no-global-hotkey` 时不注册。
         guard !ProcessInfo.processInfo.arguments.contains("--no-global-hotkey") else { return }
-        regionHotKey.action = { [weak self] in self?.startRegionCapture() }
-        fullScreenHotKey.action = { [weak self] in self?.startFullScreenCapture() }
+        regionHotKey.action = { [weak self] in self?.requestFromHotKey(isRegion: true) }
+        fullScreenHotKey.action = { [weak self] in self?.requestFromHotKey(isRegion: false) }
         observeHotKeySettings()
         registerHotKeys()
         isStarted = true
@@ -243,6 +247,48 @@ final class ScreenshotCoordinator {
     }
 
     // MARK: - 两个入口
+
+    /// AppKit runs a nested event loop while the menu is open. Carbon's normal
+    /// main-queue delivery can stall there, so sample only the two registered
+    /// screenshot shortcuts in tracking mode. The timer is scoped to this menu.
+    func trackStatusMenu(_ menu: NSMenu, show: () -> Void) {
+        trackingStatusMenu = menu
+        menuRegionWasPressed = regionHotKey.isPressedDuringMenuTracking()
+        menuFullScreenWasPressed = fullScreenHotKey.isPressedDuringMenuTracking()
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let regionPressed = self.regionHotKey.isPressedDuringMenuTracking()
+                let fullScreenPressed = self.fullScreenHotKey.isPressedDuringMenuTracking()
+                if regionPressed && !self.menuRegionWasPressed {
+                    self.requestFromHotKey(isRegion: true)
+                } else if fullScreenPressed && !self.menuFullScreenWasPressed {
+                    self.requestFromHotKey(isRegion: false)
+                }
+                self.menuRegionWasPressed = regionPressed
+                self.menuFullScreenWasPressed = fullScreenPressed
+            }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        show()
+        timer.invalidate()
+        trackingStatusMenu = nil
+        if let isRegion = pendingMenuCaptureIsRegion {
+            pendingMenuCaptureIsRegion = nil
+            present(isRegion: isRegion)
+        }
+    }
+
+    private func requestFromHotKey(isRegion: Bool) {
+        guard isStarted, !isRecordingHotKey, overlayController == nil, !isPresenting else { return }
+        if let menu = trackingStatusMenu {
+            guard pendingMenuCaptureIsRegion == nil else { return }
+            pendingMenuCaptureIsRegion = isRegion
+            menu.cancelTracking()
+        } else {
+            present(isRegion: isRegion)
+        }
+    }
 
     func startRegionCapture() {
         present(isRegion: true)
