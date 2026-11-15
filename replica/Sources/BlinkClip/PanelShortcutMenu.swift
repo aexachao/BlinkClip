@@ -162,15 +162,15 @@ struct PanelShortcutMenuContext: Equatable {
 
 enum PanelShortcutMenuModel {
     /// 状态栏变体固定四组，组间一条 `NSMenuItem.separator()`：
-    /// 动作 / 应用 / 维护 / 退出。
+    /// 动作 / 维护 / 应用 / 退出。
     ///
-    /// 面板变体同样是四组：动作（只有新建文本）/ 应用 / 维护（暂停子菜单）/ 退出。
+    /// 面板变体同样是四组：动作（只有新建文本）/ 维护（暂停子菜单）/ 应用 / 退出。
     /// 两个变体共用「应用」与「退出」两组，连标题、图标与快捷键都是同一份数据。
     static func groups(_ context: PanelShortcutMenuContext) -> [PanelShortcutMenuGroup] {
         [
             PanelShortcutMenuGroup(title: "动作", items: actionItems(context)),
-            PanelShortcutMenuGroup(title: "应用", items: applicationItems()),
             maintenanceGroup(context),
+            PanelShortcutMenuGroup(title: "应用", items: applicationItems()),
             PanelShortcutMenuGroup(title: "退出", items: [quitItem(context)])
         ]
     }

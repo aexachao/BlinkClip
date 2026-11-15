@@ -87,28 +87,28 @@ import AppKit
     static func groupingChecks() {
         let groups = PanelShortcutMenuModel.groups(context)
         check(groups.count == 4, "菜单必须是 4 组，实际 \(groups.count)")
-        check(groups.map(\.title) == ["动作", "应用", "维护", "退出"],
+        check(groups.map(\.title) == ["动作", "维护", "应用", "退出"],
               "分组顺序变了：\(groups.map(\.title))")
         check(groups[0].items.map(\.id) == [.openClipboard, .newText], "动作组内容不对")
-        check(groups[1].items.map(\.id) == [.settings, .checkForUpdates, .helpAndAbout],
-              "应用组必须是 设置 / 检查更新 / 帮助与关于，实际 \(groups[1].items.map(\.id))")
-        check(groups[2].items.map(\.id) == [.diagnostics, .pauseMonitoring], "维护组内容不对")
+        check(groups[2].items.map(\.id) == [.settings, .checkForUpdates, .helpAndAbout],
+              "应用组必须是 设置 / 检查更新 / 帮助与关于，实际 \(groups[2].items.map(\.id))")
+        check(groups[1].items.map(\.id) == [.diagnostics, .pauseMonitoring], "维护组内容不对")
         check(groups[3].items.map(\.id) == [.quit], "退出组只放一项")
 
         check(groups[0].items.map(\.title) == ["打开剪贴板", "新建文本…"], "动作组标题不对")
-        check(groups[1].items.map(\.title) == ["设置…", "检查更新", "帮助与关于"], "应用组标题不对")
-        check(groups[2].items.map(\.title) == ["收集诊断日志", "暂停采集"], "维护组标题不对")
+        check(groups[2].items.map(\.title) == ["设置…", "检查更新", "帮助与关于"], "应用组标题不对")
+        check(groups[1].items.map(\.title) == ["收集诊断日志", "暂停采集"], "维护组标题不对")
         check(groups[3].items[0].title == "退出 \(productName)",
               "退出项标题应为「退出 \(productName)」，实际 \(groups[3].items[0].title)")
 
-        let settings = groups[1].items[0]
+        let settings = groups[2].items[0]
         check(settings.keyEquivalent == ",", "设置项应有 ⌘, 快捷键")
         check(settings.modifiers == [.command], "设置的修饰键必须是 command")
         check(settings.keyEquivalentDisplay == "\u{2318},", "设置项的快捷键应显示为 ⌘,")
 
         // 检查更新 / 帮助与关于 / 退出的动作接线
-        check(groups[1].items[1].action == .checkForUpdates, "检查更新走的是 checkForUpdates:")
-        check(groups[1].items[2].action == .openAbout, "帮助与关于走的是 openAbout:（只发通知）")
+        check(groups[2].items[1].action == .checkForUpdates, "检查更新走的是 checkForUpdates:")
+        check(groups[2].items[2].action == .openAbout, "帮助与关于走的是 openAbout:（只发通知）")
         check(groups[3].items[0].action == .confirmQuit, "退出项必须走 confirmQuit: 确认路径")
         check(groups.flatMap(\.items).allSatisfy { $0.action != nil }, "常规菜单项都应有动作")
         check(groups.flatMap(\.items).allSatisfy { $0.isEnabled }, "常规菜单项都应是可用状态")
@@ -142,9 +142,9 @@ import AppKit
                                               isMonitoringPaused: true,
                                               diagnosticsTitle: "停止收集诊断日志")
         let groups = PanelShortcutMenuModel.groups(paused)
-        check(groups[2].items[1].title == "继续采集", "暂停中这一项应变成「继续采集」")
-        check(groups[2].items[1].symbol == "play.circle", "暂停中图标应变成 play.circle")
-        check(groups[2].items[0].title == "停止收集诊断日志", "诊断项标题应跟随诊断状态")
+        check(groups[1].items[1].title == "继续采集", "暂停中这一项应变成「继续采集」")
+        check(groups[1].items[1].symbol == "play.circle", "暂停中图标应变成 play.circle")
+        check(groups[1].items[0].title == "停止收集诊断日志", "诊断项标题应跟随诊断状态")
         check(groups.count == 4, "状态变化不改变分组数量")
     }
 
@@ -154,9 +154,9 @@ import AppKit
         context.stackHotKeyNotice = "闪贴 Stack 快捷键无法注册"
         let groups = PanelShortcutMenuModel.groups(context)
         check(groups.count == 4, "注册失败的提示不能改变分组数量")
-        check(groups[2].items.map(\.id) == [.diagnostics, .pauseMonitoring, .hotKeyNotice, .stackHotKeyNotice],
-              "提示行应追加在「维护」组尾部，实际 \(groups[2].items.map(\.id))")
-        let notices = groups[2].items.filter { $0.action == nil }
+        check(groups[1].items.map(\.id) == [.diagnostics, .pauseMonitoring, .hotKeyNotice, .stackHotKeyNotice],
+              "提示行应追加在「维护」组尾部，实际 \(groups[1].items.map(\.id))")
+        let notices = groups[1].items.filter { $0.action == nil }
         check(notices.count == 2, "提示行没有动作")
         check(notices.allSatisfy { !$0.isEnabled }, "提示行必须是置灰状态")
         check(notices.allSatisfy { !$0.symbol.isEmpty }, "提示行同样带图标")
@@ -176,7 +176,7 @@ import AppKit
         check(menu.items.count == 11, "4 组 8 项 + 3 条分隔线 = 11，实际 \(menu.items.count)")
 
         let separators = menu.items.enumerated().filter { $0.element.isSeparatorItem }.map(\.offset)
-        check(separators == [2, 6, 9], "分隔线位置不对：\(separators)")
+        check(separators == [2, 5, 9], "分隔线位置不对：\(separators)")
 
         for (index, item) in menu.items.enumerated() where !item.isSeparatorItem {
             guard let image = item.image else {
@@ -190,12 +190,12 @@ import AppKit
 
         let titles = menu.items.map { $0.isSeparatorItem ? "---" : $0.title }
         check(titles == ["打开剪贴板", "新建文本…", "---",
-                         "设置…", "检查更新", "帮助与关于", "---",
                          "收集诊断日志", "暂停采集", "---",
+                         "设置…", "检查更新", "帮助与关于", "---",
                          "退出 \(productName)"],
               "菜单顺序不对：\(titles)")
 
-        check(menu.items[3].keyEquivalent == "," && menu.items[3].keyEquivalentModifierMask == [.command],
+        check(menu.items[6].keyEquivalent == "," && menu.items[6].keyEquivalentModifierMask == [.command],
               "NSMenu 里设置项的快捷键应是 ⌘,")
         let checkUpdate = menu.items.first { $0.action == PanelShortcutMenuAction.checkForUpdates.selector }
         check(checkUpdate != nil, "菜单里找不到检查更新")
@@ -234,17 +234,17 @@ import AppKit
     static func panelGroupingChecks() {
         let groups = PanelShortcutMenuModel.groups(panelContext)
         check(groups.count == 4, "面板菜单必须也是 4 组，实际 \(groups.count)")
-        check(groups.map(\.title) == ["动作", "应用", "维护", "退出"],
+        check(groups.map(\.title) == ["动作", "维护", "应用", "退出"],
               "面板菜单分组顺序变了：\(groups.map(\.title))")
         check(groups[0].items.map(\.id) == [.newText], "面板动作组只放新建文本")
         check(groups[0].items.map(\.title) == ["新建文本…"], "面板动作组标题不对")
-        check(groups[1].items.map(\.id) == [.settings, .checkForUpdates, .helpAndAbout],
-              "面板应用组必须是 设置 / 检查更新 / 帮助与关于，实际 \(groups[1].items.map(\.id))")
-        check(groups[1].items.map(\.title) == ["设置…", "检查更新", "帮助与关于"],
-              "面板应用组标题不对：\(groups[1].items.map(\.title))")
-        check(groups[2].items.map(\.id) == [.pauseMonitoring], "面板维护组只有暂停父项")
-        check(groups[2].items[0].title == "暂停 \(productName)",
-              "面板暂停父项标题应为「暂停 \(productName)」，实际 \(groups[2].items[0].title)")
+        check(groups[2].items.map(\.id) == [.settings, .checkForUpdates, .helpAndAbout],
+              "面板应用组必须是 设置 / 检查更新 / 帮助与关于，实际 \(groups[2].items.map(\.id))")
+        check(groups[2].items.map(\.title) == ["设置…", "检查更新", "帮助与关于"],
+              "面板应用组标题不对：\(groups[2].items.map(\.title))")
+        check(groups[1].items.map(\.id) == [.pauseMonitoring], "面板维护组只有暂停父项")
+        check(groups[1].items[0].title == "暂停 \(productName)",
+              "面板暂停父项标题应为「暂停 \(productName)」，实际 \(groups[1].items[0].title)")
         check(groups[3].items.map(\.id) == [.quit], "面板退出组只放一项")
         check(groups[3].items[0].title == "退出 \(productName)", "面板退出项标题不对")
 
@@ -257,7 +257,7 @@ import AppKit
 
         // 两个变体共用的分组 / 项必须逐字一致（同一份数据，不是复制出来的第二份）。
         let statusGroups = PanelShortcutMenuModel.groups(context)
-        check(groups[1] == statusGroups[1], "两个变体的「应用」组必须完全一致")
+        check(groups[2] == statusGroups[2], "两个变体的「应用」组必须完全一致")
         check(groups[3] == statusGroups[3], "两个变体的「退出」组必须完全一致")
         check(groups[0].items.last == statusGroups[0].items.last,
               "两个变体的「新建文本…」必须完全一致")
@@ -285,11 +285,11 @@ import AppKit
 
     static func panelSubmenuChecks() {
         let groups = PanelShortcutMenuModel.groups(panelContext)
-        guard let submenu = groups[2].items[0].submenu else {
+        guard let submenu = groups[1].items[0].submenu else {
             preconditionFailure("面板「暂停」项必须有子菜单")
         }
-        check(groups[2].items[0].action == nil, "带子菜单的父项本体不执行动作")
-        check(groups[2].items[0].isEnabled, "带子菜单的父项必须是可用状态")
+        check(groups[1].items[0].action == nil, "带子菜单的父项本体不执行动作")
+        check(groups[1].items[0].isEnabled, "带子菜单的父项必须是可用状态")
         check(submenu.items.map(\.id) == [.pauseIndefinitely, .pauseForMinutes, .pauseForMinutes,
                                           .pauseForMinutes, .pauseForMinutes, .pauseForMinutes],
               "暂停子菜单项不对：\(submenu.items.map(\.id))")
@@ -311,8 +311,8 @@ import AppKit
         paused.isMonitoringPaused = true
         let pausedGroups = PanelShortcutMenuModel.groups(paused)
         check(pausedGroups.count == 4, "暂停状态不改变面板分组数量")
-        check(pausedGroups[2].items[0].title == "暂停 \(productName)", "暂停中父项标题不变")
-        guard let pausedSubmenu = pausedGroups[2].items[0].submenu else {
+        check(pausedGroups[1].items[0].title == "暂停 \(productName)", "暂停中父项标题不变")
+        guard let pausedSubmenu = pausedGroups[1].items[0].submenu else {
             preconditionFailure("暂停中也要保留「暂停 \(productName)」父项的子菜单")
         }
         check(pausedSubmenu.items.map(\.id) == [.resumeMonitoring], "暂停中子菜单只保留「继续」")
@@ -328,11 +328,11 @@ import AppKit
         check(menu.items.count == 9, "面板菜单 4 组 6 项 + 3 条分隔线 = 9，实际 \(menu.items.count)")
 
         let separators = menu.items.enumerated().filter { $0.element.isSeparatorItem }.map(\.offset)
-        check(separators == [1, 5, 7], "面板菜单分隔线位置不对：\(separators)")
+        check(separators == [1, 3, 7], "面板菜单分隔线位置不对：\(separators)")
 
         let titles = menu.items.map { $0.isSeparatorItem ? "---" : $0.title }
-        check(titles == ["新建文本…", "---", "设置…", "检查更新", "帮助与关于", "---",
-                         "暂停 \(productName)", "---", "退出 \(productName)"],
+        check(titles == ["新建文本…", "---", "暂停 \(productName)", "---",
+                         "设置…", "检查更新", "帮助与关于", "---", "退出 \(productName)"],
               "面板菜单顺序不对：\(titles)")
         check(!titles.contains("打开剪贴板"), "面板菜单不该有「打开剪贴板」")
 
@@ -347,7 +347,7 @@ import AppKit
         }
 
         // 子菜单是真实的 NSMenu，图标 / target 与顶层一致。
-        guard let submenu = menu.items[6].submenu else {
+        guard let submenu = menu.items[2].submenu else {
             preconditionFailure("面板菜单的「暂停」项没有子菜单")
         }
         check(!submenu.autoenablesItems, "子菜单启用状态也要由模型决定")
@@ -434,7 +434,7 @@ import AppKit
         check(target.invoked.contains("openAbout"), "面板「帮助与关于」没接到 openAbout:（通知路径）")
 
         // 定时暂停：representedObject 带着分钟数。
-        guard let timed = menu.items[6].submenu?.items.first(where: { $0.title == "暂停 30分钟" }) else {
+        guard let timed = menu.items[2].submenu?.items.first(where: { $0.title == "暂停 30分钟" }) else {
             preconditionFailure("找不到「暂停 30分钟」")
         }
         check(dispatch(timed), "定时暂停项的动作没投递出去")
@@ -556,7 +556,7 @@ import AppKit
             }
         }
         // 面板 ⋯ 的「暂停 闪贴」子菜单单独出图：它只存在于面板变体。
-        if let submenu = PanelShortcutMenuModel.groups(panelContext)[2].items[0].submenu {
+        if let submenu = PanelShortcutMenuModel.groups(panelContext)[1].items[0].submenu {
             for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 guard let rep = PanelShortcutMenuSurfaceView.render(
                     groups: [PanelShortcutMenuGroup(title: "暂停子菜单", items: submenu.items)],
