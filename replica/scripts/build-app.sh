@@ -81,7 +81,8 @@ cmp "$replica_root/../LICENSE" "$bundle/Contents/Resources/LICENSE.txt"
 cmp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"
 cp "$replica_root/Assets/BlinkClipAppIcon.icns" "$bundle/Contents/Resources/BlinkClipAppIcon.icns"
 ditto "$binary_root/BlinkClip_BlinkClipCore.bundle" "$bundle/Contents/Resources/BlinkClip_BlinkClipCore.bundle"
-# Fail closed if a stale build reintroduces extracted artwork or language tables.
+# Fail closed if a stale build reintroduces extracted artwork, ships undeclared
+# feedback audio, or drops a language table.
 python3 - "$bundle/Contents/Resources/BlinkClip_BlinkClipCore.bundle" <<'OWNED_RESOURCES'
 from pathlib import Path
 import struct, sys
@@ -92,14 +93,28 @@ illustrations = {
     "BlinkClipCopyToClipboard@2x.png": (384, 256),
     "BlinkClipPermissions@2x.png": (480, 288),
 }
+# Per-action feedback audio (copy/cut/share the copy file, paste its own). Both are
+# MPEG-1 Layer III with an ID3v2 header; nothing else may ride along in the bundle.
+sounds = {"CopySound.mp3", "PasteSound.mp3"}
 for p in files:
     owned_image = p.name in illustrations and p.relative_to(core).parts in {(p.name,), ("GeneratedIllustrations", p.name)}
-    assert p.name == "Info.plist" or owned_image or (p.name in {"Localizable.strings", "Localizable.stringsdict"} and p.parent.name.lower() in {"en.lproj", "zh-hans.lproj"}), f"Unexpected Core resource: {p}"
+    owned_sound = p.name in sounds and p.relative_to(core).parts == (p.name,)
+    assert p.name == "Info.plist" or owned_image or owned_sound or (p.name in {"Localizable.strings", "Localizable.stringsdict"} and p.parent.name.lower() in {"en.lproj", "zh-hans.lproj"}), f"Unexpected Core resource: {p}"
 for name, size in illustrations.items():
     matches = [p for p in files if p.name == name]
     assert len(matches) == 1, f"Missing or duplicate owned illustration: {name}"
     header = matches[0].read_bytes()[:24]
     assert header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR" and struct.unpack(">II", header[16:24]) == size, f"Invalid owned illustration: {name}"
+for name in sorted(sounds):
+    matches = [p for p in files if p.name == name]
+    assert len(matches) == 1, f"Missing or duplicate owned sound: {name}"
+    audio = matches[0].read_bytes()
+    # ID3v2 tag (or a bare MPEG frame sync) plus real payload: a stub or an empty
+    # file must fail the build instead of shipping a silent player.
+    tagged = audio[:3] == b"ID3"
+    framed = len(audio) > 1 and audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0
+    assert tagged or framed, f"Invalid owned sound: {name}"
+    assert len(audio) >= 4096, f"Truncated owned sound: {name}"
 for language in ("en", "zh-hans"):
     for name in ("Localizable.strings", "Localizable.stringsdict"):
         assert (core / (language + ".lproj") / name).is_file(), f"Missing owned resource: {language}/{name}"

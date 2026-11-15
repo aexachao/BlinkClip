@@ -12,7 +12,7 @@ cp -R "$core/BlinkClipResources/en.lproj" "$core/BlinkClipResources/zh-Hans.lpro
 cp "$core/BlinkClipResources/GeneratedIllustrations/"*.png "$bundle/"
 printf '%s\n' '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleDevelopmentRegion</key><string>en</string></dict></plist>' > "$bundle/Info.plist"
 sources=("$core/AppBrand.swift" "$core/SettingsStrings.swift" "$core/ResourceBundle.swift" "$core/SettingsLocalization.swift" "$core/SearchLocalization.swift" "$core/PreviewLocalization.swift" "$core/UnavailablePreviewLocalization.swift" "$core/ShortcutMessages.swift" "$core/BlinkClipAssetRenderer.swift" "$core/SettingsIllustrations.swift" "$replica_root/Tests/Native/BlinkClipOwnedResourcesHarness.swift")
-shasum -a 256 "${sources[@]}" "$core"/BlinkClipResources/*/* "$replica_root/Package.swift" "$replica_root/scripts/build-app.sh" "$replica_root/Assets/capcap-LICENSE.txt" > "$ARTIFACT_TASK_DIR/out/inputs.sha256"
+shasum -a 256 "${sources[@]}" "$core"/BlinkClipResources/*/* "$core"/BlinkClipResources/*.mp3 "$replica_root/Package.swift" "$replica_root/scripts/build-app.sh" "$replica_root/Assets/capcap-LICENSE.txt" > "$ARTIFACT_TASK_DIR/out/inputs.sha256"
 xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx14.0" -module-cache-path "$CLANG_MODULE_CACHE_PATH" "${sources[@]}" -o "$ARTIFACT_TASK_DIR/build/harness" > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
 for language in fr ja en zh-Hans zh-Hant; do
  "$ARTIFACT_TASK_DIR/build/harness" "$language" "$ARTIFACT_TASK_DIR/out" -AppleLanguages "($language)" | tee "$ARTIFACT_TASK_DIR/out/$language.log"
@@ -63,6 +63,25 @@ for name in ['BlinkClipDirectPaste@2x.png','BlinkClipCopyToClipboard@2x.png','Bl
  owned.write_bytes(b'not a png')
  checks['packaging-rejects-corrupt-'+name]=subprocess.run([sys.executable,'-c',guard,str(fixture)],capture_output=True).returncode!=0
  owned.write_bytes(contents)
+
+# Per-action feedback audio: copy/cut share CopySound.mp3, paste owns PasteSound.mp3.
+# Packaging must reject a missing, moved or truncated file instead of shipping silence.
+for name in ['CopySound.mp3','PasteSound.mp3']:
+ audio=(c/'BlinkClipResources'/name).read_bytes()
+ checks['owned-sound-'+name]=len(audio)>=4096 and audio[:3]==b'ID3'
+ missing=fixture/name; contents=missing.read_bytes(); missing.unlink()
+ checks['packaging-rejects-missing-'+name]=subprocess.run([sys.executable,'-c',guard,str(fixture)],capture_output=True).returncode!=0
+ missing.write_bytes(contents)
+ nested=fixture/'Sounds'; nested.mkdir(); (nested/name).write_bytes(contents)
+ moved=subprocess.run([sys.executable,'-c',guard,str(fixture)],capture_output=True,text=True)
+ checks['packaging-rejects-moved-'+name]=moved.returncode!=0 and 'Unexpected Core resource:' in moved.stderr
+ (nested/name).unlink(); nested.rmdir()
+ missing.write_bytes(b'not audio')
+ checks['packaging-rejects-corrupt-'+name]=subprocess.run([sys.executable,'-c',guard,str(fixture)],capture_output=True).returncode!=0
+ missing.write_bytes(contents)
+checks['build-guard-names-sounds']=all(name in (r/'scripts/build-app.sh').read_text() for name in ['CopySound.mp3','PasteSound.mp3'])
+notice=(r.parent/'NOTICE.md').read_text()
+checks['notice-documents-sounds']=all(name in notice for name in ['CopySound.mp3','PasteSound.mp3']) and 'Write.mp3' in notice
 
 checks['sparkle-license-retained']='Sparkle-LICENSE.txt' in (r/'scripts/build-app.sh').read_text()
 

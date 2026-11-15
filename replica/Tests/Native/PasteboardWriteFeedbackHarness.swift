@@ -8,7 +8,7 @@ import BlinkClipCore
 struct PasteboardWriteFeedbackHarness {
     struct Failure: Error { let message: String }
     final class UndoTarget: NSObject { @objc func undoFixture() {} }
-    final class Counts { var notification = 0; var subject = 0; var paste = 0; var copy = 0 }
+    final class Counts { var notification = 0; var subject = 0; var paste = 0; var copy = 0; var cut = 0 }
 
     static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() { throw Failure(message: message) }
@@ -78,7 +78,13 @@ struct PasteboardWriteFeedbackHarness {
                 defer { subscription.cancel() }
                 // Injected callback prevents all AudioServices/NSSound playback.
                 let sounds = SoundEffects(store: store, monitor: monitor, playback: { feedback in
-                    switch feedback { case .copy: counts.copy += 1; case .paste: counts.paste += 1 }
+                    // A store write outside an action declaration keeps the legacy
+                    // unclassified tone; both classes are still one restore sound.
+                    switch feedback {
+                    case .copy: counts.copy += 1
+                    case .paste, .success: counts.paste += 1
+                    case .cut: counts.cut += 1
+                    }
                 })
                 defer { sounds.stop() }
                 let target = UndoTarget()
@@ -94,7 +100,8 @@ struct PasteboardWriteFeedbackHarness {
                         try require(rejected, "Rejected write returned success")
                     }
                     monitor?.poll()
-                    try require(counts.notification == 0 && counts.subject == 0 && counts.paste == 0 && counts.copy == 0,
+                    try require(counts.notification == 0 && counts.subject == 0 && counts.paste == 0
+                                && counts.copy == 0 && counts.cut == 0,
                                 "Failure emitted success feedback")
                     try require(store.items == beforeItems, "Failure changed history metadata")
                     let afterFiles = try snapshot(directory)
@@ -117,13 +124,13 @@ struct PasteboardWriteFeedbackHarness {
                     if let state { try require(state.syncTimer == nil, "Poll scheduled a duplicate capture") }
                     try require(counts.notification == index + 1 && counts.subject == index + 1 && counts.paste == index + 1,
                                 "Successful write must emit each feedback exactly once")
-                    try require(counts.copy == 0, "Restore emitted capture sound")
+                    try require(counts.copy == 0 && counts.cut == 0, "Restore emitted capture or cut sound")
                     try require(!undo.canUndo, "Success did not clear undo actions")
                     if let state { try require(state.lastWriteSucceeded, "Registered success result missing") }
                 }
                 results.append(["registered_state": registered, "rejected_writes": 2, "successful_writes": 3,
                     "notifications": counts.notification, "subjects": counts.subject, "silent_paste_feedback": counts.paste, "capture_feedback_after_poll": counts.copy,
-                    "monitor_polled": registered])
+                    "cut_feedback": counts.cut, "monitor_polled": registered])
                 if let monitor {
                     // Same public image-add/write sequence as ScreenshotCoordinator.complete.
                     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,

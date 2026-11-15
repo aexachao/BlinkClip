@@ -47,6 +47,23 @@ struct PackagedResourcesHarness {
             fputs("Missing packaged localization\n", stderr)
             exit(1)
         }
+        // Per-action feedback audio ships with the Core bundle; a missing file would
+        // silently degrade to no tone, so packaging asserts both resolve from it.
+        for feedback in [SoundEffects.Feedback.copy, .cut, .paste] {
+            guard let url = SoundEffects.bundledURL(for: feedback),
+                  url.deletingLastPathComponent().lastPathComponent == "BlinkClip_BlinkClipCore.bundle",
+                  let player = NSSound(contentsOf: url, byReference: true),
+                  player.duration > 0.3, !player.isPlaying else {
+                fputs("Missing packaged feedback audio: \(feedback)\n", stderr)
+                exit(1)
+            }
+        }
+        guard SoundEffects.bundledURL(for: .copy) == SoundEffects.bundledURL(for: .cut),
+              SoundEffects.bundledURL(for: .copy)?.lastPathComponent == SoundEffects.copySoundFileName,
+              SoundEffects.bundledURL(for: .paste)?.lastPathComponent == SoundEffects.pasteSoundFileName else {
+            fputs("Packaged feedback audio mapping is wrong\n", stderr)
+            exit(1)
+        }
         for kind in [PasteboardContentKind.files, .color, .text, .link, .unknown, .image] {
             let image = StackCategoryIcons.image(for: kind)
             let bitmaps = image.representations.compactMap { $0 as? NSBitmapImageRep }

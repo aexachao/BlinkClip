@@ -180,7 +180,12 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
                 let input = self.ui.state.stackRestoreItem(for: first)
                 self.targetApplication = NSWorkspace.shared.frontmostApplication
                 self.ui.consumeStackHead()
-                _ = self.paste(ids: [first], plain: false, forceDirect: true, restoreItems: input.map { [$0] })
+                // Stack 粘贴走的是 `AppMain.paste` 这条直连路径，不经过
+                // `ReplicaUIController.paste`（那里由 UI 层声明 `.paste`），所以动作必须
+                // 在调用点自己声明，否则这次写入会被当成未分类成功，回落到系统 Purr。
+                _ = SoundEffects.withFeedback(.paste) {
+                    self.paste(ids: [first], plain: false, forceDirect: true, restoreItems: input.map { [$0] })
+                }
                 if self.ui.state.stackItemIDs.isEmpty { self.ui.hideStack() }
             }
             configureGlobalHotKeys(force: true)

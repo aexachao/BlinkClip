@@ -25,7 +25,11 @@
 
 小尺寸类别模板和插图失图回退由 `branding/BlinkClipAssets/BlinkClipAssetRenderer.swift` 的独立基本几何绘制。当前设置说明、通用权限图及主启动图标，按用户确认使用当前内置图像工具从纯文字简报生成；源图、提示词、图层包装和实际工具来源见 `branding/BlinkClipGeneratedAssets/PROVENANCE.md`。未向模型提供原版资源；工具不公开模型 ID，不声称由 gpt-image-2.5 生成，也不将生成过程当作独占权、商标可用性或法律结论。
 
-自写中英文及四项复数文案见 `branding/BlinkClipLocalization/`，其他语言回退英文。当前 `BlinkClipCore` 仅处理新自有 `BlinkClipResources`：中英表与明确的新生成 PNG。成功提示音按用户选择使用 macOS 系统自带 Purr，由 `NSSound(named:)` 运行时加载；不将苹果系统音频复制进仓库或应用，不使用系统 Pop。Purr 是本项目所选的反馈音，不声称 Apple 规定其统一代表成功。源稿审查、音频事件验证与最终包安装分别验收，结果见[替换清单](docs/BRAND_ASSET_REPLACEMENTS.md)和 [TESTING](replica/TESTING.md)。
+自写中英文及四项复数文案见 `branding/BlinkClipLocalization/`，其他语言回退英文。当前 `BlinkClipCore` 仅处理新自有 `BlinkClipResources`：中英表、明确的新生成 PNG，以及下面说明的两条反馈音。
+
+## 反馈音效来源
+
+复制（含多选聚合与剪切）播放 `CopySound.mp3`，粘贴（含直接粘贴到前台应用与 Stack 粘贴）播放 `PasteSound.mp3`；两者由 `SoundEffects` 用 `NSSound(contentsOf:)` 运行时加载，随包分发，不从仓库外路径引用。这两条音频由本项目维护者提供（交付时原文件名分别为 `Write.mp3` 与 `Knock.mp3`，重命名只为在调用点与打包白名单里读得出用途），**不是苹果系统音频**，也不来自 Paste 原版应用或任何第三方音效库；本项目不对其音源权利作超出维护者提供范围的主张，如后续采购或替换授权音源，应同时更新本节与文件哈希记录。没有调用点分类的成功动作（例如截图写入剪贴板、MCP / App Intent 写入）继续使用 macOS 系统自带 Purr，由 `NSSound(named:)` 运行时加载，不将苹果系统音频复制进仓库或应用，也不使用系统 Pop。源稿审查、音频事件验证与最终包安装分别验收，结果见[替换清单](docs/BRAND_ASSET_REPLACEMENTS.md)和 [TESTING](replica/TESTING.md)。
 
 capcap 的完整 MIT 许可与版权应随发行物提供，Sparkle 及其依赖告知继续保留。BlinkClip contributors 的版权行保留在本文件「版权」段；新品牌不转移原作者、原厂或第三方权利。本项目不在 Mac App Store 上架，通过 GitHub Releases 免费分发，并使用 Sparkle 提供应用内更新。
 

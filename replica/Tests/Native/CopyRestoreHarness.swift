@@ -15,7 +15,9 @@ struct CopyRestoreHarness {
             let store = try ClipboardStore(directoryURL: directory)
             store.preferences.historyRetentionDays = 0
             let text = ClipboardItem(createdAt: Date(timeIntervalSince1970: 1_700_000_000), plainText: "synthetic copy fixture")
-            store.items = [text] + (0..<count).map { i in
+            // Second text item so the aggregate copy path has two payloads to merge.
+            let second = ClipboardItem(createdAt: Date(timeIntervalSince1970: 1_700_000_002), plainText: "synthetic aggregate fixture")
+            store.items = [text, second] + (0..<count).map { i in
                 ClipboardItem(title: "binary fixture \(i)", kind: .unknown,
                     payloads: ["local.blinkclip.synthetic": Data(repeating: UInt8(i), count: 1_048_576)])
             }
@@ -28,6 +30,14 @@ struct CopyRestoreHarness {
             let board = NSPasteboard(name: .init("BlinkClipCopyRestore-\(UUID())"))
             defer { board.releaseGlobally(); ui.panel.orderOut(nil) }
             ui.pasteboard = board
+            // Records only the action classification; injected playback never emits audio.
+            var feedbacks: [SoundEffects.Feedback] = []
+            let sounds = SoundEffects(store: store, monitor: nil, playback: { feedbacks.append($0) })
+            defer { sounds.stop() }
+            // Same store write AppMain performs for a panel paste.
+            ui.pasteItemsHandler = { ids, plain in
+                (try? store.writeToPasteboard(ids: ids, pasteboard: board, plainTextOnly: plain)) != nil
+            }
             var samples: [[String: Double]] = []
             for _ in 0..<3 {
                 ui.showPanel()
@@ -39,6 +49,7 @@ struct CopyRestoreHarness {
                 ui.copiedItemsHandler = { feedback = ProcessInfo.processInfo.systemUptime }
                 let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
                     object: ui.panel, queue: .main) { _ in closed = ProcessInfo.processInfo.systemUptime }
+                feedbacks.removeAll()
                 let prior = store.items.first { $0.id == text.id }!.updatedAt
                 let start = ProcessInfo.processInfo.systemUptime
                 ui.copySelection(plainTextOnly: false)
@@ -56,14 +67,27 @@ struct CopyRestoreHarness {
                 NotificationCenter.default.removeObserver(observer)
                 restore.cancel()
                 guard let closed, notification < closed else { throw Failure(message: "Restore occurred after close") }
+                // 音效分类：面板复制 → .copy（Write）；聚合复制 → .copy；面板粘贴 → .paste（Knock）。
+                guard feedbacks == [.copy] else { throw Failure(message: "Panel copy did not classify its sound") }
+                ui.copy(ids: [text.id, second.id], plainTextOnly: false)
+                guard feedbacks == [.copy, .copy] else { throw Failure(message: "Aggregate copy did not classify its sound") }
+                guard ui.paste(ids: [text.id], plainTextOnly: false) else { throw Failure(message: "Panel paste failed") }
+                guard feedbacks == [.copy, .copy, .paste] else { throw Failure(message: "Panel paste did not classify its sound") }
+                store.preferences.playSounds = false
+                ui.copy(ids: [text.id], plainTextOnly: false)
+                guard ui.paste(ids: [text.id], plainTextOnly: false), feedbacks.count == 3 else {
+                    throw Failure(message: "playSounds off still produced feedback")
+                }
+                store.preferences.playSounds = true
                 samples.append(["copy_return_ms": (returned-start)*1000,
                     "history_notification_ms": (notification-start)*1000, "panel_closed_ms": (closed-start)*1000])
             }
             let reopened = try ClipboardStore(directoryURL: directory)
             guard reopened.items == store.items else { throw Failure(message: "Durable state mismatch") }
-            fixtures.append(["archive_bytes": archiveBytes.intValue, "cloud_journal_enabled": sync, "samples": samples])
+            fixtures.append(["archive_bytes": archiveBytes.intValue, "cloud_journal_enabled": sync,
+                "sound_feedback": feedbacks.map { String(describing: $0) }, "samples": samples])
         }
         print(String(data: try JSONSerialization.data(withJSONObject: ["passed": true, "fixtures": fixtures,
-            "scope": "Release build; synthetic temporary data, private pasteboards and offscreen windows. No original runtime benchmark or network sync."], options: [.sortedKeys]), encoding: .utf8)!)
+            "scope": "Release build; synthetic temporary data, private pasteboards and offscreen windows. Panel copy/aggregate copy/paste action classification uses an injected silent recorder. No original runtime benchmark or network sync."], options: [.sortedKeys]), encoding: .utf8)!)
     }
 }
