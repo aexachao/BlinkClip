@@ -73,7 +73,11 @@ struct UIInteractionHarness {
             + "expected=\(expectedItemCount), focused=\(focused)")
     }
     @MainActor static func run() async throws {
-        _ = NSApplication.shared
+        let app = NSApplication.shared
+        app.finishLaunching()
+        // 关于页的断言走无障碍树：SwiftUI 的文字/链接节点只在增强的无障碍接口下
+        // 才会带上标识符。
+        NSApp.accessibilitySetValue(true, forAttribute: NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface"))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let board = NSPasteboard(name: .init("BlinkClipUIHarness-\(UUID().uuidString)"))
@@ -468,6 +472,100 @@ struct UIInteractionHarness {
         }
         try require(HistoryCapacity.days(for: .nan) == nil && HistoryCapacity.days(for: 0) == nil)
 
+        // ── 关于是设置窗口内容区里的一页（独立关于窗口已移除）──────────────
+        // 两条入口都走生产代码：应用菜单「关于 闪贴」调 `showSettings(initialTab:)`，
+        // 面板 ⋯ / 状态栏右键菜单的「帮助与关于」只发 `.blinkClipOpenAbout`，由
+        // `ReplicaUIController` 里的观察者落到同一页。
+        let aboutPaneTitle = SettingsCopy.text("updates.about-title")
+        func settingsPaneWindow() -> NSWindow? {
+            NSApp.windows.first {
+                $0.isVisible && $0.toolbar?.delegate is SettingsSplitViewController
+            }
+        }
+        func paneTitle() -> String? {
+            (settingsPaneWindow()?.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle
+        }
+        func waitForPaneTitle(_ expected: String) async throws {
+            for _ in 0..<80 {
+                if paneTitle() == expected { return }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw Failure(description: "settings pane title never became \(expected) (got \(paneTitle() ?? "nil"))")
+        }
+        @MainActor func axTree(_ element: Any) -> [NSObject] {
+            var seen = Set<ObjectIdentifier>()
+            func visit(_ value: Any) -> [NSObject] {
+                guard let node = value as? NSObject, seen.insert(ObjectIdentifier(node)).inserted else { return [] }
+                let selector = NSSelectorFromString("accessibilityChildren")
+                let children = node.responds(to: selector)
+                    ? (node.perform(selector)?.takeUnretainedValue() as? [Any] ?? []) : []
+                let legacy = node.accessibilityAttributeValue(.children) as? [Any] ?? []
+                let views = (node as? NSView)?.subviews ?? []
+                return [node] + (children + legacy + views).flatMap(visit)
+            }
+            return visit(element)
+        }
+        @MainActor func axID(_ node: NSObject) -> String? {
+            let selector = NSSelectorFromString("accessibilityIdentifier")
+            return (node.responds(to: selector) ? node.perform(selector)?.takeUnretainedValue() as? String : nil)
+                ?? node.accessibilityAttributeValue(.identifier) as? String
+        }
+        ui.showSettings(initialTab: 0)
+        try await waitForPaneTitle(SettingsSection.general.title)
+        try await Task.sleep(for: .milliseconds(300))
+        // 入口 1：通知 → 设置窗口出现且选中关于页。
+        NotificationCenter.default.post(name: .blinkClipOpenAbout, object: nil)
+        try await waitForPaneTitle(aboutPaneTitle)
+        guard let aboutWindow = settingsPaneWindow(),
+              let aboutFrameView = aboutWindow.contentView else {
+            throw Failure(description: "the .blinkClipOpenAbout entry opened no settings window")
+        }
+        var aboutNodes = axTree(aboutFrameView)
+        guard aboutNodes.contains(where: { axID($0) == "about-product-name" }) else {
+            throw Failure(description: "the About page content is not in the settings content area")
+        }
+        guard aboutNodes.contains(where: { axID($0) == "about-check-updates" }) else {
+            throw Failure(description: "the About page has no Check for Updates button in the settings content area")
+        }
+        guard !aboutNodes.contains(where: { axID($0) == "about-close" }) else {
+            throw Failure(description: "the removed Close button came back on the About page")
+        }
+        guard !NSApp.windows.contains(where: { $0.identifier?.rawValue == "blinkclip-about-window" }) else {
+            throw Failure(description: "the About entry still opens an independent About window")
+        }
+        // 侧栏「关于闪贴」那一行：选中后标题栏是「关于闪贴」，内容区是同一页。
+        guard let outline = axTree(aboutFrameView).compactMap({ $0 as? NSOutlineView })
+            .first(where: { $0.numberOfRows == 7 }) else {
+            throw Failure(description: "the settings sidebar is not the expected seven rows")
+        }
+        outline.selectRowIndexes(IndexSet(integer: 6), byExtendingSelection: false)
+        outline.delegate?.outlineViewSelectionDidChange?(
+            Notification(name: NSOutlineView.selectionDidChangeNotification, object: outline))
+        try await waitForPaneTitle(aboutPaneTitle)
+        guard outline.selectedRowIndexes == IndexSet(integer: 6) else {
+            throw Failure(description: "the About row is not the selected sidebar row: \(outline.selectedRowIndexes)")
+        }
+        aboutNodes = axTree(aboutFrameView)
+        guard aboutNodes.contains(where: { axID($0) == "about-license-link" }) else {
+            throw Failure(description: "selecting the About row did not show the About page")
+        }
+        guard !NSApp.windows.contains(where: { $0.identifier?.rawValue == "blinkclip-about-window" }) else {
+            throw Failure(description: "selecting the About row opened an independent About window")
+        }
+        // 从关于页切回通用页：选中态与内容一起回去（不再有窗口需要关闭）。
+        outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        outline.delegate?.outlineViewSelectionDidChange?(
+            Notification(name: NSOutlineView.selectionDidChangeNotification, object: outline))
+        try await waitForPaneTitle(SettingsSection.general.title)
+        guard axTree(aboutFrameView).contains(where: { axID($0) == "settings.automatic-updates.toggle" }) else {
+            throw Failure(description: "leaving the About page did not restore the General page content")
+        }
+        aboutWindow.orderOut(nil)
+        // 打开设置会收起面板；把面板恢复到进入本段之前的可见状态，后面的
+        // 分组删除/预览断言仍跑在面板上。
+        ui.showPanel()
+        try await waitForVisibility(true)
+
         if ProcessInfo.processInfo.environment["BLINKCLIP_TEST_SCREENSHOT_DIRECTORY"] != nil {
             state.store.preferences.historyRetentionDays = 7
             let settingsWindow = NSPanel(contentRect: .init(x: 0, y: 0, width: 760, height: 640),
@@ -734,6 +832,6 @@ struct UIInteractionHarness {
         guard globalHotKeyFires == 0 else {
             throw Failure(description: "panel-local key events reached the registered global hot key")
         }
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }

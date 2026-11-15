@@ -27,6 +27,16 @@ enum SettingsSection: Int, CaseIterable, Identifiable {
     }
 }
 
+/// 设置侧栏「关于闪贴」页的页号。
+///
+/// 关于**不是** `SettingsSection` 的一个分区：六个分区的编号是深链契约
+/// （`showSettings(initialTab:)` 与 `SettingsSection(rawValue:)` 都按它取值），
+/// 关于页只是侧栏最后一行、内容区的第七页。应用菜单「关于 闪贴」与
+/// `.blinkClipOpenAbout` 通知都用这一个页号落到同一页。
+enum SettingsAboutPane {
+    static let tabIndex = 6
+}
+
 /// Settings-specific editorial terms. Other resource keys retain their existing localization.
 ///
 /// Every term carries all three languages: `zh-Hans`, `zh-Hant`, `en`. The

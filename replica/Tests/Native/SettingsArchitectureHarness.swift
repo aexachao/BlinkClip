@@ -147,6 +147,8 @@ import BlinkClipCapture
     @MainActor static var rowAlignmentGeometry: [String: [[String: Any]]] = [:]
     /// 卡片内容垂直居中的逐卡实测值（卡顶→首行墨迹顶、末行墨迹底→卡底、差值）。
     @MainActor static var cardCentringGeometry: [String: [[String: Any]]] = [:]
+    /// 关于页的实测值（页顶 → 卡片顶、卡片内容上下留白、状态行与按钮间距）。
+    @MainActor static var aboutGeometry: [String: [String: Double]] = [:]
 
     @MainActor static func checkPageSurface(hosting: NSView, window: NSWindow, section: SettingsSection,
                                             appearance: String) async throws {
@@ -662,6 +664,88 @@ import BlinkClipCapture
     /// 「自动检查更新」开关：默认关（信息表里 `SUEnableAutomaticChecks=NO`，默认域
     /// 里连键都没有）→ 打开写入 Sparkle 自己那一份 `SUEnableAutomaticChecks`（`true`）
     /// → 重开视图（相当于重启应用后重开设置窗）仍然是开 → 关掉写回 false。
+    /// 「关于闪贴」是设置内容区里的第七页。
+    ///
+    /// 它必须和六个分区共用同一套节奏（页顶 16pt、settingsCard、卡片内容垂直居中），
+    /// 并且只有「检查更新」一个动作按钮：状态行压在按钮上方 ≤12pt、两者同一条中轴，
+    /// 状态行在链接与许可之上（用户要求把这两块调换位置），页面上没有关闭按钮
+    /// （设置窗口自己的关闭按钮就是关闭路径）。
+    @MainActor static func checkAboutPage(hosting: NSView, window: NSWindow, appearance: String,
+                                          language: String, out: URL) async throws {
+        hosting.layoutSubtreeIfNeeded()
+        let tree = accessibilityTree(hosting)
+        func frame(_ identifier: String) throws -> NSRect {
+            guard let element = tree.first(where: { axID($0) == identifier }) else {
+                throw Failure(message: "\(appearance) About page is missing \(identifier)")
+            }
+            let rect = axFrame(element)
+            guard rect.width > 0.5, rect.height > 0.5 else {
+                throw Failure(message: "\(appearance) About page \(identifier) has no frame")
+            }
+            return rect
+        }
+        try check(!tree.contains { axID($0) == "about-close" },
+                  "\(appearance) About page still carries a Close button")
+        try check(!NSApp.windows.contains { $0.identifier?.rawValue == "blinkclip-about-window" },
+                  "\(appearance) About page produced an independent About window")
+        try check((window.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsCopy.text("updates.about-title"),
+                  "\(appearance) About page title is \(String(describing: (window.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle))")
+        let card = try frame("settings.card")
+        let icon = try frame("about-application-icon")
+        let name = try frame("about-product-name")
+        let version = try frame("about-current-version")
+        let description = try frame("about-description")
+        let status = try frame("about-update-status")
+        let button = try frame("about-check-updates")
+        let project = try frame("about-project-link")
+        let releases = try frame("about-release-notes-link")
+        let copyright = try frame("about-copyright")
+        let license = try frame("about-license-link")
+        // 顺序：图标 → 名称 → 版本 → 说明 → 状态 → 按钮 → 链接 → 版权/许可。
+        try check(name.maxY <= icon.minY, "\(appearance) About name is not below the icon")
+        try check(version.maxY <= name.minY, "\(appearance) About version is not below the name")
+        try check(description.maxY <= version.minY, "\(appearance) About description is not below the version")
+        try check(status.maxY <= description.minY, "\(appearance) About status line is not below the description")
+        try check(project.maxY <= status.minY,
+                  "\(appearance) About status line is not above the links (\(status) vs \(project))")
+        try check(license.maxY <= min(project.minY, releases.minY),
+                  "\(appearance) About licence row is not below the links")
+        // 唯一动作按钮 + 状态行 ≤12pt 同轴。
+        let actionButtons = tree.filter { axRole($0) == "AXButton" && (axID($0) ?? "").hasPrefix("about-") }
+        try check(actionButtons.count == 1 && axID(actionButtons[0]) == "about-check-updates",
+                  "\(appearance) About page action buttons: \(actionButtons.compactMap { axID($0) })")
+        let gap = status.minY - button.maxY
+        try check(gap >= 4 && gap <= 12,
+                  "\(appearance) About status line sits \(gap)pt above the button, expected ≤12pt")
+        try check(abs(status.midX - button.midX) <= 1,
+                  "\(appearance) About status line is off the button's axis by \(status.midX - button.midX)pt")
+        // 页顶 16pt：与六个分区共用同一条规则，不引入页面级居中。
+        let contentTop = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.maxY)).y
+        let topGap = contentTop - card.maxY
+        try check(abs(topGap - SettingsPageMetrics.topInset) <= 0.5,
+                  "\(appearance) About page first element offset \(topGap) is not the fixed \(SettingsPageMetrics.topInset)pt top inset")
+        // 卡片内容垂直居中：以元素框量（图标是图片资产，墨迹边界不适合做布局证据）。
+        let topPadding = card.maxY - icon.maxY
+        let bottomPadding = copyright.minY - card.minY
+        try check(abs(topPadding - bottomPadding) <= 0.5,
+                  "\(appearance) About card content is not vertically centred: top \(topPadding) bottom \(bottomPadding)")
+        try check(icon.height >= 90 && icon.height <= 100,
+                  "\(appearance) About icon is \(icon.height)pt, expected about 96pt")
+        aboutGeometry["\(appearance)-about"] = [
+            "topGap": (topGap * 100).rounded() / 100,
+            "cardTopPadding": (topPadding * 100).rounded() / 100,
+            "cardBottomPadding": (bottomPadding * 100).rounded() / 100,
+            "statusButtonGap": (gap * 100).rounded() / 100,
+            "statusButtonAxisOffset": ((status.midX - button.midX) * 100).rounded() / 100,
+            "actionButtonCount": Double(actionButtons.count),
+            "iconSide": (icon.height * 100).rounded() / 100,
+        ]
+        if ProcessInfo.processInfo.environment["BLINKCLIP_SKIP_SCREENSHOTS"] != "1",
+           let frameView = window.contentView?.superview {
+            try writePNG(frameView, name: "\(language)-about-pane-\(appearance)", out: out)
+        }
+    }
+
     @MainActor static func verifyAutomaticUpdateToggle(state: ReplicaUIState, model: PermissionStatusModel,
                                                        out: URL, language: String) async throws {
         guard let domain = Bundle.main.bundleIdentifier, domain.hasPrefix("local.blinkclip.regression.") else {
@@ -1309,6 +1393,11 @@ import BlinkClipCapture
         try check(SettingsSection(rawValue: 2) == .screenshot, "screenshot deep link preserved")
         // The six sidebar names are trilingual now: under zh-Hant every one of
         // them must be Traditional, and no Simplified-only spelling may survive.
+        // 关于页的图标是真实应用图标（离屏渲染的证据要能看出是闪贴）。
+        let iconURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Assets/BlinkClipIcon.png")
+        if let image = NSImage(contentsOf: iconURL) { NSApp.applicationIconImage = image }
         let settingsLanguage = SettingsCopy.language
         let sectionTitles = SettingsSection.allCases.map(\.title)
         if settingsLanguage == .zhHant {
@@ -1420,6 +1509,24 @@ import BlinkClipCapture
             window.contentView = nil
             window.close()
         }
+        // 关于是内容区里的第七页：与六个分区同一套宿主、同一套节奏，不弹独立窗口。
+        let aboutHosting = NSHostingView(rootView: ReplicaSettingsView(
+            state: state, initialTab: SettingsAboutPane.tabIndex, permissionModel: model).background(Color(nsColor: .windowBackgroundColor)))
+        let aboutWindow = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600),
+                                                  styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+                                                  backing: .buffered, defer: false)
+        aboutWindow.isReleasedWhenClosed = false
+        aboutWindow.titlebarAppearsTransparent = false
+        aboutWindow.toolbarStyle = .unified
+        aboutWindow.setFrame(NSRect(x: -5000, y: -5000, width: 648, height: 600), display: false)
+        aboutWindow.contentView = aboutHosting
+        aboutWindow.orderFront(nil)
+        await pause()
+        try await checkAboutPage(hosting: aboutHosting, window: aboutWindow,
+                                 appearance: appearance, language: language, out: out)
+        aboutWindow.orderOut(nil)
+        aboutWindow.contentView = nil
+        aboutWindow.close()
         // 六页所有卡片都量过之后再统一断言：某一张不达标不影响其它卡的实测值落盘。
         try writeCardCentringReport(appearance: appearance, language: language, out: out)
         try assertCardCentring(appearance: appearance)
@@ -1534,37 +1641,52 @@ import BlinkClipCapture
         try check(sidebarNodes.contains { axID($0) == "BlinkClipSettingsAbout" }, "sidebar is missing the About BlinkClip row")
         let aboutRowIndex = SettingsSection.allCases.count
         try check(aboutRowIndex == 6, "About row is not the seventh row")
-        let titleBeforeAbout = (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle
-        let selectedBeforeAbout = navigation.selectedRowIndexes
-        func aboutWindows() -> [NSWindow] {
-            NSApp.windows.filter { $0.identifier?.rawValue == BlinkClipAboutWindowController.windowIdentifier && $0.isVisible }
-        }
+        let aboutTitle = SettingsCopy.text("updates.about-title")
+        // 点侧栏「关于闪贴」：右侧内容区换成关于页、标题栏跟着换，**不弹独立窗口**。
         navigation.selectRowIndexes(IndexSet(integer: aboutRowIndex), byExtendingSelection: false)
         navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         await pause()
-        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == titleBeforeAbout,
-                  "the About row changed the selected section: \(String(describing: (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle))")
-        try check(aboutWindows().count == 1, "the About row did not open exactly one About window: \(aboutWindows().count)")
-        try check(aboutWindows().first?.contentView?.bounds.size == NSSize(width: 380, height: 420),
-                  "About window size changed: \(String(describing: aboutWindows().first?.contentView?.bounds.size))")
+        await pause()
+        try check(navigation.selectedRowIndexes == IndexSet(integer: aboutRowIndex),
+                  "the About row is not the selected row: \(navigation.selectedRowIndexes)")
+        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == aboutTitle,
+                  "the About row did not put About BlinkClip in the title bar: \(String(describing: (navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle))")
+        let aboutNodes = accessibilityTree(navigationHost)
+        for identifier in ["about-application-icon", "about-product-name", "about-current-version",
+                           "about-description", "about-update-status", "about-check-updates",
+                           "about-project-link", "about-release-notes-link", "about-copyright",
+                           "about-license-link"] {
+            try check(aboutNodes.contains { axID($0) == identifier },
+                      "the About page is missing \(identifier) in \(language)")
+        }
+        try check(!aboutNodes.contains { axID($0) == "about-close" },
+                  "the About page carries a Close button again")
+        try check(!NSApp.windows.contains { $0.identifier?.rawValue == "blinkclip-about-window" },
+                  "selecting About opened an independent About window")
+        if ProcessInfo.processInfo.environment["BLINKCLIP_SKIP_SCREENSHOTS"] != "1",
+           let frame = navigationWindow.contentView?.superview {
+            try writePNG(frame, name: "\(language)-about-pane-selected", out: out)
+        }
+        // 再点一次同一行：不另开窗口，标题与内容不动。
         navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         await pause()
-        try check(aboutWindows().count == 1, "repeated About clicks opened a second window")
-        if let openAbout = aboutWindows().first, let frame = openAbout.contentView?.superview {
-            try writePNG(frame, name: "\(language)-about-window-open", out: out)
-        }
-        aboutWindows().forEach { $0.close() }
-        // 关于窗关闭后：选中态回退到点击前的分区，内容与标题一起留在那里。
+        try check(!NSApp.windows.contains { $0.identifier?.rawValue == "blinkclip-about-window" },
+                  "repeated About selection opened an About window")
+        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == aboutTitle,
+                  "repeated About selection lost the title")
+        // 从关于页切回通用页：选中态、标题与内容一起回到分区（关于页没有「关闭」这一步）。
+        navigation.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         await pause()
-        await pause()
-        try check(navigation.selectedRowIndexes == selectedBeforeAbout,
-                  "closing About left the sidebar highlighted on the action row: \(navigation.selectedRowIndexes) vs \(selectedBeforeAbout)")
-        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == titleBeforeAbout,
-                  "closing About did not restore the original pane title")
-        try check(accessibilityTree(navigationHost).contains { axID($0) == "settings.mcp.status" },
-                  "closing About moved the content away from the original section")
-        if let frame = navigationWindow.contentView?.superview {
-            try writePNG(frame, name: "\(language)-about-closed-restored", out: out)
+        try check(navigation.selectedRowIndexes == IndexSet(integer: 0),
+                  "leaving the About page did not select General: \(navigation.selectedRowIndexes)")
+        try check((navigationWindow.toolbar?.delegate as? SettingsSplitViewController)?.paneTitle == SettingsSection.general.title,
+                  "leaving the About page did not restore the General title")
+        try check(accessibilityTree(navigationHost).contains { axID($0) == "settings.automatic-updates.toggle" },
+                  "leaving the About page did not restore the General content")
+        if ProcessInfo.processInfo.environment["BLINKCLIP_SKIP_SCREENSHOTS"] != "1",
+           let frame = navigationWindow.contentView?.superview {
+            try writePNG(frame, name: "\(language)-about-pane-left", out: out)
         }
         navigationWindow.contentView = NSHostingView(rootView: ReplicaSettingsView(state: state, initialTab: 2, permissionModel: model))
         await pause()
@@ -1590,9 +1712,10 @@ import BlinkClipCapture
             "pageGeometry": pageGeometry.mapValues { $0.mapValues { $0 } },
             "rowAlignment": rowAlignmentGeometry,
             "cardCentring": cardCentringGeometry,
+            "about": aboutGeometry,
             "topInset": SettingsPageMetrics.topInset,
             "bottomInset": SettingsPageMetrics.bottomInset,
-            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row opens the 380 by 420 About window without changing the selected section. No physical mouse clicks."]
+            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row is the seventh page inside the right content area (no independent About window): native selection updates the pane title to the About BlinkClip copy, the page is top aligned at 16pt with one prominent action button, its status line within 12pt on the same axis and above the links/licence rows, and leaving it selects General again. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))

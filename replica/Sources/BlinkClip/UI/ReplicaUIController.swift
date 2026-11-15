@@ -972,6 +972,8 @@ final class ReplicaUIController {
     private var stackWindow: NSWindow?
     private var stackWindowController: StackWindowController?
     private var stackCaptureObserver: NSObjectProtocol?
+    /// 「帮助与关于」通知的观察者（`.blinkClipOpenAbout` → 设置窗口的关于页）。
+    private var openAboutObserver: NSObjectProtocol?
     private var itemWindows: [UUID: NSWindow] = [:]
     private let previewRegistry = PreviewWindowRegistry()
     private var editorWindowTransitions: [ObjectIdentifier: PreviewWindowTransition] = [:]
@@ -1000,6 +1002,19 @@ final class ReplicaUIController {
                 self.positionPanel()
             })
         installSettingsOpener()
+        installAboutPaneObserver()
+    }
+
+    /// 「帮助与关于」（面板 ⋯ 与状态栏右键菜单）只发 `.blinkClipOpenAbout`；
+    /// **生产观察者就在这里**：收到后打开（必要时创建）设置窗口并落到关于页。
+    /// 与应用菜单的 `about(_:)` 是同一个落点——关于是设置页内的一页，不是独立窗口。
+    private func installAboutPaneObserver() {
+        openAboutObserver = NotificationCenter.default.addObserver(
+            forName: .blinkClipOpenAbout, object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.showSettings(initialTab: SettingsAboutPane.tabIndex)
+                }
+            }
     }
 
     /// 反向挂载「打开设置」深链。
@@ -1085,6 +1100,7 @@ final class ReplicaUIController {
             removePanelDismissMonitors()
             cancelClosedState()
             if let stackCaptureObserver { NotificationCenter.default.removeObserver(stackCaptureObserver) }
+            if let openAboutObserver { NotificationCenter.default.removeObserver(openAboutObserver) }
         }
     }
 
@@ -1339,8 +1355,9 @@ final class ReplicaUIController {
                              userInfo: [NSLocalizedDescriptionKey: message]))
     }
 
-    /// 打开设置窗口。`initialTab` 只给深链用（OCR/编辑器里的「打开设置」→ 截图分区）；
-    /// 普通入口（菜单、⌘,）仍然传 0，行为与本档之前一致。
+    /// 打开设置窗口。`initialTab` 给深链与关于页用：OCR/编辑器里的「打开设置」
+    /// 落到截图分区，应用菜单「关于」与 `.blinkClipOpenAbout` 落到关于页
+    /// （`SettingsAboutPane.tabIndex`）；普通入口（菜单、⌘,）仍然传 0。
     func showSettings(initialTab: Int = 0) {
         if settingsWindow == nil {
             settingsWindow = makeWindow(title: ScreenshotSettingsCopy.text(.settingsWindowTitle), size: .init(width: 648, height: 600),

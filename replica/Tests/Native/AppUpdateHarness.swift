@@ -1,6 +1,12 @@
 import AppKit
 import Foundation
+import SwiftUI
 import BlinkClipCore
+
+/// 设置窗口是无边框离屏窗口：保持 648×600 的出货尺寸，不吸附到任何屏幕。
+@MainActor private final class AboutOffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
 
 private final class UpdateProtocol: URLProtocol {
     private static let lock = NSLock()
@@ -201,67 +207,228 @@ struct AppUpdateHarness {
 
     @MainActor static var neverCheckedText: String { SettingsLocalization.text("updates.never-checked") }
 
-    /// Geometry the About window promises, measured in content coordinates:
-    /// the single action button is centred with equal left/right margins and the
-    /// status line sits 8 pt above it on the very same centred axis.
-    struct AboutLayout {
+    // MARK: - 关于页（设置窗口内容区里的第七页）
+
+    /// 关于不再是独立窗口：页面在生产 `ReplicaSettingsView` 里，几何与语义都从
+    /// 一个真实设置窗口的无障碍树里量，文案则从页面复用的 `BlinkClipAboutModel`
+    /// 读。宿主窗口离屏摆放，不动用户的窗口位置。
+    struct AboutPageHost {
+        let window: NSWindow
+        let hosting: NSView
+        let model: BlinkClipAboutModel
+        let fixture: URL
+        var frameView: NSView? { window.contentView?.superview }
+    }
+
+    /// 页面承诺的几何（屏幕坐标，y 向上）：状态行压在唯一主按钮上方 ≤12pt、
+    /// 两者同一条中轴；状态行在链接之上，链接在许可之上。
+    struct AboutPageLayout {
         let statusButtonGap: CGFloat
-        let statusRowCenterOffset: CGFloat
-        let buttonLeftInset: CGFloat
-        let buttonRightInset: CGFloat
-        let statusHeight: CGFloat
-        let buttonGroupWidth: CGFloat
+        let statusButtonAxisOffset: CGFloat
         let actionButtonCount: Int
+        let actionButtonIDs: [String]
+        let pageTopGap: CGFloat
+        let cardTopPadding: CGFloat
+        let cardBottomPadding: CGFloat
         var debugDescription: String = ""
 
         var json: [String: Any] {
             ["status_button_gap": Double(statusButtonGap),
-             "status_row_center_offset": Double(statusRowCenterOffset),
-             "button_left_inset": Double(buttonLeftInset),
-             "button_right_inset": Double(buttonRightInset),
-             "status_height": Double(statusHeight),
-             "button_group_width": Double(buttonGroupWidth),
-             "action_button_count": actionButtonCount]
+             "status_button_axis_offset": Double(statusButtonAxisOffset),
+             "action_button_count": actionButtonCount,
+             "action_button_ids": actionButtonIDs,
+             "page_top_gap": Double(pageTopGap),
+             "card_top_padding": Double(cardTopPadding),
+             "card_bottom_padding": Double(cardBottomPadding)]
         }
     }
 
-    /// 动作行上只剩一个按钮：`Check for Updates`。链接是 `bezelStyle == .inline`
-    /// 的无框按钮，所以「动作按钮」按圆角 bezel 统计。
-    @MainActor static func actionButtons(_ content: NSView) -> [NSButton] {
-        descendants(content, of: NSButton.self).filter { $0.bezelStyle == .rounded }
-    }
-
-    @MainActor static func layout(_ controller: BlinkClipAboutWindowController) -> AboutLayout {
-        guard let content = controller.window?.contentView else {
-            return AboutLayout(statusButtonGap: -1, statusRowCenterOffset: -1,
-                               buttonLeftInset: -1, buttonRightInset: -1,
-                               statusHeight: -1, buttonGroupWidth: -1, actionButtonCount: -1)
+    @MainActor static func accessibilityTree(_ element: Any) -> [NSObject] {
+        var seen = Set<ObjectIdentifier>()
+        func visit(_ value: Any) -> [NSObject] {
+            guard let node = value as? NSObject, seen.insert(ObjectIdentifier(node)).inserted else { return [] }
+            let selector = NSSelectorFromString("accessibilityChildren")
+            let children = node.responds(to: selector)
+                ? (node.perform(selector)?.takeUnretainedValue() as? [Any] ?? []) : []
+            let legacy = node.accessibilityAttributeValue(.children) as? [Any] ?? []
+            let views = (node as? NSView)?.subviews ?? []
+            return [node] + (children + legacy + views).flatMap(visit)
         }
-        content.layoutSubtreeIfNeeded()
-        let status = controller.statusLabel.convert(controller.statusLabel.bounds, to: content)
-        let check = controller.checkButton.convert(controller.checkButton.bounds, to: content)
-        var measured = AboutLayout(statusButtonGap: status.minY - check.maxY,
-                                   statusRowCenterOffset: status.midX - check.midX,
-                                   buttonLeftInset: check.minX,
-                                   buttonRightInset: content.bounds.width - check.maxX,
-                                   statusHeight: status.height,
-                                   buttonGroupWidth: check.width,
-                                   actionButtonCount: actionButtons(content).count)
-        let rowFrame = controller.checkButton.superview.map { $0.convert($0.bounds, to: content) }
-        measured.debugDescription = "status=\(status) check=\(check) row=\(String(describing: rowFrame)) content=\(content.bounds)"
-        return measured
+        return visit(element)
     }
 
-    @MainActor static func assertAboutLayout(_ controller: BlinkClipAboutWindowController) throws {
-        let measured = layout(controller)
+    @MainActor static func axID(_ element: NSObject) -> String? {
+        let selector = NSSelectorFromString("accessibilityIdentifier")
+        return (element.responds(to: selector) ? element.perform(selector)?.takeUnretainedValue() as? String : nil)
+            ?? element.accessibilityAttributeValue(.identifier) as? String
+    }
+
+    @MainActor static func axRole(_ element: NSObject) -> String {
+        let selector = NSSelectorFromString("accessibilityRole")
+        if element.responds(to: selector),
+           let role = element.perform(selector)?.takeUnretainedValue() as? String { return role }
+        return element.accessibilityAttributeValue(.role) as? String ?? ""
+    }
+
+    @MainActor static func axText(_ element: NSObject) -> String {
+        for name in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+            let selector = NSSelectorFromString(name)
+            if element.responds(to: selector),
+               let value = element.perform(selector)?.takeUnretainedValue() as? String,
+               !value.isEmpty { return value }
+        }
+        for attribute in [NSAccessibility.Attribute.value, .title, .description] {
+            if let value = element.accessibilityAttributeValue(attribute) as? String, !value.isEmpty { return value }
+        }
+        return ""
+    }
+
+    @MainActor static func axEnabled(_ element: NSObject) -> Bool? {
+        if let value = element.accessibilityAttributeValue(.enabled) as? Bool { return value }
+        if let number = element.accessibilityAttributeValue(.enabled) as? NSNumber { return number.boolValue }
+        let selector = NSSelectorFromString("accessibilityEnabled")
+        guard element.responds(to: selector) else { return nil }
+        typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(element.method(for: selector), to: Getter.self)(element, selector)
+    }
+
+    @MainActor static func axFrame(_ element: NSObject) -> NSRect {
+        let selector = NSSelectorFromString("accessibilityFrame")
+        if element.responds(to: selector) {
+            typealias Getter = @convention(c) (AnyObject, Selector) -> NSRect
+            return unsafeBitCast(element.method(for: selector), to: Getter.self)(element, selector)
+        }
+        let point = (element.accessibilityAttributeValue(.position) as? NSValue)?.pointValue ?? .zero
+        let size = (element.accessibilityAttributeValue(.size) as? NSValue)?.sizeValue ?? .zero
+        return NSRect(origin: point, size: size)
+    }
+
+    /// 离屏设置窗口 + 生产 `ReplicaSettingsView`，初始页就是关于页。
+    @MainActor static func makeAboutPageHost(_ model: BlinkClipAboutModel,
+                                             appearance: NSAppearance.Name) async throws -> AboutPageHost {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blinkclip-about-page-\(UUID().uuidString)", isDirectory: true)
+        let store = try ClipboardStore(directoryURL: fixture)
+        let state = ReplicaUIState(store: store)
+        let permissions = PermissionStatusModel(readAccessibility: { true }, readPostEvents: { true },
+                                                readScreenRecording: { true },
+                                                requestScreenAccess: {}, requestAccessibilityAccess: {})
+        NSApp.appearance = NSAppearance(named: appearance)
+        let hosting = NSHostingView(rootView: ReplicaSettingsView(
+            state: state, initialTab: SettingsAboutPane.tabIndex,
+            permissionModel: permissions, aboutModel: model)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        let window = AboutOffscreenWindow(
+            contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = false
+        window.toolbarStyle = .unified
+        window.setFrame(NSRect(x: -5000, y: -5000, width: 648, height: 600), display: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        await pause()
+        hosting.layoutSubtreeIfNeeded()
+        return AboutPageHost(window: window, hosting: hosting, model: model, fixture: fixture)
+    }
+
+    @MainActor static func pageNode(_ tree: [NSObject], _ identifier: String) -> NSObject? {
+        tree.first { axID($0) == identifier }
+    }
+
+    /// 页面几何 + 结构：单按钮、状态行与按钮 ≤12pt 同轴、状态在链接之前、
+    /// 无关闭按钮、页顶 16pt、卡片内容垂直居中。
+    @MainActor static func aboutPageLayout(_ host: AboutPageHost) throws -> AboutPageLayout {
+        host.hosting.layoutSubtreeIfNeeded()
+        let tree = accessibilityTree(host.hosting)
+        func frame(_ identifier: String) throws -> NSRect {
+            guard let node = pageNode(tree, identifier) else {
+                throw Failure(message: "the About page is missing \(identifier)")
+            }
+            let rect = axFrame(node)
+            guard rect.width > 0.5, rect.height > 0.5 else {
+                throw Failure(message: "the About page element \(identifier) has no frame")
+            }
+            return rect
+        }
+        // 「关闭」按钮已随独立窗口一起删掉：关于页上不得再有任何认领它的控件。
+        try check(!tree.contains { axID($0) == "about-close" },
+                  "the removed Close button is back on the About page")
+        let actionButtons = tree.filter { axRole($0) == "AXButton" && (axID($0) ?? "").hasPrefix("about-") }
+        let icon = try frame("about-application-icon")
+        let name = try frame("about-product-name")
+        let version = try frame("about-current-version")
+        let description = try frame("about-description")
+        let status = try frame("about-update-status")
+        let button = try frame("about-check-updates")
+        let project = try frame("about-project-link")
+        let releases = try frame("about-release-notes-link")
+        let copyright = try frame("about-copyright")
+        let license = try frame("about-license-link")
+        let card = try frame("settings.card")
+        let contentTop = host.window.convertPoint(toScreen: NSPoint(x: 0, y: host.window.contentLayoutRect.maxY)).y
+        try check(icon.height >= 90 && icon.height <= 100,
+                  "the app icon is not about 96pt: \(icon.height)")
+        // 顺序：图标 → 名称 → 版本 → 说明 → 状态 → 按钮 → 链接 → 版权/许可。
+        try check(status.maxY <= description.minY,
+                  "the status line is not below the product description: \(status) vs \(description)")
+        try check(project.maxY <= status.minY,
+                  "the status line is not above the links (status + button must come first): \(status) vs \(project)")
+        try check(license.maxY <= min(project.minY, releases.minY),
+                  "the license row is not below the link row: \(license) vs \(project)")
+        try check(copyright.minY < license.maxY || abs(copyright.midY - license.midY) <= 2,
+                  "the copyright is not on the licence row: \(copyright) vs \(license)")
+        // 页顶 16pt（设置页统一节奏，关于页不另写一套）。
+        let pageTopGap = contentTop - card.maxY
+        try check(abs(pageTopGap - SettingsPageMetrics.topInset) <= 0.5,
+                  "the About page does not start \(SettingsPageMetrics.topInset)pt from the top: \(pageTopGap)")
+        // 卡片内容垂直居中：卡顶 → 图标框顶 == 版权框底 → 卡底（≤0.5pt）。
+        let cardTopPadding = card.maxY - icon.maxY
+        let cardBottomPadding = copyright.minY - card.minY
+        try check(abs(cardTopPadding - cardBottomPadding) <= 0.5,
+                  "the About card content is not vertically centred: top \(cardTopPadding) bottom \(cardBottomPadding)")
+        return AboutPageLayout(statusButtonGap: status.minY - button.maxY,
+                               statusButtonAxisOffset: status.midX - button.midX,
+                               actionButtonCount: actionButtons.count,
+                               actionButtonIDs: actionButtons.compactMap { axID($0) },
+                               pageTopGap: pageTopGap,
+                               cardTopPadding: cardTopPadding,
+                               cardBottomPadding: cardBottomPadding)
+    }
+
+    @MainActor static func assertAboutPageLayout(_ host: AboutPageHost) throws {
+        let measured = try aboutPageLayout(host)
         try check(measured.actionButtonCount == 1,
-                  "About shows \(measured.actionButtonCount) action buttons, expected only Check for Updates: \(measured.debugDescription)")
-        try check(measured.statusButtonGap >= 8 && measured.statusButtonGap <= 12,
-                  "Status line is not 8–10 pt above the buttons: \(measured.statusButtonGap) \(measured.debugDescription)")
-        try check(abs(measured.statusRowCenterOffset) <= 1,
-                  "Status line is not on the button's centred axis: \(measured.statusRowCenterOffset) \(measured.debugDescription)")
-        try check(abs(measured.buttonLeftInset - measured.buttonRightInset) <= 1,
-                  "The action button is not centred in the window: left \(measured.buttonLeftInset) right \(measured.buttonRightInset)")
+                  "the About page shows \(measured.actionButtonCount) action buttons \(measured.actionButtonIDs), expected only Check for Updates")
+        try check(measured.actionButtonIDs == ["about-check-updates"],
+                  "the About page action button is not the Check for Updates button: \(measured.actionButtonIDs)")
+        try check(measured.statusButtonGap >= 4 && measured.statusButtonGap <= 12,
+                  "the status line is not within 12pt above the button: \(measured.statusButtonGap)")
+        try check(abs(measured.statusButtonAxisOffset) <= 1,
+                  "the status line is not on the button's centred axis: \(measured.statusButtonAxisOffset)")
+        let tree = accessibilityTree(host.hosting)
+        for (identifier, expected) in [
+            ("about-product-name", ReplicaBrand.name),
+            ("about-current-version", String(format: SettingsLocalization.text("updates.current-version"),
+                                              host.model.checker.currentVersion)),
+            ("about-description", SettingsLocalization.text("updates.description")),
+            ("about-update-status", host.model.statusText),
+            ("about-copyright", SettingsLocalization.text("updates.copyright")),
+            ("about-project-link", SettingsLocalization.text("updates.link-project")),
+            ("about-release-notes-link", SettingsLocalization.text("updates.link-releases")),
+            ("about-license-link", SettingsLocalization.text("updates.link-license")),
+        ] {
+            guard let node = pageNode(tree, identifier) else {
+                throw Failure(message: "the About page is missing \(identifier)")
+            }
+            try check(axText(node) == expected,
+                      "the About page \(identifier) reads \(axText(node)), expected \(expected)")
+        }
+        if let button = tree.first(where: { axID($0) == "about-check-updates" }) {
+            try check(axText(button) == SettingsLocalization.text("updates.check"),
+                      "the About page button reads \(axText(button))")
+        }
     }
 
     /// A completed check reports the timestamp only. Sparkle's own
@@ -269,20 +436,18 @@ struct AppUpdateHarness {
     /// line must not repeat it (and Sparkle 2.10.1 has no public hook to
     /// suppress that alert).
     @MainActor static func assertUpToDateAbout(_ checker: BlinkClipUpdateChecker, installed: String) throws {
-        let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+        let model = BlinkClipAboutModel(checker: checker, sparkleCheck: {})
         guard let checkedAt = checker.lastCheckDate else {
-            throw Failure(message: "About has no completed-check timestamp for \(installed)")
+            throw Failure(message: "the About page has no completed-check timestamp for \(installed)")
         }
         let expected = lastCheckedText(checkedAt)
-        try check(controller.statusLabel.stringValue == expected,
-                  "About does not report the check time for \(installed): \(controller.statusLabel.stringValue)")
-        try check(!controller.statusLabel.stringValue.lowercased().contains("up to date")
-                  && !controller.statusLabel.stringValue.contains("已是最新"),
-                  "About repeats Sparkle's no-update sentence: \(controller.statusLabel.stringValue)")
+        try check(model.statusText == expected,
+                  "the About page does not report the check time for \(installed): \(model.statusText)")
+        try check(!model.statusText.lowercased().contains("up to date")
+                  && !model.statusText.contains("已是最新"),
+                  "the About page repeats Sparkle's no-update sentence: \(model.statusText)")
     }
 
-    /// `--live`: compare the installed version against the version the real
-    /// appcast serves right now.
     @MainActor static func liveCheck(feed: URL, feedVersion: BlinkClipReleaseVersion,
                                      installed: BlinkClipReleaseVersion?) async throws {
         guard let scheme = feed.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
@@ -321,9 +486,9 @@ struct AppUpdateHarness {
                           "the live enclosure is not https: \(update.downloadURL)")
                 try check(update.downloadURL.pathExtension.lowercased() == "dmg",
                           "the live enclosure is not a DMG: \(update.downloadURL)")
-                let controller = BlinkClipAboutWindowController(checker: comparison, sparkleCheck: {})
-                try check(controller.statusLabel.stringValue.contains(update.version),
-                          "About does not mention the live version \(update.version): \(controller.statusLabel.stringValue)")
+                let model = BlinkClipAboutModel(checker: comparison, sparkleCheck: {})
+                try check(model.statusText.contains(update.version),
+                          "the About page does not mention the live version \(update.version): \(model.statusText)")
             } else {
                 if case let .available(update) = comparison.state,
                    let offered = BlinkClipReleaseVersion(update.version), offered > feedVersion {
@@ -347,6 +512,9 @@ struct AppUpdateHarness {
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
             app.finishLaunching()
+            // SwiftUI 的文字/链接节点要经过增强的无障碍接口才会出现在 AX 树里，
+            // 关于页的单按钮、状态行几何都从这棵树里量。
+            NSApp.accessibilitySetValue(true, forAttribute: NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface"))
             let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Assets/BlinkClipIcon.png")
             if let image = NSImage(contentsOf: icon) { app.applicationIconImage = image }
@@ -357,17 +525,18 @@ struct AppUpdateHarness {
             if CommandLine.arguments.contains("--preview") {
                 try reply(feed: [FeedItem(version: "1.0.11")])
                 let checker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session, feedURL: feedURL)
-                let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-                controller.showWindow(nil)
+                let model = BlinkClipAboutModel(checker: checker, sparkleCheck: {})
+                let host = try await makeAboutPageHost(model, appearance: .aqua)
+                host.window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+                host.window.makeKeyAndOrderFront(nil)
                 Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { _ in NSApp.terminate(nil) }
                 print("PREVIEW_READY")
                 fflush(stdout)
                 app.run()
-                withExtendedLifetime(controller) { }
+                withExtendedLifetime(host) { }
                 return
             }
             try await run(session: session)
-            try verifyClosePaths()
             if CommandLine.arguments.contains("--live") {
                 // All expected versions come from the feed the script just read,
                 // so a new release cannot turn this mode red.
@@ -378,7 +547,7 @@ struct AppUpdateHarness {
                     printSkipped(skip.reason)
                 }
             }
-            let summary = "{\"passed\":true,\"version_comparison\":true,\"appcast_parsing\":true,\"gentle_failures\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_controls\":true,\"about_layout\":true,\"last_check_timestamp\":true}"
+            let summary = "{\"passed\":true,\"version_comparison\":true,\"appcast_parsing\":true,\"gentle_failures\":true,\"throttle_and_retry\":true,\"concurrent_checks\":true,\"about_page\":true,\"about_layout\":true,\"last_check_timestamp\":true}"
             if let index = CommandLine.arguments.firstIndex(of: "--render"), index + 1 < CommandLine.arguments.count {
                 let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
                 let prepared = try await prepareRenders(session: session)
@@ -538,152 +707,166 @@ struct AppUpdateHarness {
         try check(noFeedMessage == gentle && UpdateProtocol.capturedRequests.isEmpty,
                   "Missing SUFeedURL was not handled locally: \(noFeedMessage)")
 
-        // ── About window ────────────────────────────────────────────────────
-        // 1. Nothing checked yet: no freshness claim, neutral copy, and the
-        // status line belongs to the action block.
+        // ── 关于页（设置窗口内容区里的第七页）──────────────────────────────
+        // 关于不再是独立窗口：页面住在一个真实的设置窗口里，断言走无障碍树
+        // （单按钮 / 状态行 ≤12pt 同轴 / 状态行在链接之前 / 无关闭按钮）。
+        // 1. 还没检查过：不报「已是最新」，文案中性，状态行属于动作块。
         let aboutDefaults = freshDefaults()
         var sparkleChecks = 0
         let idleChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
                                                  feedURL: feedURL, defaults: aboutDefaults)
-        let controller = BlinkClipAboutWindowController(checker: idleChecker, sparkleCheck: { sparkleChecks += 1 })
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-        try check(controller.window?.contentView?.bounds.size == BlinkClipAboutWindowController.contentSize,
-                  "About content size changed: \(String(describing: controller.window?.contentView?.bounds.size))")
-        try check(controller.window?.contentView?.bounds.size == NSSize(width: 380, height: 420), "About window is not 380 by 420")
-        try check(!controller.checkButton.isHidden && controller.checkButton.isEnabled, "Check button unavailable")
-        try check(controller.checkButton.keyEquivalent == "\r", "Return does not start a check")
-        // 「关闭」按钮已经删掉：动作行上只剩「检查更新」，而且没有任何控件再认领
-        // Esc（Esc 现在由窗口的键盘等价物负责，见 `verifyClosePaths`）。
-        try check(actionButtons(controller.window!.contentView!).count == 1,
-                  "About still shows \(actionButtons(controller.window!.contentView!).count) action buttons")
-        try check(!descendants(controller.window!.contentView!, of: NSView.self)
-                    .contains { $0.accessibilityIdentifier() == "about-close" },
-                  "the removed Close button is still in the About window")
-        try check(!descendants(controller.window!.contentView!, of: NSButton.self)
-                    .contains { $0.keyEquivalent == "\u{1b}" },
-                  "a control still claims Esc, so the window key equivalent would never run")
-        try check(controller.statusLabel.stringValue == neverCheckedText,
-                  "About claims a result before any check: \(controller.statusLabel.stringValue)")
-        try check(!controller.statusLabel.stringValue.lowercased().contains("up to date")
-                  && !controller.statusLabel.stringValue.contains("已是最新"),
-                  "About asserts freshness without a check: \(controller.statusLabel.stringValue)")
+        let idleModel = BlinkClipAboutModel(checker: idleChecker, sparkleCheck: { sparkleChecks += 1 })
+        let idleHost = try await makeAboutPageHost(idleModel, appearance: .aqua)
+        try check(idleModel.statusText == neverCheckedText,
+                  "the About page claims a result before any check: \(idleModel.statusText)")
+        try check(!idleModel.statusText.lowercased().contains("up to date")
+                  && !idleModel.statusText.contains("已是最新"),
+                  "the About page asserts freshness without a check: \(idleModel.statusText)")
+        try check(!idleModel.isChecking, "a fresh About page starts in the checking state")
         try check(idleChecker.lastCheckDate == nil, "A fresh checker started with a timestamp")
-        let initialLayout = layout(controller)
-        try assertAboutLayout(controller)
-        print(String(data: try JSONSerialization.data(withJSONObject: ["about_layout": initialLayout.json]), encoding: .utf8)!)
-        // The single action button is still the window's default button and keeps
-        // its rounded bezel; the window itself stays closable so ⌘W and the
-        // titlebar button keep working.
-        try check(controller.checkButton.bezelStyle == .rounded,
-                  "Check for Updates lost its rounded bezel")
-        try check(controller.window?.defaultButtonCell === controller.checkButton.cell,
-                  "Check for Updates is not the default button")
-        try check(controller.window?.styleMask.contains(.closable) == true,
-                  "About window is no longer closable")
-        try check(controller.window?.standardWindowButton(.closeButton)?.isEnabled == true,
-                  "the titlebar close button is missing or disabled")
-        if let versionField = descendants(controller.window!.contentView!, of: NSTextField.self)
-            .first(where: { $0.accessibilityIdentifier() == "about-current-version" }) {
-            let expectedVersion = String(format: SettingsLocalization.text("updates.current-version"), "1.0.10")
-            try check(versionField.stringValue == expectedVersion,
-                      "Version line is not neutral: \(versionField.stringValue)")
-            try check(!versionField.stringValue.contains("已安装") && !versionField.stringValue.contains("Installed"),
-                      "Version line still says installed: \(versionField.stringValue)")
-        } else {
-            throw Failure(message: "About is missing about-current-version")
-        }
-        for identifier in ["about-current-version", "about-update-status", "about-project-link",
-                           "about-release-notes-link", "about-license-link", "about-copyright"] {
-            try check(descendants(controller.window!.contentView!, of: NSView.self)
-                .contains { $0.accessibilityIdentifier() == identifier }, "About is missing \(identifier)")
-        }
+        try assertAboutPageLayout(idleHost)
+        print(String(data: try JSONSerialization.data(withJSONObject: ["about_page_layout": (try aboutPageLayout(idleHost)).json]), encoding: .utf8)!)
+        idleHost.window.orderOut(nil)
+        idleHost.window.contentView = nil
+        idleHost.window.close()
 
-        // 2. Checking: inline copy and a disabled button while the request runs.
+        // 2. 检查中：内联文案 + 主按钮置灰。
         try reply(feed: [FeedItem()], delay: 1.2)
         let checkingChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
                                                      feedURL: feedURL, defaults: freshDefaults())
-        let checkingController = BlinkClipAboutWindowController(checker: checkingChecker, sparkleCheck: {})
+        var checkingSparkleChecks = 0
+        let checkingModel = BlinkClipAboutModel(checker: checkingChecker, sparkleCheck: { checkingSparkleChecks += 1 })
+        let checkingHost = try await makeAboutPageHost(checkingModel, appearance: .aqua)
         let inFlight = Task { await checkingChecker.check(force: true) }
-        try await Task.sleep(for: .milliseconds(120))
-        try check(checkingController.statusLabel.stringValue == SettingsLocalization.text("updates.checking"),
-                  "Checking is not announced inline: \(checkingController.statusLabel.stringValue)")
-        try check(!checkingController.checkButton.isEnabled, "Check button stays enabled while checking")
-        try assertAboutLayout(checkingController)
+        try await Task.sleep(for: .milliseconds(150))
+        try check(checkingModel.statusText == SettingsLocalization.text("updates.checking"),
+                  "checking is not announced inline: \(checkingModel.statusText)")
+        try check(checkingModel.isChecking, "the model does not report the in-flight check")
+        try assertAboutPageLayout(checkingHost)
+        // 「检查中置灰」不只是颜色：按下必须无效（页面用 `.disabled(aboutModel.isChecking)`
+        // 把按钮真的禁用，而不是只换个底色）。
+        if let button = pageNode(accessibilityTree(checkingHost.hosting), "about-check-updates") {
+            let selector = NSSelectorFromString("accessibilityPerformPress")
+            if button.responds(to: selector) {
+                typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+                _ = unsafeBitCast(button.method(for: selector), to: Press.self)(button, selector)
+            }
+        }
+        try check(checkingSparkleChecks == 0,
+                  "a disabled (checking) Check for Updates button still started Sparkle's update flow")
+        checkingHost.window.orderOut(nil)
+        checkingHost.window.contentView = nil
+        checkingHost.window.close()
         await inFlight.value
-
-        // 3. A completed check shows a timestamp, not "you're up to date".
-        let fixed = Date(timeIntervalSince1970: 1_760_000_000)
         try reply(feed: [FeedItem()])
+
+        // 3. 检查完成：时间戳（不是「已是最新」），且「检查更新」按钮真的会改写状态行。
+        let fixed = Date(timeIntervalSince1970: 1_760_000_000)
         let aboutChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
                                                   feedURL: feedURL, defaults: aboutDefaults)
         await aboutChecker.check(force: true, now: fixed)
-        let checkedController = BlinkClipAboutWindowController(checker: aboutChecker, sparkleCheck: { sparkleChecks += 1 })
+        let checkedModel = BlinkClipAboutModel(checker: aboutChecker, sparkleCheck: { sparkleChecks += 1 })
         let availableCopy = String(format: SettingsLocalization.text("updates.available-format"),
                                    "1.0.11", BlinkClipUpdateChecker.timeText(fixed))
-        try check(checkedController.statusLabel.stringValue == availableCopy,
-                  "Available copy is not version + time: \(checkedController.statusLabel.stringValue)")
-        try check(checkedController.statusLabel.stringValue.contains("1.0.11"), "About omitted the newer version: \(checkedController.statusLabel.stringValue)")
-        try check(checkedController.statusLabel.textColor == .secondaryLabelColor, "Status line is not secondary colour")
-        try check(statusIsAboveButtons(checkedController), "Status line is not above the buttons")
-        try assertAboutLayout(checkedController)
-        checkedController.checkButton.performClick(nil)
-        try check(sparkleChecks == 1, "Check button did not start Sparkle's update flow")
-        for _ in 0..<100 where aboutChecker.lastCheckDate == fixed {
+        try check(checkedModel.statusText == availableCopy,
+                  "available copy is not version + time: \(checkedModel.statusText)")
+        try check(checkedModel.statusText.contains("1.0.11"),
+                  "the About page omitted the newer version: \(checkedModel.statusText)")
+        let checkedHost = try await makeAboutPageHost(checkedModel, appearance: .aqua)
+        try assertAboutPageLayout(checkedHost)
+        // 按页面上的那颗按钮（AX press，不是直接调模型）：状态行变化说明接线在。
+        let beforeClick = checkedModel.statusText
+        guard let checkButton = pageNode(accessibilityTree(checkedHost.hosting), "about-check-updates") else {
+            throw Failure(message: "the About page has no Check for Updates button")
+        }
+        let pressSelector = NSSelectorFromString("accessibilityPerformPress")
+        guard checkButton.responds(to: pressSelector) else {
+            throw Failure(message: "the About page button cannot be pressed through accessibility")
+        }
+        typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+        let pressed = unsafeBitCast(checkButton.method(for: pressSelector), to: Press.self)(checkButton, pressSelector)
+        try check(pressed, "pressing the About page button through accessibility failed")
+        try check(sparkleChecks == 1, "the About page button did not start Sparkle's update flow")
+        var changed = false
+        for _ in 0..<150 {
+            if checkedModel.statusText != beforeClick { changed = true; break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        guard case .available = aboutChecker.state else { throw Failure(message: "Check button did not refresh the appcast summary") }
-        try check(aboutChecker.lastCheckDate != nil, "The clicked check left no timestamp")
+        try check(changed, "pressing Check for Updates left the status line unchanged: \(checkedModel.statusText)")
+        try check(checkedModel.statusText == SettingsLocalization.text("updates.checking")
+                  || checkedModel.statusText == lastCheckedText(fixed)
+                  || checkedModel.statusText.contains("1.0.11"),
+                  "the status line changed to an unexpected copy: \(checkedModel.statusText)")
+        for _ in 0..<150 where aboutChecker.lastCheckDate == fixed {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard case .available = aboutChecker.state else {
+            throw Failure(message: "the About page button did not refresh the appcast summary")
+        }
+        try check(aboutChecker.lastCheckDate != nil, "the clicked check left no timestamp")
         try check(aboutChecker.lastCheckDate != fixed,
-                  "The clicked check reused the seeded timestamp instead of recording a completion")
+                  "the clicked check reused the seeded timestamp instead of recording a completion")
         let recordedBeforeFailure = aboutChecker.lastCheckDate
+        checkedHost.window.orderOut(nil)
+        checkedHost.window.contentView = nil
+        checkedHost.window.close()
 
-        // 4. Failures keep the gentle copy, never a status code, and do not
-        // move the "last checked" timestamp (no answer was received).
+        // 4. 失败：温和文案、不染色、不把状态码漏到页面，也不移动「上次检查」。
         let failureChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
                                                     feedURL: feedURL, defaults: aboutDefaults)
         try reply(feed: [FeedItem()], status: 403)
         await failureChecker.check(force: true, now: fixed.addingTimeInterval(60))
-        let failureController = BlinkClipAboutWindowController(checker: failureChecker, sparkleCheck: {})
-        try check(failureController.statusLabel.stringValue == gentle, "About does not show the gentle failure copy")
-        try check(failureController.statusLabel.textColor != .systemRed, "About paints the failure red")
-        try check(!failureController.statusLabel.stringValue.contains("403"), "About shows the status code")
-        try check(statusIsAboveButtons(failureController), "Status line moved into the body")
+        let failureModel = BlinkClipAboutModel(checker: failureChecker, sparkleCheck: {})
+        try check(failureModel.statusText == gentle, "the About page does not show the gentle failure copy")
+        try check(!failureModel.statusText.contains("403"), "the About page shows the status code")
         try check(failureChecker.lastCheckDate == recordedBeforeFailure,
-                  "A failed check moved the last-checked timestamp")
-        try check(failureChecker.lastDiagnostic?.contains("403") == true, "A failed check left no diagnostic")
-        try assertAboutLayout(failureController)
+                  "a failed check moved the last-checked timestamp")
+        try check(failureChecker.lastDiagnostic?.contains("403") == true, "a failed check left no diagnostic")
+        let failureHost = try await makeAboutPageHost(failureModel, appearance: .aqua)
+        try assertAboutPageLayout(failureHost)
+        failureHost.window.orderOut(nil)
+        failureHost.window.contentView = nil
+        failureHost.window.close()
 
-        // 5. Up to date: timestamp only, persisted across a relaunch.
+        // 5. 已是最新：只报时间戳，并且跨一次「重开设置」仍在。
         try reply(feed: [FeedItem()])
         let currentChecker = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session,
                                                     feedURL: feedURL, defaults: aboutDefaults)
         await currentChecker.check(force: true, now: fixed)
-        let currentController = BlinkClipAboutWindowController(checker: currentChecker, sparkleCheck: {})
-        try check(currentController.statusLabel.stringValue == lastCheckedText(fixed),
-                  "Up-to-date status is not a timestamp: \(currentController.statusLabel.stringValue)")
-        try check(!currentController.statusLabel.stringValue.lowercased().contains("up to date")
-                  && !currentController.statusLabel.stringValue.contains("已是最新"),
-                  "About repeats Sparkle's no-update sentence: \(currentController.statusLabel.stringValue)")
-        try assertAboutLayout(currentController)
+        let currentModel = BlinkClipAboutModel(checker: currentChecker, sparkleCheck: {})
+        try check(currentModel.statusText == lastCheckedText(fixed),
+                  "up-to-date status is not a timestamp: \(currentModel.statusText)")
+        try check(!currentModel.statusText.lowercased().contains("up to date")
+                  && !currentModel.statusText.contains("已是最新"),
+                  "the About page repeats Sparkle's no-update sentence: \(currentModel.statusText)")
+        let currentHost = try await makeAboutPageHost(currentModel, appearance: .aqua)
+        try assertAboutPageLayout(currentHost)
+        currentHost.window.orderOut(nil)
+        currentHost.window.contentView = nil
+        currentHost.window.close()
         try check(aboutDefaults.object(forKey: BlinkClipUpdateChecker.lastCheckDateKey) as? Date == fixed,
                   "updates.lastCheckDate was not persisted")
         let relaunched = BlinkClipUpdateChecker(currentVersion: "1.0.11", session: session,
                                                 feedURL: feedURL, defaults: aboutDefaults)
         try check(relaunched.lastCheckDate == fixed, "A new checker lost the persisted timestamp")
-        let relaunchedController = BlinkClipAboutWindowController(checker: relaunched, sparkleCheck: {})
-        try check(relaunchedController.statusLabel.stringValue == lastCheckedText(fixed),
-                  "A reopened About window does not show the persisted time: \(relaunchedController.statusLabel.stringValue)")
-        try assertAboutLayout(relaunchedController)
+        let relaunchedModel = BlinkClipAboutModel(checker: relaunched, sparkleCheck: {})
+        try check(relaunchedModel.statusText == lastCheckedText(fixed),
+                  "a reopened About page does not show the persisted time: \(relaunchedModel.statusText)")
+        let relaunchedHost = try await makeAboutPageHost(relaunchedModel, appearance: .aqua)
+        try assertAboutPageLayout(relaunchedHost)
+        relaunchedHost.window.orderOut(nil)
+        relaunchedHost.window.contentView = nil
+        relaunchedHost.window.close()
 
-        // 6. A feed that offers nothing runnable is a completed check too.
+        // 6. 提供了一个跑不起来的版本也算一次完成的检查。
         let tooNewDefaults = freshDefaults()
         let tooNewChecker = BlinkClipUpdateChecker(currentVersion: "1.0.10", session: session,
                                                    feedURL: feedURL, defaults: tooNewDefaults)
         try reply(feed: [FeedItem(version: "1.0.12", minimumSystem: "99.0")])
         await tooNewChecker.check(force: true, now: fixed.addingTimeInterval(30))
-        let tooNewController = BlinkClipAboutWindowController(checker: tooNewChecker, sparkleCheck: {})
-        try check(tooNewController.statusLabel.stringValue == lastCheckedText(fixed.addingTimeInterval(30)),
-                  "An unrunnable feed did not record its check time: \(tooNewController.statusLabel.stringValue)")
+        let tooNewModel = BlinkClipAboutModel(checker: tooNewChecker, sparkleCheck: {})
+        try check(tooNewModel.statusText == lastCheckedText(fixed.addingTimeInterval(30)),
+                  "an unrunnable feed did not record its check time: \(tooNewModel.statusText)")
 
         // ── throttle and concurrency ────────────────────────────────────────
         try reply(feed: [FeedItem()])
@@ -710,155 +893,17 @@ struct AppUpdateHarness {
         guard case .failed = unknown.state else { throw Failure(message: "Invalid installed version reported success") }
     }
 
-    /// Esc 与 ⌘W 仍能关窗 —— 关于窗没有「关闭」按钮之后，这是两条人工关闭路径，
-    /// 必须各自用真实事件验证一遍（不是只断言某个属性）。
-    ///
-    /// * Esc：真实的 `keyDown`（keyCode 53）经 `NSApp.sendEvent` 派发，窗口自己的
-    ///   键盘等价物接住后走标准 `performClose:`。
-    /// * ⌘W：主菜单「关闭」项执行的就是 `performClose:`，所以用
-    ///   `NSApp.sendAction(performClose:)` 走同一条响应链；同时断言没有控件认领
-    ///   Esc/⌘W 的键等价物、标题栏关闭按钮仍在且可用。
-    @MainActor static func verifyClosePaths() throws {
-        let checker = BlinkClipUpdateChecker(currentVersion: "1.0.11")
-        func window(_ controller: BlinkClipAboutWindowController) throws -> NSWindow {
-            guard let window = controller.window else { throw Failure(message: "About window missing") }
-            window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            for _ in 0..<60 where !window.isKeyWindow {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.03))
-            }
-            return window
-        }
-        func escapeEvent(_ window: NSWindow) -> NSEvent {
-            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                             timestamp: ProcessInfo.processInfo.systemUptime,
-                             windowNumber: window.windowNumber, context: nil,
-                             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
-                             isARepeat: false, keyCode: 53)!
-        }
-        // ── Esc ──────────────────────────────────────────────────────────────
-        let escapeController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-        let escapeWindow = try window(escapeController)
-        try check(escapeWindow.styleMask.contains(.closable), "About window is no longer closable")
-        try check(escapeWindow.standardWindowButton(.closeButton)?.isEnabled == true,
-                  "the titlebar close button is missing or disabled")
-        try check(escapeWindow.isVisible, "About window is not visible before the Esc event")
-        NSApp.sendEvent(escapeEvent(escapeWindow))
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        try check(!escapeWindow.isVisible, "Esc does not close the About window")
-        print("{\"escape_closes\":true}")
-
-        // ── ⌘W（主菜单「关闭」项的 performClose:）────────────────────────────
-        let commandWController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-        let commandWWindow = try window(commandWController)
-        for button in descendants(commandWWindow.contentView!, of: NSButton.self) {
-            try check(button.keyEquivalent != "w",
-                      "a control claims \(button.keyEquivalent) and would swallow ⌘W")
-        }
-        // 主菜单「关闭」项的 action 就是 `performClose:`，target 为 nil（走响应链）。
-        // 这里从窗口自己的响应链发出同一个 action：链上没有别的控件抢占它。
-        try check(commandWWindow.tryToPerform(#selector(NSWindow.performClose(_:)), with: nil),
-                  "the Close action ⌘W performs reached no responder in the About window's chain")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        try check(!commandWWindow.isVisible, "⌘W (performClose:) does not close the About window")
-        print("{\"command_w_closes\":true}")
-
-        // ── 这个窗口的键盘等价物只认 Esc，不会吞掉别的按键 ──────────────────────
-        let letterController = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
-        let letterWindow = try window(letterController)
-        let letter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                                      timestamp: ProcessInfo.processInfo.systemUptime,
-                                      windowNumber: letterWindow.windowNumber, context: nil,
-                                      characters: "a", charactersIgnoringModifiers: "a",
-                                      isARepeat: false, keyCode: 0)!
-        NSApp.sendEvent(letter)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        try check(letterWindow.isVisible, "a plain letter key closed the About window")
-        letterWindow.close()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-    }
-
-    /// The status line belongs directly above the action row, in window coordinates.
-    @MainActor static func statusIsAboveButtons(_ controller: BlinkClipAboutWindowController) -> Bool {
-        guard let content = controller.window?.contentView else { return false }
-        content.layoutSubtreeIfNeeded()
-        let status = controller.statusLabel.convert(controller.statusLabel.bounds, to: content)
-        let button = controller.checkButton.convert(controller.checkButton.bounds, to: content)
-        return status.minY >= button.maxY
-    }
-
-    @MainActor static func descendants<T: NSView>(_ view: NSView, of type: T.Type) -> [T] {
-        let children = view.subviews.flatMap { descendants($0, of: type) }
-        return ((view as? T).map { [$0] } ?? []) + children
-    }
-
-    struct RGB: Equatable {
-        let red: Int
-        let green: Int
-        let blue: Int
-        var json: [String: Int] { ["r": red, "g": green, "b": blue] }
-    }
-
-    /// The fill colour under a button's left third, away from the title glyphs.
-    @MainActor static func fillColor(_ bitmap: NSBitmapImageRep, of view: NSView, in frameView: NSView) -> RGB {
-        fillColor(bitmap, atContentPoint: NSPoint(x: view.bounds.width * 0.25, y: view.bounds.height * 0.5),
-                  of: view, in: frameView)
-    }
-
-    /// 数一个按钮矩形里「明显是 accent 蓝」的像素：默认按钮的强调色是整块纯色
-    /// 填充（浅色/深色两套外观都是 accent），普通按钮的灰白底一个也数不到。
-    /// 比在某个点上取样稳：圆角、标题字形、1pt 描边都不会让结论翻转。
-    @MainActor static func accentPixels(_ bitmap: NSBitmapImageRep, of view: NSView, in frameView: NSView) -> Int {
-        let rect = view.convert(view.bounds, to: frameView)
-        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, frameView.bounds.width)
-        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, frameView.bounds.height)
-        var count = 0
-        var y = rect.minY + 2
-        while y <= rect.maxY - 2 {
-            var x = rect.minX + 2
-            while x <= rect.maxX - 2 {
-                let px = Int(x * scaleX)
-                let py = bitmap.pixelsHigh - Int(y * scaleY) - 1
-                if px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh,
-                   let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) {
-                    let red = color.redComponent * 255, green = color.greenComponent * 255, blue = color.blueComponent * 255
-                    if blue >= 120, blue - red >= 60, blue - green >= 40 { count += 1 }
-                }
-                x += 1
-            }
-            y += 1
-        }
-        return count
-    }
-
-    /// The same sample, at an explicit point in `view`'s coordinates.
-    @MainActor static func fillColor(_ bitmap: NSBitmapImageRep, atContentPoint contentPoint: NSPoint,
-                                     of view: NSView, in frameView: NSView) -> RGB {
-        let point = view.convert(contentPoint, to: frameView)
-        let scaleX = CGFloat(bitmap.pixelsWide) / frameView.bounds.width
-        let scaleY = CGFloat(bitmap.pixelsHigh) / frameView.bounds.height
-        let x = Int((point.x * scaleX).rounded())
-        let y = bitmap.pixelsHigh - Int((point.y * scaleY).rounded()) - 1
-        guard let data = bitmap.bitmapData, x >= 0, y >= 0,
-              x < bitmap.pixelsWide, y < bitmap.pixelsHigh else {
-            return RGB(red: -1, green: -1, blue: -1)
-        }
-        // The cached bitmap is 8-bit RGBA with the origin at the top left.
-        let offset = y * bitmap.bytesPerRow + x * 4
-        return RGB(red: Int(data[offset]), green: Int(data[offset + 1]), blue: Int(data[offset + 2]))
-    }
-
+    /// 截图用的场景：每个场景一份独立 defaults + 一个真实设置窗口里的关于页。
     struct PreparedAbout {
         let appearance: String
         let scenario: String
-        let controller: BlinkClipAboutWindowController
+        let host: AboutPageHost
     }
 
     /// Runs every scenario's check before the app event loop starts, so the
-    /// timer only has to make each window key, snapshot it and sample the
-    /// button fills. Copy and layout are asserted here, where async work is
-    /// allowed.
+    /// timer only has to make each settings window key, snapshot it and sample
+    /// the button emphasis. Copy and layout are asserted here, where async work
+    /// is allowed.
     @MainActor static func prepareRenders(session: URLSession) async throws -> [PreparedAbout] {
         let fixed = Date(timeIntervalSince1970: 1_760_000_000)
         struct Scenario {
@@ -893,46 +938,74 @@ struct AppUpdateHarness {
                 default:
                     break
                 }
-                let controller = BlinkClipAboutWindowController(checker: checker, sparkleCheck: {})
+                let model = BlinkClipAboutModel(checker: checker, sparkleCheck: {})
                 if scenario.kind == "checking" {
                     let inFlight = Task { await checker.check(force: true) }
                     try await Task.sleep(for: .milliseconds(250))
-                    try check(controller.statusLabel.stringValue == SettingsLocalization.text("updates.checking"),
-                              "\(appearance)/checking is not announced: \(controller.statusLabel.stringValue)")
-                    try check(!controller.checkButton.isEnabled, "\(appearance)/checking leaves the button enabled")
+                    try check(model.statusText == SettingsLocalization.text("updates.checking"),
+                              "\(appearance)/checking is not announced: \(model.statusText)")
+                    try check(model.isChecking, "\(appearance)/checking leaves the button enabled")
                     _ = inFlight
                 }
                 switch scenario.kind {
                 case "initial":
-                    try check(controller.statusLabel.stringValue == neverCheckedText,
-                              "\(appearance)/initial claims a result: \(controller.statusLabel.stringValue)")
+                    try check(model.statusText == neverCheckedText,
+                              "\(appearance)/initial claims a result: \(model.statusText)")
                 case "checked":
                     if scenario.failure != nil {
-                        try check(controller.statusLabel.stringValue == gentle,
-                                  "\(appearance)/offline is not gentle: \(controller.statusLabel.stringValue)")
+                        try check(model.statusText == gentle,
+                                  "\(appearance)/offline is not gentle: \(model.statusText)")
                     } else if scenario.name == "latest" {
-                        try check(controller.statusLabel.stringValue == lastCheckedText(fixed),
-                                  "\(appearance)/latest is not a timestamp: \(controller.statusLabel.stringValue)")
+                        try check(model.statusText == lastCheckedText(fixed),
+                                  "\(appearance)/latest is not a timestamp: \(model.statusText)")
                     } else {
                         let expected = String(format: SettingsLocalization.text("updates.available-format"),
                                               "1.0.11", BlinkClipUpdateChecker.timeText(fixed))
-                        try check(controller.statusLabel.stringValue == expected,
-                                  "\(appearance)/available lost the timestamp: \(controller.statusLabel.stringValue)")
+                        try check(model.statusText == expected,
+                                  "\(appearance)/available lost the timestamp: \(model.statusText)")
                     }
                 default:
                     break
                 }
-                try assertAboutLayout(controller)
-                prepared.append(PreparedAbout(appearance: appearance, scenario: scenario.name,
-                                              controller: controller))
+                let host = try await makeAboutPageHost(model, appearance: name)
+                try assertAboutPageLayout(host)
+                prepared.append(PreparedAbout(appearance: appearance, scenario: scenario.name, host: host))
             }
         }
         return prepared
     }
 
-    /// Synchronous, key-window snapshot pass: in a key window the default
-    /// button keeps its emphasis, so the two appearances can be compared for
-    /// the same primary/secondary weighting.
+    /// 数一个屏幕矩形里「明显是 accent 蓝」的像素：主按钮（`.borderedProminent`）
+    /// 在 key window 里整块 accent 填充，普通按钮的灰白底一个也数不到；检查中
+    /// 按钮是禁用的，AppKit 画成灰底，强调色为 0。
+    @MainActor static func accentPixels(_ bitmap: NSBitmapImageRep, screenRect: NSRect,
+                                        in frameView: NSView) -> Int {
+        guard let window = frameView.window else { return -1 }
+        let rect = frameView.convert(window.convertFromScreen(screenRect), from: nil)
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, frameView.bounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, frameView.bounds.height)
+        var count = 0
+        var y = rect.minY + 2
+        while y <= rect.maxY - 2 {
+            var x = rect.minX + 2
+            while x <= rect.maxX - 2 {
+                let px = Int(x * scaleX)
+                let py = bitmap.pixelsHigh - Int(y * scaleY) - 1
+                if px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh,
+                   let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) {
+                    let red = color.redComponent * 255, green = color.greenComponent * 255, blue = color.blueComponent * 255
+                    if blue >= 120, blue - red >= 60, blue - green >= 40 { count += 1 }
+                }
+                x += 1
+            }
+            y += 1
+        }
+        return count
+    }
+
+    /// Synchronous, key-window snapshot pass: in a key window the prominent
+    /// button keeps its accent fill, so the two appearances can be compared for
+    /// the same weighting and a disabled (checking) button shows none.
     @MainActor static func snapshot(_ prepared: [PreparedAbout], into directory: URL) throws -> Int {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var written = 0
@@ -940,8 +1013,9 @@ struct AppUpdateHarness {
         for item in prepared {
             let name = item.appearance == "light" ? NSAppearance.Name.aqua : .darkAqua
             NSApp.appearance = NSAppearance(named: name)
-            guard let window = item.controller.window, let frameView = window.contentView?.superview else {
-                throw Failure(message: "About window has no content")
+            let window = item.host.window
+            guard let frameView = window.contentView?.superview else {
+                throw Failure(message: "the About page host has no content")
             }
             window.appearance = NSAppearance(named: name)
             window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
@@ -955,39 +1029,35 @@ struct AppUpdateHarness {
             }
             frameView.layoutSubtreeIfNeeded()
             guard let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
-                throw Failure(message: "no about bitmap")
+                throw Failure(message: "no About page bitmap")
             }
             frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
-            // A key window is the only place AppKit draws the default button's
-            // emphasis; without a window server (headless CI) the renders are
-            // still written, but the emphasis is not asserted. With the Close
-            // button gone, the evidence is that the single action button really
-            // renders with the accent fill a default button gets.
-            if window.isKeyWindow {
-                let accent = accentPixels(bitmap, of: item.controller.checkButton, in: frameView)
-                // 「正在检查」时按钮是禁用的：AppKit 把禁用的默认按钮画成灰底，
-                // 强调色只在可用状态下出现，所以只有可用状态才要求 accent 填充。
-                if item.controller.checkButton.isEnabled {
-                    try check(accent >= 200,
-                              "\(item.appearance)/\(item.scenario): the only action button renders without default-button emphasis (\(accent) accent pixels)")
-                } else {
-                    try check(accent == 0,
-                              "\(item.appearance)/\(item.scenario): a disabled check button renders with accent fill (\(accent) pixels)")
-                }
-                weights.append(["appearance": item.appearance, "state": item.scenario,
-                                "accent_pixels": accent,
-                                "layout": layout(item.controller).json])
-            } else {
-                print("{\"warning\":\"\(item.appearance)/\(item.scenario): About window is not key; weight not measured\"}")
+            let tree = accessibilityTree(item.host.hosting)
+            guard let buttonNode = pageNode(tree, "about-check-updates") else {
+                throw Failure(message: "the About page has no Check for Updates button to sample")
             }
-            let url = directory.appendingPathComponent("about-\(item.appearance)-\(item.scenario).png")
+            let buttonRect = axFrame(buttonNode)
+            let accent = window.isKeyWindow ? accentPixels(bitmap, screenRect: buttonRect, in: frameView) : -1
+            // 可用状态：唯一主按钮必须是主按钮强调态（key window 里整块 accent 填充）；
+            // 「检查中置灰」单独在循环后按同一外观的可用渲染对比（禁用时强调色被压暗）。
+            if !item.host.model.isChecking, window.isKeyWindow {
+                try check(accent >= 200,
+                          "\(item.appearance)/\(item.scenario): the only action button renders without prominent emphasis (\(accent) accent pixels)")
+            } else if !window.isKeyWindow {
+                print("{\"warning\":\"\(item.appearance)/\(item.scenario): the settings window is not key; emphasis not measured\"}")
+            }
+            weights.append(["appearance": item.appearance, "state": item.scenario,
+                            "checking": item.host.model.isChecking ? 1 : 0,
+                            "accent_pixels": accent,
+                            "layout": (try aboutPageLayout(item.host)).json])
+            let url = directory.appendingPathComponent("about-page-\(item.appearance)-\(item.scenario).png")
             try bitmap.representation(using: .png, properties: [:])!.write(to: url)
             written += 1
             window.orderOut(nil)
             window.contentView = nil
             window.close()
         }
-        try check(written == 10, "expected ten About renders, wrote \(written)")
+        try check(written == 10, "expected ten About page renders, wrote \(written)")
         print(String(data: try JSONSerialization.data(withJSONObject: ["button_weights": weights], options: [.sortedKeys]), encoding: .utf8)!)
         return written
     }

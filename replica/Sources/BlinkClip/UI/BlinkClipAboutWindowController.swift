@@ -3,311 +3,85 @@ import Combine
 import BlinkClipCore
 import os
 
-/// The About window: app icon, product name, version, a one-line summary,
-/// links, and a single action row.
+/// 「关于闪贴」页的状态模型。
 ///
-/// The status line belongs to the action block: it sits just above the button
-/// row (8 pt stack spacing, 9 pt frame to frame), on the same centred axis, so it can never float in the loose space
-/// above the buttons. It always uses secondary colour, so a failed check never
-/// pushes the layout around and never shows raw network detail — the gentle copy
-/// comes from `BlinkClipUpdateChecker`. The status line only ever reports a
-/// timestamp ("上次检查 21:04") or a concrete pending/available/failure fact; it
-/// never claims the install is current. Sparkle's own dialog already says
-/// "you're up to date" for a user-initiated check, and Sparkle 2.10.1 has no
-/// public hook to suppress that modal, so the inline line deliberately does not
-/// repeat it (`SPUStandardUserDriverDelegate` only observes modal alerts).
-/// The check button starts Sparkle's own update flow; those are two jobs and
-/// stay separate.
+/// 独立关于窗口已经移除：关于现在是设置窗口右侧内容区里的**一个页面**
+/// （`ReplicaSettingsView.about`），页面只负责排版，而「尚未检查更新 / 正在
+/// 检查更新… / 上次检查 HH:mm / 有新版本 X 可用」这四种状态与按下「检查更新」
+/// 之后的既有路径仍然只在这一份模型里，两条入口（应用菜单「关于 闪贴」与
+/// `.blinkClipOpenAbout` 通知）都打开同一个设置窗口的同一页，因此不存在第二份
+/// 状态、也不会各起一个 updater。
+///
+/// 状态行属于动作块：它与唯一的主按钮同处一段，状态行在按钮上方、两者同一条
+/// 中轴，间距 ≤12pt。它永远用次要色，检查失败也不会把布局顶开、更不会把网络
+/// 细节漏到界面上——温和文案来自 `BlinkClipUpdateChecker`。状态行只报告时间戳
+/// （「上次检查 21:04」）或具体的等待/有新版本/失败事实，从不断言「已是最新」：
+/// Sparkle 自己的弹窗已经说过，而 Sparkle 2.10.1 没有公开钩子能压掉那个弹窗
+/// （`SPUStandardUserDriverDelegate` 只观察模态弹窗）。
+///
+/// 文件名保留历史名 `BlinkClipAboutWindowController.swift`：回归脚本按这个名字
+/// 取关于页的源码门禁，窗口类本身已经删掉。
 @MainActor
-final class BlinkClipAboutWindowController: NSWindowController, NSWindowDelegate {
-    static let windowIdentifier = "blinkclip-about-window"
-    static let contentSize = NSSize(width: 380, height: 420)
-
-    private static let horizontalInset: CGFloat = 28
-    private static let projectURL = URL(string: "https://github.com/aexachao/BlinkClip")!
-    private static let releaseNotesURL = URL(string: "https://github.com/aexachao/BlinkClip/releases")!
-    private static let licenseURL = URL(string: "https://github.com/aexachao/BlinkClip/blob/main/LICENSE")!
+final class BlinkClipAboutModel: ObservableObject {
     private static let log = Logger(subsystem: "com.chrisli.blinkclip", category: "updates")
 
-    private let checker: BlinkClipUpdateChecker
-    /// Sparkle's own check (`BlinkClipInAppUpdater` / `SPUUpdater`). Injected so
-    /// the window stays free of Sparkle for the native harness.
+    let checker: BlinkClipUpdateChecker
+    /// Sparkle 自己的检查（`BlinkClipInAppUpdater` / `SPUUpdater`）。注入是为了
+    /// 让页面/harness 不依赖 Sparkle。
     private let sparkleCheck: () throws -> Void
     private var observation: AnyCancellable?
-    private var linkTargets: [URL] = []
-    /// 窗口关闭回调。设置侧栏用它把选中态落回点击「关于闪贴」之前的分区；窗口
-    /// 从菜单打开时没有人登记，回调为空、行为不变。回调只触发一次。
-    var onClose: (() -> Void)?
 
-    let statusLabel = NSTextField(wrappingLabelWithString: "")
-    /// 唯一的主按钮。关于窗不再有「关闭」按钮：Esc 与 ⌘W 仍然关窗
-    /// （见 `AboutWindow.performKeyEquivalent(with:)` 与 `cancelOperation(_:)`），
-    /// 标题栏的关闭按钮也照常。
-    let checkButton = NSButton()
-    private let versionLabel = NSTextField(labelWithString: "")
+    /// 状态行文案。与旧窗口逐字相同：首帧就是「尚未检查更新」或持久化的
+    /// 「上次检查 HH:mm」，不会先空一帧。
+    @Published private(set) var statusText: String = ""
+    /// 检查请求在飞：按钮置灰（唯一的主按钮，检查中不可重复点）。
+    @Published private(set) var isChecking = false
 
     init(checker: BlinkClipUpdateChecker, sparkleCheck: @escaping () throws -> Void) {
         self.checker = checker
         self.sparkleCheck = sparkleCheck
-        let window = AboutWindow(contentRect: NSRect(origin: .zero, size: Self.contentSize),
-                                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = SettingsLocalization.text("updates.about-title")
-        window.identifier = NSUserInterfaceItemIdentifier(Self.windowIdentifier)
-        window.isReleasedWhenClosed = false
-        window.center()
-        super.init(window: window)
-        window.delegate = self
-        configureContent()
         refresh(checker.state)
         observation = checker.$state.sink { [weak self] state in
             MainActor.assumeIsolated { self?.refresh(state) }
         }
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func showWindow(_ sender: Any?) {
-        // The menu item and the settings sidebar each own a controller; only one
-        // About window should ever be on screen.
-        for other in NSApp.windows
-        where other !== window && other.identifier?.rawValue == Self.windowIdentifier {
-            other.close()
-        }
-        super.showWindow(sender)
-        window?.makeKeyAndOrderFront(sender)
-        NSApp.activate(ignoringOtherApps: true)
-        Task { await checker.check() }
+    /// 「版本 %@」，与窗口版同一句文案、同一个格式串。
+    var versionText: String {
+        String(format: text("updates.current-version"), checker.currentVersion)
     }
 
     private func text(_ key: String) -> String { SettingsLocalization.text(key) }
 
-    private func configureContent() {
-        guard let content = window?.contentView else { return }
-
-        let icon = NSImageView()
-        icon.image = NSApp.applicationIconImage
-        icon.imageScaling = .scaleProportionallyDown
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.setAccessibilityIdentifier("about-application-icon")
-
-        let name = NSTextField(labelWithString: ReplicaBrand.name)
-        name.font = .systemFont(ofSize: 24, weight: .semibold)
-        name.alignment = .center
-        name.setAccessibilityIdentifier("about-product-name")
-
-        versionLabel.stringValue = String(format: text("updates.current-version"), checker.currentVersion)
-        versionLabel.font = .systemFont(ofSize: 12.5)
-        versionLabel.textColor = .secondaryLabelColor
-        versionLabel.alignment = .center
-        versionLabel.setAccessibilityIdentifier("about-current-version")
-
-        let description = NSTextField(wrappingLabelWithString: text("updates.description"))
-        description.font = .systemFont(ofSize: 12)
-        description.textColor = .secondaryLabelColor
-        description.alignment = .center
-        description.preferredMaxLayoutWidth = Self.contentSize.width - 2 * Self.horizontalInset
-        description.setAccessibilityIdentifier("about-description")
-
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-
-        let projectLink = makeLink(text("updates.link-project"), url: Self.projectURL, identifier: "about-project-link")
-        let releaseNotesLink = makeLink(text("updates.link-releases"), url: Self.releaseNotesURL, identifier: "about-release-notes-link")
-        let links = NSStackView(views: [projectLink, releaseNotesLink])
-        links.orientation = .horizontal
-        links.spacing = 18
-        links.alignment = .centerY
-        links.translatesAutoresizingMaskIntoConstraints = false
-
-        let copyright = NSTextField(labelWithString: text("updates.copyright"))
-        copyright.font = .systemFont(ofSize: 11)
-        copyright.textColor = .tertiaryLabelColor
-        copyright.alignment = .center
-        copyright.setAccessibilityIdentifier("about-copyright")
-        let licenseLink = makeLink(text("updates.link-license"), url: Self.licenseURL,
-                                   identifier: "about-license-link", fontSize: 11.5)
-        let legal = NSStackView(views: [copyright, licenseLink])
-        legal.orientation = .horizontal
-        legal.spacing = 8
-        legal.alignment = .centerY
-        legal.translatesAutoresizingMaskIntoConstraints = false
-
-        statusLabel.alignment = .center
-        statusLabel.font = .systemFont(ofSize: 11.5)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.maximumNumberOfLines = 2
-        statusLabel.preferredMaxLayoutWidth = Self.contentSize.width - 2 * Self.horizontalInset
-        statusLabel.setAccessibilityIdentifier("about-update-status")
-
-        checkButton.title = text("updates.check")
-        checkButton.target = self
-        checkButton.action = #selector(check)
-        checkButton.bezelStyle = .rounded
-        checkButton.keyEquivalent = "\r"
-        checkButton.setAccessibilityIdentifier("about-check-updates")
-
-        // 一行只有主按钮：它自己居中，状态行压在它上方同一条中轴。
-        let buttonRow = NSStackView(views: [checkButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 10
-        buttonRow.alignment = .centerY
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
-        let buttonHolder = NSView()
-        buttonHolder.translatesAutoresizingMaskIntoConstraints = false
-        buttonHolder.addSubview(buttonRow)
-
-        // One flexible band above the identity block and one between the legal
-        // row and the action block: the identity block stays optically centred,
-        // and the status line is anchored just above the buttons instead of
-        // floating in leftover space.
-        let topSpacer = NSView()
-        let bottomSpacer = NSView()
-        for spacer in [topSpacer, bottomSpacer] {
-            spacer.translatesAutoresizingMaskIntoConstraints = false
-            spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .vertical)
-            spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .vertical)
-        }
-
-        let stack = NSStackView(views: [topSpacer, icon, name, versionLabel, description, divider,
-                                        links, legal, bottomSpacer, statusLabel, buttonHolder])
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 8
-        stack.setCustomSpacing(14, after: icon)
-        stack.setCustomSpacing(2, after: name)
-        stack.setCustomSpacing(16, after: description)
-        stack.setCustomSpacing(14, after: divider)
-        stack.setCustomSpacing(16, after: legal)
-        stack.setCustomSpacing(8, after: statusLabel)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Self.horizontalInset),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.horizontalInset),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 26),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-
-            topSpacer.heightAnchor.constraint(equalTo: bottomSpacer.heightAnchor),
-
-            icon.widthAnchor.constraint(equalToConstant: 88),
-            icon.heightAnchor.constraint(equalToConstant: 88),
-
-            divider.widthAnchor.constraint(equalTo: stack.widthAnchor),
-
-            // The status line and the buttons form one action block: same
-            // centred axis, 8 pt apart. The divider/links/legal rows above stay
-            // centred too, so the whole window keeps one vertical axis.
-            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-
-            buttonHolder.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            buttonRow.centerXAnchor.constraint(equalTo: buttonHolder.centerXAnchor),
-            buttonRow.topAnchor.constraint(equalTo: buttonHolder.topAnchor),
-            buttonRow.bottomAnchor.constraint(equalTo: buttonHolder.bottomAnchor),
-            // The buttons must never be squeezed by the flexible bands: their
-            // row keeps its native height, so the 8 pt gap above is real.
-            buttonHolder.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
-            checkButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 104)
-        ])
-
-        // Emphasis is a window-level decision, not an appearance-level one: the
-        // check button is the default action (Return) in light and dark alike.
-        // Setting the cell explicitly matters because this window is built in
-        // code; without it AppKit may not resolve a default button at all.
-        window?.defaultButtonCell = checkButton.cell as? NSButtonCell
-    }
-
-    /// A borderless link button: no new dependency, and VoiceOver still reads it
-    /// as a button with the link text.
-    private func makeLink(_ title: String, url: URL, identifier: String, fontSize: CGFloat = 12) -> NSButton {
-        let button = NSButton(title: title, target: self, action: #selector(openLink(_:)))
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.tag = linkTargets.count
-        linkTargets.append(url)
-        button.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: fontSize),
-            .foregroundColor: NSColor.linkColor
-        ])
-        button.setAccessibilityIdentifier(identifier)
-        return button
-    }
-
     private func refresh(_ state: BlinkClipUpdateChecker.State) {
-        checkButton.isEnabled = state != .checking
-        // Every state, failures included, uses the secondary colour: the line is
-        // a quiet status, not an error banner in the middle of the layout.
-        statusLabel.textColor = .secondaryLabelColor
+        isChecking = state == .checking
         switch state {
         case .idle:
-            // Reopening About before anything ran shows either "尚未检查更新"
-            // or the persisted time of the last completed check — never a
-            // freshness claim.
-            statusLabel.stringValue = checker.lastCheckSummary
+            // 一次检查都没跑过时显示「尚未检查更新」，跑过就是持久化的检查时间，
+            // 从不报告「新鲜度」。
+            statusText = checker.lastCheckSummary
         case .checking:
-            statusLabel.stringValue = text("updates.checking")
+            statusText = text("updates.checking")
         case .upToDate:
-            // Sparkle's user-initiated check shows its own "you're up to date"
-            // alert. Repeating that sentence inline would be two places saying
-            // the same thing, so the inline line carries only the verification
-            // time.
-            statusLabel.stringValue = checker.lastCheckSummary
+            // Sparkle 的主动检查自己会弹「已是最新」。内联再写一遍就是两处说同一
+            // 件事，这里只留验证时间。
+            statusText = checker.lastCheckSummary
         case let .available(update):
-            statusLabel.stringValue = String(format: text("updates.available-format"),
-                                             update.version, checker.lastCheckTime)
+            statusText = String(format: text("updates.available-format"),
+                                update.version, checker.lastCheckTime)
         case let .failed(message):
-            statusLabel.stringValue = message
+            statusText = message
         }
     }
 
-    /// Refreshes the appcast summary and hands the install to Sparkle. The
-    /// button is the updater entry point, not a page refresh.
-    @objc func check() {
+    /// 刷新 appcast 摘要并把安装交给 Sparkle。按钮是更新器的入口，不是页面刷新。
+    func check() {
         Task { await checker.check(force: true) }
         do {
             try sparkleCheck()
         } catch {
             Self.log.error("sparkle check failed: \(String(describing: error), privacy: .public)")
-            statusLabel.stringValue = text("updates.unreachable")
-            statusLabel.textColor = .secondaryLabelColor
+            statusText = text("updates.unreachable")
         }
-    }
-
-    /// Esc 没有可以挂快捷键的取消按钮了，就走响应链上的标准取消动作：
-    /// `NSWindow` 把 Esc 作为 `cancelOperation:` 往上递，窗口控制器在链上收到后
-    /// 交给标准的 `performClose:`（与 ⌘W、标题栏关闭按钮同一条路径）。
-    override func cancelOperation(_ sender: Any?) {
-        window?.performClose(nil)
-    }
-
-    /// 关窗前把一次性的回调取走：重复关闭（菜单入口 vs 侧栏入口、`showWindow` 关掉
-    /// 另一个关于窗）不会把回调触发第二次。
-    func windowWillClose(_ notification: Notification) {
-        guard (notification.object as? NSWindow) === window else { return }
-        let handler = onClose
-        onClose = nil
-        handler?()
-    }
-
-    @objc private func openLink(_ sender: NSButton) {
-        guard linkTargets.indices.contains(sender.tag) else { return }
-        NSWorkspace.shared.open(linkTargets[sender.tag])
-    }
-}
-
-/// 关于窗的窗口类型：唯一的作用是把「没有修饰键的 Esc」接住并关窗。
-///
-/// 删掉「关闭」按钮后，Esc 的键盘等价物就没有控件承载了；这一层用 AppKit 的
-/// 键盘等价物路径（过去那个 Esc 按钮走的同一条路径）把它接回来，而不是塞一个
-/// 看不见的按钮。带修饰键的 Esc、⌘W（主菜单的关闭项）与其他键都不经过这里。
-private final class AboutWindow: NSWindow {
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, event.keyCode == 53,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
-            performClose(nil)
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
     }
 }

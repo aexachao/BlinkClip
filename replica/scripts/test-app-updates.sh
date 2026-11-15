@@ -1,6 +1,7 @@
 #!/bin/bash
 # 应用内更新测试：版本比较、appcast 解析、关于窗口文案与限流（全部离屏夹具），
-# 可选 --live 用真实 appcast 做一次线上探针。
+# 关于页（设置窗口内容区里的第七页）的几何/文案断言，可选 --live 用真实 appcast
+# 做一次线上探针。
 #
 # --live 的期望值全部从线上 appcast 现取：线上最新版来自 <sparkle:version>，
 # 用来比较的旧版本默认是「线上版本往回一个 patch」，也可用 --installed 覆盖。
@@ -31,7 +32,7 @@ usage() {
   --offline         强制跳过线上探针，打印 skipped 并返回 0
   --installed <版本> 比较用的安装版本；缺省为「线上版本往回一个 patch」
   --live-feed <URL> 覆盖 feed 地址（默认 SUFeedURL 指向的 appcast）
-  --render[=<目录>] 额外渲染关于窗口截图（默认 $TMPDIR/blinkclip-about-renders）
+  --render[=<目录>] 额外渲染关于页截图（默认 $TMPDIR/blinkclip-about-renders）
   --preview         打印 PREVIEW_APP 供人工预览
 USAGE
 }
@@ -189,10 +190,18 @@ if [[ -n "$installed" ]]; then
 fi
 
 source "$replica_root/Tests/Native/build-support.sh"
-prepare_native_test_core
+# 关于是设置窗口内容区里的一页（独立关于窗口已移除），所以这套断言要跑真正的
+# `ReplicaSettingsView`：设置页的 UI 文件 + Capture 目标都要一起编译，几何与
+# 语义从真实设置窗口的无障碍树里量。
+prepare_native_test_ui
 compile_native_test_harness app-updates \
-  "$replica_root/Sources/BlinkClip/UI/ReplicaBrand.swift" \
-  "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" \
+  "$replica_root/Sources/BlinkClip/UI/"*.swift \
+  "$replica_root/Sources/BlinkClip/PanelShortcutMenu.swift" \
+  "$replica_root/Sources/BlinkClip/ICloudDriveSyncController.swift" \
+  "$replica_root/Sources/BlinkClip/SourceAppColor.swift" \
+  "$replica_root/Sources/BlinkClip/WindowSharingPolicy.swift" \
+  "$replica_root/Sources/BlinkClip/BackgroundService.swift" \
+  "$replica_root/Sources/BlinkClip/GlobalHotKey.swift" \
   "$replica_root/Tests/Native/AppUpdateHarness.swift"
 test_app="$(dirname "$(dirname "$(dirname "$test_harness")")")"
 plutil -insert BlinkClipSourceVersion -string '1.0.5-dev.2' "$test_app/Contents/Info.plist" >/dev/null
@@ -259,6 +268,6 @@ if [[ -n "$live_status" ]]; then
   printf '{"live_appcast":"skipped","reason":"%s"}\n' "$(json_escape "${live_status#skipped: }")"
 fi
 if [[ -n "$render_dir" ]]; then
-  printf '关于窗口截图：%s\n' "$render_dir"
+  printf '关于页截图：%s\n' "$render_dir"
 fi
 exit "$harness_code"

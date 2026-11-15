@@ -274,28 +274,6 @@ struct ReplicaStackTable: NSViewRepresentable {
     }
 }
 
-/// 设置侧栏「关于闪贴」的入口。
-///
-/// 关于窗口既可以从应用菜单打开（`ReplicaAppDelegate.about`），也可以从设置侧栏
-/// 打开。这里保留一份共享控制器，重复点击只是把同一个窗口提到最前；Sparkle 的
-/// updater 本身是进程内单例（`BlinkClipInAppUpdater`），两条入口不会各起一个。
-@MainActor
-enum BlinkClipAboutWindow {
-    private static var controller: BlinkClipAboutWindowController?
-
-    /// 打开关于窗口。`onClose` 只给设置侧栏用：窗口关闭时把侧栏选中态落回点击前的
-    /// 分区；菜单入口不传，行为与之前完全一致。
-    static func present(onClose: (() -> Void)? = nil) {
-        if controller == nil {
-            controller = BlinkClipAboutWindowController(checker: BlinkClipUpdateChecker()) {
-                try BlinkClipInAppUpdater().checkForUpdates()
-            }
-        }
-        controller?.onClose = onClose
-        controller?.showWindow(nil)
-    }
-}
-
 /// 权限状态模型的持有者。
 ///
 /// 标题行的「刷新状态」和卡片里的两条权限行必须是**同一份**模型，否则刷新按钮刷的
@@ -318,12 +296,14 @@ struct ReplicaSettingsView: View {
     /// 必须有默认值：`Tests/Native/UIInteractionHarness.swift` 仍然用单参构造。
     var initialTab: Int = 0
     @StateObject private var permissionProvider: PermissionStatusModelProvider
+    /// 「关于闪贴」页的状态模型。关于是内容区里的第七页，因此模型跟着设置根视图
+    /// 活着：切到别的分区再切回来，状态行（上次检查时间/检查中/有新版本）还在，
+    /// 不重开一份。
+    @StateObject private var aboutModel: BlinkClipAboutModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedExclusions: Set<String> = []
     @State private var showingMCPConfiguration = false
     @State private var tab: Int?
-    /// 点「关于闪贴」之前的分区：关于窗关闭后侧栏选中态要落回这里。
-    @State private var aboutReturnTab: Int?
     @State private var shortcutError = ""
     @State private var shortcutRowErrors: [String: String] = [:]
     @State private var shortcutRowGenerations: [String: Int] = [:]
@@ -344,10 +324,16 @@ struct ReplicaSettingsView: View {
     // 所以重开设置窗、重启应用都保持同值，不另存一份偏好。
     @State private var automaticUpdates = BlinkClipInAppUpdater.automaticallyChecksForUpdates
 
-    init(state: ReplicaUIState, initialTab: Int = 0, permissionModel: PermissionStatusModel? = nil) {
+    init(state: ReplicaUIState, initialTab: Int = 0, permissionModel: PermissionStatusModel? = nil,
+         aboutModel: BlinkClipAboutModel? = nil) {
         _state = ObservedObject(wrappedValue: state)
         self.initialTab = initialTab
         _permissionProvider = StateObject(wrappedValue: PermissionStatusModelProvider(injected: permissionModel))
+        // 关于页的模型可以由 harness 注入（用离线 appcast 夹具与空 updater 替身），
+        // 生产路径构造的就是应用菜单那颗按钮的同一条检查路径。
+        _aboutModel = StateObject(wrappedValue: aboutModel ?? BlinkClipAboutModel(
+            checker: BlinkClipUpdateChecker(),
+            sparkleCheck: { try BlinkClipInAppUpdater().checkForUpdates() }))
         // `@State` 的初值只在根视图被构造时读取；窗口已经开过就只能换一份新根视图
         // 才能换分区（见 `ReplicaUIController.installSettingsContent`）。
         _tab = State(initialValue: initialTab)
@@ -375,7 +361,8 @@ struct ReplicaSettingsView: View {
                 ForEach(SettingsSection.allCases) { section in
                     sidebarRow(section.title, icon: section.icon, index: section.rawValue)
                 }
-                // 「AI 工具」之后的动作行：不参与分区选中，点开关于窗口。
+                // 「AI 工具」之后的第七行：关于是内容区里的一个页面，和六个分区一样
+                // 参与选中（选中态、标题与右侧内容一起换）。
                 aboutRow
             }
             .listStyle(.sidebar)
@@ -393,8 +380,8 @@ struct ReplicaSettingsView: View {
         }
     }
 
-    /// 分区行的 tag 是分区 rawValue；这一行用一个不会被分区占用的值，绑定把它拦下来。
-    private static let aboutRowTag = 1_000
+    /// 关于页的侧栏行：tag 用 `SettingsAboutPane.tabIndex`（6），不会被六个分区
+    /// 的编号占用；选中它就把内容区换成关于页，不再打开任何独立窗口。
     private static let aboutRowTitleKey = "updates.about-title"
 
     private var aboutRow: some View {
@@ -402,39 +389,18 @@ struct ReplicaSettingsView: View {
             .font(.system(size: 13))
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .tag(Self.aboutRowTag)
+            .tag(SettingsAboutPane.tabIndex)
             .accessibilityLabel(SettingsCopy.text(Self.aboutRowTitleKey))
             .accessibilityIdentifier("BlinkClipSettingsAbout")
     }
 
-    /// 分区选中仍然直接写进 `tab`；「关于闪贴」那一行改成打开关于窗口，不改分区。
-    ///
-    /// 点动作行时**不动** `tab`（右侧内容与标题都留在原分区），只记住点击前的分区；
-    /// 关于窗关闭时再把这个分区写回选中态。原生侧栏在点击那一下已经把自己高亮到
-    /// 动作行上，而 `tab` 没变、SwiftUI 不会重画选区，所以关闭时要显式「清一帧再
-    /// 落回」（见 `restoreSidebarAfterAbout`），否则高亮会一直停在动作行。
+    /// 六个分区与关于页共用一份选中值：`tab` 就是当前页号，点哪一行都是直接写它。
+    /// 关于页不再有「动作行」语义，因此也没有「关闭后落回原分区」这类补帧逻辑。
     private var sidebarSelection: Binding<Int?> {
         Binding(get: { tab }, set: { value in
             guard let value else { return }
-            if value == Self.aboutRowTag {
-                aboutReturnTab = tab ?? 0
-                BlinkClipAboutWindow.present { restoreSidebarAfterAbout() }
-                return
-            }
             tab = value
         })
-    }
-
-    /// 关于窗关闭后把侧栏选中态落回点击前的分区，内容与标题跟着一起回去。
-    ///
-    /// 先置空一帧再写回原值：值没变化时 SwiftUI 不会重新应用选中态，原生
-    /// `NSOutlineView` 就留在动作行上。两帧之间内容与标题都指向同一个分区，不会出现
-    /// 「内容 A、标题 B」的错配。
-    private func restoreSidebarAfterAbout() {
-        guard let target = aboutReturnTab else { return }
-        aboutReturnTab = nil
-        tab = nil
-        DispatchQueue.main.async { tab = target }
     }
 
     private var sidebarTopInset: CGFloat {
@@ -442,20 +408,26 @@ struct ReplicaSettingsView: View {
         return 0
     }
 
+    /// 标题栏里那一行小标题：六个分区用自己的名字，关于页用「关于闪贴」。
     private var paneTitle: String {
-        SettingsSection(rawValue: tab ?? 0)?.title ?? SettingsSection.general.title
+        if tab == SettingsAboutPane.tabIndex { return SettingsCopy.text(Self.aboutRowTitleKey) }
+        return SettingsSection(rawValue: tab ?? 0)?.title ?? SettingsSection.general.title
     }
 
     private var detail: some View {
         VStack(alignment: .leading, spacing: 0) {
             Group {
-                switch tab ?? 0 {
-                case 1: privacy
-                case 2: screenshot
-                case 3: clipboard
-                case 4: shortcuts
-                case 5: mcp
-                default: general
+                if tab == SettingsAboutPane.tabIndex {
+                    about
+                } else {
+                    switch tab ?? 0 {
+                    case 1: privacy
+                    case 2: screenshot
+                    case 3: clipboard
+                    case 4: shortcuts
+                    case 5: mcp
+                    default: general
+                    }
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
@@ -712,6 +684,123 @@ struct ReplicaSettingsView: View {
                                         lineWidth: SettingsSurfaceStyle.borderWidth))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("settings.card")
+    }
+
+    // MARK: - 关于闪贴（内容区第七页）
+
+    /// 「关于闪贴」页。
+    ///
+    /// 关于不再是独立窗口：侧栏最后一行、应用菜单「关于 闪贴」以及面板 ⋯ / 状态栏
+    /// 右键菜单的「帮助与关于」（`.blinkClipOpenAbout`）都落到这一页。页面顺序固定为
+    /// 应用图标 → 名称 → 版本 → 一句话说明 → 分隔线 → **状态行 +「检查更新」** →
+    /// 分隔线 → 链接 → 版权/许可，即「状态 + 按钮」在链接与许可之上（用户要求把两块
+    /// 调换位置）。动作只有「检查更新」一个，没有关闭按钮：设置窗口自己的关闭按钮
+    /// 就是关闭路径。
+    ///
+    /// 排版完全走设置页既有模式：`SettingsPageScroll`（页顶 16pt，页级不居中）、
+    /// `settingsCard`（12pt 圆角 + 1pt 描边 + 10pt 内边距 + `settings.card` 标识）、
+    /// 卡里各段自带对称留白（`AboutPaneMetrics`），所以卡片内容在卡里垂直居中。
+    private var about: some View {
+        SettingsPageScroll {
+            VStack(alignment: .leading, spacing: 20) {
+                settingsCard(verticalPadding: 0) {
+                    aboutIdentity
+                    Divider()
+                    aboutStatusAndAction
+                    Divider()
+                    aboutLinks
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("about-page")
+    }
+
+    private static let aboutProjectURL = URL(string: "https://github.com/aexachao/BlinkClip")!
+    private static let aboutReleaseNotesURL = URL(string: "https://github.com/aexachao/BlinkClip/releases")!
+    private static let aboutLicenseURL = URL(string: "https://github.com/aexachao/BlinkClip/blob/main/LICENSE")!
+
+    /// 关于页沿用的更新文案（`updates.*`）仍在 Core 的资源表里，与旧的关于窗口
+    /// 用的是同一批字符串，不另抄一份。
+    private func updatesText(_ key: String) -> String { SettingsLocalization.text(key) }
+
+    /// 身份块：应用图标 96pt、名称、版本、一句话说明，全部水平居中。
+    private var aboutIdentity: some View {
+        VStack(spacing: 6) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: AboutPaneMetrics.iconSide, height: AboutPaneMetrics.iconSide)
+                .accessibilityLabel(ReplicaBrand.name)
+                .accessibilityIdentifier("about-application-icon")
+            Text(ReplicaBrand.name)
+                .font(.system(size: 22, weight: .semibold))
+                .accessibilityIdentifier("about-product-name")
+            Text(aboutModel.versionText)
+                .font(.system(size: 12))
+                .settingsSecondaryText()
+                .accessibilityIdentifier("about-current-version")
+            Text(updatesText("updates.description"))
+                .font(.system(size: 12))
+                .settingsSecondaryText()
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("about-description")
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, AboutPaneMetrics.identityTop)
+        .padding(.bottom, AboutPaneMetrics.identityBottom)
+    }
+
+    /// 状态行 +「检查更新」：一行状态文案压在唯一的主按钮上方，两者同一条中轴，
+    /// 间距 ≤12pt；检查中按钮置灰，状态行仍只报事实。
+    private var aboutStatusAndAction: some View {
+        VStack(spacing: AboutPaneMetrics.statusButtonSpacing) {
+            Text(aboutModel.statusText)
+                .font(.system(size: 12))
+                .settingsSecondaryText()
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("about-update-status")
+            Button(updatesText("updates.check")) { aboutModel.check() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(aboutModel.isChecking)
+                .accessibilityIdentifier("about-check-updates")
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, AboutPaneMetrics.actionTop)
+        .padding(.bottom, AboutPaneMetrics.actionBottom)
+    }
+
+    /// 链接与许可：两行都居中，排在动作块之下。
+    private var aboutLinks: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 18) {
+                aboutLink("updates.link-project", url: Self.aboutProjectURL,
+                          identifier: "about-project-link")
+                aboutLink("updates.link-releases", url: Self.aboutReleaseNotesURL,
+                          identifier: "about-release-notes-link")
+            }
+            HStack(spacing: 8) {
+                Text(updatesText("updates.copyright"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityIdentifier("about-copyright")
+                aboutLink("updates.link-license", url: Self.aboutLicenseURL,
+                          identifier: "about-license-link", fontSize: 11.5)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, AboutPaneMetrics.linksTop)
+        .padding(.bottom, AboutPaneMetrics.linksBottom)
+    }
+
+    private func aboutLink(_ key: String, url: URL, identifier: String,
+                           fontSize: CGFloat = 12) -> some View {
+        Link(updatesText(key), destination: url)
+            .font(.system(size: fontSize))
+            .accessibilityIdentifier(identifier)
     }
 
     /// 「截图」分区（侧栏 index 2）。
@@ -1408,6 +1497,31 @@ enum SettingsCardBlock {
     /// 保留期网格段：网格块的墨顶比说明文字的墨底高，上下取不同的值。
     static let tilesTop: CGFloat = 4.5
     static let tilesBottom: CGFloat = 4
+}
+
+/// 关于页卡片的段落留白。
+///
+/// 卡片本身只留 10pt 左右内边距（`settingsCard`，这里用 `verticalPadding: 0`），
+/// 段与段之间的呼吸由每一段自己带，与其它分区的卡片同一套做法（`SettingsCardBlock`）。
+/// 上下两段的留白是**实测调平**的：卡顶 → 图标框顶 与 版权框底 → 卡底 相等
+/// （差 0，见 `SettingsArchitectureHarness` 的 about 卡居中实测）。这里刻意用元素框
+/// 而不是像素墨迹：图标是图片资产，它自身的透明边缘会随画稿变，不适合当布局证据。
+enum AboutPaneMetrics {
+    /// 应用图标边长（任务口径约 96pt）。
+    static let iconSide: CGFloat = 96
+    /// 身份块：图标上留白与版权行下留白**相等**（10pt），卡片内容因此在卡里
+    /// 垂直居中（卡顶 → 图标框顶 = 版权框底 → 卡底，实测差 0）。
+    static let identityTop: CGFloat = 10
+    static let identityBottom: CGFloat = 12
+    /// 状态行与唯一主按钮的间距：≤12pt（任务口径），同一条中轴。
+    static let statusButtonSpacing: CGFloat = 8
+    /// 动作块（状态行 + 按钮）自带的上下留白。
+    static let actionTop: CGFloat = 14
+    static let actionBottom: CGFloat = 14
+    /// 链接与许可块：与身份块的上下留白配平（下留白取 10pt，与 `identityTop`
+    /// 一起构成卡片内容垂直居中的两个端点）。
+    static let linksTop: CGFloat = 14
+    static let linksBottom: CGFloat = 10
 }
 
 enum SettingsRowMetrics {

@@ -49,6 +49,9 @@ import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 ui = root / 'Sources/BlinkClip/UI'
 aux = (ui / 'AuxiliaryViews.swift').read_text()
+about_source = (ui / 'BlinkClipAboutWindowController.swift').read_text()
+ui_controller = (ui / 'ReplicaUIController.swift').read_text()
+app_main = (root / 'Sources/BlinkClip/AppMain.swift').read_text()
 surface = (ui / 'SettingsSurfaceStyle.swift').read_text()
 retention = (ui / 'HistoryCapacityControl.swift').read_text()
 permission = (ui / 'PermissionStatusView.swift').read_text()
@@ -68,7 +71,8 @@ checks = {
     # 3) 六页统一 16pt 顶部节奏，页面**顶部对齐**（上一轮的「装得下就居中」已撤销）：
     #    内边距只在 `SettingsPageMetrics` 写一次，六个分区共用同一个容器；
     #    容器里不得再出现 GeometryReader / minHeight 等于可视高度的居中 frame。
-    'six-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 6,
+    # 六个分区 + 关于页：内容区一共七页，共用同一个滚动容器与同一份页边距。
+    'seven-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 7,
     'page-insets-defined-once': aux.count('horizontalInset: CGFloat = 20') == 1
                                 and aux.count('topInset: CGFloat = 16') == 1
                                 and aux.count('bottomInset: CGFloat = 20') == 1,
@@ -91,11 +95,29 @@ checks = {
                                       and 'controller.updater.automaticallyChecksForUpdates' in (ui / 'BlinkClipInAppUpdater.swift').read_text(),
     'auto-update-copy-is-trilingual': 'settings.automatic-updates.title' in (ui / 'SettingsCopy.swift').read_text()
                                       and 'settings.automatic-updates.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
-    # P7 关于窗：只剩「检查更新」一个按钮，Esc 由窗口的键盘等价物接住。
-    'about-has-no-close-button': 'closeButton' not in (ui / 'BlinkClipAboutWindowController.swift').read_text()
-                                 and 'updates.close' not in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
-    'about-esc-closes-window': 'override func performKeyEquivalent(with event: NSEvent) -> Bool' in (ui / 'BlinkClipAboutWindowController.swift').read_text()
-                               and 'override func cancelOperation(_ sender: Any?)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
+    # Z3a：关于是设置页内的第七页（独立关于窗口已移除）。页面只有「检查更新」一个
+    # 动作按钮，状态 + 按钮排在链接/许可之上，检查中置灰，没有关闭按钮。
+    'about-is-a-settings-page': 'private var about: some View' in aux
+                                and 'SettingsAboutPane.tabIndex' in aux
+                                and 'case SettingsAboutPane' not in aux,
+    'about-window-is-gone': 'NSWindowController' not in about_source
+                            and 'showWindow(' not in about_source
+                            and 'windowIdentifier' not in about_source
+                            and 'about-close' not in aux,
+    'about-has-no-close-button': 'closeButton' not in about_source
+                                 and 'updates.close' not in about_source
+                                 and 'updates.close' not in aux,
+    'about-order-status-before-links': aux.index('aboutIdentity') < aux.index('aboutStatusAndAction')
+                                       < aux.index('aboutLinks'),
+    'about-one-prominent-button': aux.count('about-check-updates') == 1
+                                  and '.buttonStyle(.borderedProminent)' in aux
+                                  and '.disabled(aboutModel.isChecking)' in aux,
+    # 入口接线：应用菜单走 showSettings(initialTab:)，面板/状态栏菜单只发通知，
+    # 生产观察者在 ReplicaUIController 里把两者落到同一页。
+    'about-entry-paths': 'showSettings(initialTab: SettingsAboutPane.tabIndex)' in app_main
+                         and 'aboutController' not in app_main
+                         and 'forName: .blinkClipOpenAbout' in ui_controller
+                         and 'showSettings(initialTab: SettingsAboutPane.tabIndex)' in ui_controller,
     # 4) AI 页按钮进卡、说明与状态标题对齐、卡片底部同构分隔线。
     'ai-connect-inside-card': (mcp := aux[aux.index('private var mcp: some View'):aux.index('.sheet(isPresented: $showingMCPConfiguration)')])
                               .count('Divider().padding(.vertical, 8)') == 1
@@ -134,10 +156,10 @@ checks = {
     'conflict-names-the-occupant': '此快捷鍵已被「\\(owner)」占用。' in aux,
     'conflict-keeps-recording': 'rejection.pending != nil, case .assigned = state' in (ui / 'ShortcutRecorder.swift').read_text()
                                  and 'model.beginRecording()' in (ui / 'ShortcutRecorder.swift').read_text(),
-    # P4：关于动作行关闭后回落到点击前的分区。
-    'about-close-restores-selection': 'aboutReturnTab' in aux and 'restoreSidebarAfterAbout' in aux
-                                       and 'controller?.onClose = onClose' in aux
-                                       and 'func windowWillClose(_ notification: Notification)' in (ui / 'BlinkClipAboutWindowController.swift').read_text(),
+    # Z3a：关于行不再有「动作行」语义，选中态就是普通的一页（不需要回退补帧）。
+    'about-row-selects-a-page': 'aboutReturnTab' not in aux and 'restoreSidebarAfterAbout' not in aux
+                                 and 'BlinkClipAboutWindow.present' not in aux
+                                 and '.tag(SettingsAboutPane.tabIndex)' in aux,
     'translation-row-centered': 'return settingsRow(topPadding: SettingsRowMetrics.twoLineTop,'
                                  in aux
                                  and 'identifier: "settings.apple-translation.toggle"' in aux,

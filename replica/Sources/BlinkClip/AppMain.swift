@@ -22,9 +22,6 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     private var store: ClipboardStore!
     private var ui: ReplicaUIController!
     private lazy var inAppUpdater = BlinkClipInAppUpdater()
-    private lazy var aboutController = BlinkClipAboutWindowController(checker: BlinkClipUpdateChecker()) { [unowned self] in
-        try inAppUpdater.checkForUpdates()
-    }
     private var monitor: ClipboardMonitor?
     private var soundEffects: SoundEffects?
     private var diagnostics: DiagnosticsManager?
@@ -439,8 +436,9 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         catch { ui.presentError(error) }
     }
 
-    /// 「帮助与关于」只发通知，**由设置窗口观察后打开关于页**；
-    /// 关于页正在迁进设置页。观察者还没接上时，这次 post 没有副作用。
+    /// 「帮助与关于」只发通知，**由设置页控制器观察后打开关于页**：
+    /// `ReplicaUIController` 的观察者收到后打开（必要时创建）设置窗口并选中关于页，
+    /// 与应用菜单的 `about(_:)` 同一条落点。
     @objc private func openAbout(_ sender: Any?) {
         NotificationCenter.default.post(name: .blinkClipOpenAbout, object: nil)
     }
@@ -460,9 +458,12 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     /// 面板 ⋯ 菜单「暂停 闪贴 → 继续 闪贴」。
     @objc private func resumeMonitoring(_ sender: Any?) { ui.state.resumeMonitoring() }
 
+    /// 应用菜单「关于 \(ReplicaBrand.name)」：关于是设置窗口内容区里的一页，
+    /// 所以这里只是打开设置并选中那一页（与 `.blinkClipOpenAbout` 通知、
+    /// 面板 ⋯ / 状态栏菜单的「帮助与关于」是同一条落点），不再有独立窗口。
     @objc private func about(_ sender: Any?) {
         ui?.hidePanel()
-        aboutController.showWindow(sender)
+        ui?.showSettings(initialTab: SettingsAboutPane.tabIndex)
     }
     private func configurePauseMonitoring() {
         let paused = store.preferences.isMonitoringPaused
