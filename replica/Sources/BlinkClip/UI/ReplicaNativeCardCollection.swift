@@ -65,7 +65,12 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
     private var windowObservers: [NSObjectProtocol] = []
     private var initialDragLocation: NSPoint?
     private var dragWaitTimer: Timer?
-    private weak var draggingSession: NSDraggingSession?
+    /// 单击（没有拖动）的待决复制。AppKit 先送来 `clickCount == 1` 的 mouseUp，才轮到双击的
+    /// 第二次 mouseDown，所以在双击判定窗口（`NSEvent.doubleClickInterval`）里先挂起：
+    /// 期间没有第二次按下才落成「复制并收起」，有就由双击粘贴接管。
+    private var pendingClickCopy: Timer?
+    /// 只读：`mouseDragged` 越过 3pt 后是否真的起了原生拖拽会话（harness 用来区分单击与拖动）。
+    private(set) weak var draggingSession: NSDraggingSession?
     private var draggingWriters: [any NSPasteboardWriting] = []
     private var localMarker: ReplicaLocalItemDrag?
     private static let markerType = NSPasteboard.PasteboardType(ReplicaLocalItemDrag.typeIdentifier)
@@ -104,6 +109,7 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
             snapshotDrainScheduled = false
             items = []
             itemReferences = [:]
+            cancelPendingClickCopy()
         }
         self.state = state
         state.collectionOwner = self
@@ -587,7 +593,19 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
         state.select(renderedItem(at: index), modifiers: modifiers)
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        // 右键（含 ⌃ 单击）菜单优先：取消上一次单击留下的待决复制，避免菜单刚弹出面板就自己收起。
+        cancelPendingClickCopy()
+        initialDragLocation = nil
+        super.rightMouseDown(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // 任何新的按下都取代上一次待决的单击：双击的第二次按下因此只走下面的粘贴分支，
+        // 不会连带把第一次单击的「复制并收起」也执行一遍。
+        cancelPendingClickCopy()
+        // 旧一次按下的参照点也随之作废：只有真正走到下面的单击分支才重新建立。
+        initialDragLocation = nil
         guard let state else { super.mouseDown(with: event); return }
         let point = convert(event.locationInWindow, from: nil)
         guard let index = index(at: point), event.clickCount <= 2 else {
@@ -625,9 +643,64 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
         }
     }
 
+    override func mouseUp(with event: NSEvent) {
+        // 松开即取消「按下已选中」的延迟收拢：这一次要么是拖拽，要么是单击复制。
+        dragWaitTimer?.invalidate()
+        // `mouseDragged` 已经开始拖拽时会清掉参照点；没有参照点说明这次按下不是卡片单击。
+        guard let pressed = initialDragLocation else { super.mouseUp(with: event); return }
+        initialDragLocation = nil
+        let point = convert(event.locationInWindow, from: nil)
+        // 与 `mouseDragged` 使用同一个 3pt 阈值：越过它就是拖拽，不复制。
+        guard hypot(point.x - pressed.x, point.y - pressed.y) <= 3,
+              event.clickCount == 1,
+              let index = index(at: point), items.indices.contains(index) else {
+            super.mouseUp(with: event)
+            return
+        }
+        // 只有「裸」单击才复制：⌘/⇧ 保留多选、⌃ 保留右键菜单、⌥ 保留其它修饰键语义。
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .function, .numericPad])
+        guard modifiers.isEmpty else { super.mouseUp(with: event); return }
+        scheduleClickCopy(itemID: items[index].id)
+    }
+
+    private func scheduleClickCopy(itemID: UUID) {
+        cancelPendingClickCopy()
+        pendingClickCopy = Timer.scheduledTimer(withTimeInterval: NSEvent.doubleClickInterval,
+                                                repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pendingClickCopy = nil
+                self.performClickCopy(itemID: itemID)
+            }
+        }
+    }
+
+    private func cancelPendingClickCopy() {
+        pendingClickCopy?.invalidate()
+        pendingClickCopy = nil
+    }
+
+    /// 单击一张卡片 = 复制该条目并收起面板（与面板 ⌘C 同一条复制入口）。
+    private func performClickCopy(itemID: UUID) {
+        guard let state, let current = appliedItems(for: state),
+              let index = current.firstIndex(where: { $0.id == itemID }) else { return }
+        // 面板已经收起（例如等待窗口里按了 Esc）就不再补一次复制。
+        guard window?.isVisible == true else { return }
+        // 点中的卡片若属于多选，先把选区收拢到这一张——与「按下已选中 0.45s 后收拢」同一语义，
+        // 否则 `copySelection` 会把整组多选一起复制。
+        if state.selection != [itemID] || state.orderedSelectionIDs != [itemID] {
+            state.selectAfterPressDelay(at: index)
+        }
+        // 复制成功后的 Toast、音效与收起都由 `ReplicaUIController.performCopy` 负责，
+        // 这里不另写一套复制/收起逻辑。
+        state.controller?.copySelection(plainTextOnly: false)
+    }
+
     override func mouseDragged(with event: NSEvent) {
         guard let initialDragLocation else { return }
         dragWaitTimer?.invalidate()
+        cancelPendingClickCopy()
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x - initialDragLocation.x, point.y - initialDragLocation.y) > 3,
               let state, !state.orderedSelectionIDs.isEmpty else { return }
