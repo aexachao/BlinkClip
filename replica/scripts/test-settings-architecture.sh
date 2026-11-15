@@ -13,7 +13,7 @@ mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$ARTIFACT_TASK_DIR/out"
 test_root="$ARTIFACT_TASK_DIR/build/harness"
 mkdir -p "$test_root"
 source "$replica_root/Tests/Native/build-support.sh"
-shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipInAppUpdater.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
+shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipInAppUpdater.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 prepare_native_test_ui > "$ARTIFACT_TASK_DIR/out/build.log" 2>&1
 compile_native_test_harness shortcut-row-restore "$replica_root/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Tests/Native/ShortcutRowRestoreHarness.swift" > "$ARTIFACT_TASK_DIR/out/row-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/row-test.log"
@@ -185,7 +185,7 @@ checks = {
                                 and 'Spacer(minLength: spacing)' in aux,
     # A card supplies horizontal inset only; each row owns its vertical inset.
     'settings-rows-pad-symmetrically': '.padding(.vertical, verticalPadding)' in aux
-                                      and 'enum SettingsRowMetrics' in aux
+                                      and 'enum SettingsRowMetrics' in surface
                                       and 'padding(.vertical' not in
                                       aux[aux.index('private func settingsCard<'):aux.index('// MARK: - 关于闪贴')],
     'row-controls-go-through-one-toggle': aux.count('labelsHidden().toggleStyle(.switch).controlSize(.mini)') == 1

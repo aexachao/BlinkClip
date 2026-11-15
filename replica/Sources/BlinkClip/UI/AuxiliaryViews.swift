@@ -1518,13 +1518,6 @@ enum AboutPaneMetrics {
     static let iconSide: CGFloat = 96
 }
 
-/// Each row supplies its own vertical inset, including at the card edges.
-enum SettingsRowMetrics {
-    static let singleLine: CGFloat = 9
-    static let withDescription: CGFloat = 8
-    static let sectionContent: CGFloat = 12
-}
-
 /// A native radio picker aligns its indicator with the first baseline.
 /// Lay out the visible rows directly so the indicator follows the centre of
 /// the whole text block, and keep native radio semantics for assistive input.

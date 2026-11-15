@@ -78,6 +78,15 @@ enum SettingsSurfaceStyle {
     }
 }
 
+/// 行自己提供的上下留白：卡片只给左右内边距，首行与末行同样贴卡顶/卡底。
+/// 放在这里与 `SettingsSurfaceStyle` 同一份「卡片与行的盒子」来源，权限页与
+/// 同步控制器只用 `SettingsRowMetrics` 时不必连带引入整个设置页。
+enum SettingsRowMetrics {
+    static let singleLine: CGFloat = 9
+    static let withDescription: CGFloat = 8
+    static let sectionContent: CGFloat = 12
+}
+
 /// 卡片里的说明文字。设置页里所有 11pt/12pt 副标题共用这一个样式，
 /// 系统 `.secondary` 在浅色卡片上不达标（见 `SettingsSurfaceStyle`）。
 private struct SettingsSecondaryTextStyle: ViewModifier {
