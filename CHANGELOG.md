@@ -1,5 +1,21 @@
 # 更新日志
 
+## 1.0.22 · 2026-11-16（GitHub Releases）
+
+编辑器选框与框选覆盖层的 chrome 合并成一套：进出编辑器同样的 1pt 实线边框、边中点横条、四角 L 形角标与 22×22pt 命中区，编辑器不再叠一层圆点和虚线。发布链路新增源码指纹护栏，构建前作废过期架构缓存、产物落地即封存、公证前复核。CloudKit、签名与更新通道均无变更。
+
+### 编辑器
+
+- **编辑器选框 chrome 与框选覆盖层统一。** 编辑器那一层改前自己画一套：2pt `[6,4]` 虚线边框、8 个 8pt 圆点手柄、12×12pt 命中区；覆盖层画的是 1pt 实线、20×4pt 边中点横条、12×2pt 四角 L 角标、22×22pt 命中区。两套同时上屏，松手进编辑器就能看到「虚线圈 + 圆点 + 横条 + 角标」叠在一起。现在编辑器只有这一套：**1pt 实线边框、边中点横条、四角 L 形角标、22×22pt 命中区**，编辑器重复绘制的圆点与虚线已删除。
+
+- **两侧改用同一个绘制函数，并以逐像素 parity 断言锁死。** 边框、8 个手柄、尺寸标签与抓取范围全部收进覆盖层的 `SelectionView.drawSelectionChrome(in:rect:showsHandles:sizeLabel:)`，编辑器的 `SelectionChromeOverlay` 只决定「什么时候画、命中谁」，不再自带形态与常量。新增 `EditorChromeParityHarness` 与 `replica/scripts/test-editor-chrome-parity.sh`：离屏渲染两侧逐像素比对强调色实心像素集合必须完全相同（编辑器多画一个圆点或一段虚线即失败），另断言边框实线无虚线段、横条 20×4pt、L 角标 12×2pt、圆点数为 0，以及角内 9pt 按下可缩放、12pt 按下不命中。
+
+### 发布护栏
+
+- **构建前按源码内容指纹作废过期架构缓存。** SwiftPM 只按 mtime 判断要不要重编，源文件时间不前进（`cp -p`、`git checkout` 还原旧时间、共享 scratch）时会静默复用过期 `.o`，产出「版本号是新的、代码是旧的」包，而打包脚本毫无察觉。新增 `replica/scripts/source-fingerprint.py`（`digest` / `seal` / `verify`）：`build-app.sh` 每次构建先算源码集（`Sources`、`Vendor`、`Assets`、`Package.swift`、`package.json`）的内容指纹，与 scratch 里记录的指纹不一致就清掉 `architectures/` 与 `build.db` 后重建（保留 `artifacts`/`checkouts`，不重新下载 Sparkle），指纹不变则复用缓存。
+
+- **产物落地后 seal，公证前 verify。** 构建完成后断言可执行文件比所有源码输入新，并把源码指纹、git 提交、各可执行文件 sha256 写进 `BlinkClip.build-manifest.json`；`build-notarized.sh` 在公证前与 `validate.sh` 在验证前都跑 `verify`，**源码指纹 / 版本 / 可执行文件 sha256 / 时序任一不一致即中止发布**，签名清单同时记下 `source_digest` 与 `source_commit`，事后仅凭 DMG 与清单就能核对它由哪份源码构建。
+
 ## 1.0.21 · 2026-11-16（GitHub Releases）
 
 框选覆盖层三处细节收紧：十字辅线改由独立图层驱动，指针移动期间不再重绘整窗快照；四种状态的边框线宽统一成 1pt；操作手柄由圆点换成边中点横条加四角 L 形角标，命中区扩大到 22×22pt。CloudKit、签名与更新通道均无变更。
