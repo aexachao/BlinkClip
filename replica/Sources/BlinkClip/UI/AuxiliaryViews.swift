@@ -314,6 +314,7 @@ struct ReplicaSettingsView: View {
     // 初值在根视图构造时读一次（与 `initialTab` 同一时机），写入同时落到桥接层。
     @State private var screenshotPostCaptureAction = BlinkClipScreenshotSettings.postCaptureAction
     @State private var appleTranslationEnabled = TranslationSettingsBridge.appleTranslationEnabled
+    @State private var snapGuidesCenterLines = BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled
     // 「键盘快捷键 → 截图」：录制器要显示当前组合，靠这两份 @State + 通知回填；
     // 注册失败状态同理（改键后立刻显示，不必重开窗口）。
     @State private var screenshotRegionShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .region)
@@ -886,8 +887,36 @@ struct ReplicaSettingsView: View {
                         screenshotTranslationRow
                     }
                 }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(ScreenshotSettingsCopy.text(.guidesSectionTitle))
+                    settingsCard {
+                        screenshotCenterLinesRow
+                    }
+                }
             }
         }
+    }
+
+    /// 框选辅助：四边吸附描线始终显示，这一行只控制可选的中线。
+    private var screenshotCenterLinesRow: some View {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
+            Text(ScreenshotSettingsCopy.text(.centerLinesTitle))
+            Text(ScreenshotSettingsCopy.text(.centerLinesSubtitle))
+                .font(.caption).settingsSecondaryText()
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.snap-guides.center-lines.subtitle")
+        } trailing: {
+            settingsRowSwitch(title: ScreenshotSettingsCopy.text(.centerLinesTitle),
+                              isOn: snapGuidesCenterLinesBinding,
+                              identifier: "settings.snap-guides.center-lines.toggle")
+        }
+    }
+
+    private var snapGuidesCenterLinesBinding: Binding<Bool> {
+        Binding(get: { snapGuidesCenterLines }, set: { enabled in
+            snapGuidesCenterLines = enabled
+            BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled = enabled
+        })
     }
 
     private func screenshotActionTitle(_ action: BlinkClipScreenshotAction) -> String {

@@ -90,6 +90,22 @@ public enum BlinkClipScreenshotSettings {
         }
     }
 
+    // MARK: - 框选吸附辅助线
+
+    /// 吸附辅助线是否叠加 hover 窗口的中线（水平 + 垂直）。默认关。
+    ///
+    /// 键名与 `Sources/BlinkClip/UI/AuxiliaryViews.swift` 里读写的字符串必须一致
+    /// （同一存储，两个 module）。四边描线始终显示，中线只是可选的额外参考。
+    public static let snapGuidesCenterLinesKey = "blinkclip.screenshot.snapGuides.centerLines"
+
+    public static var snapGuidesCenterLinesEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: snapGuidesCenterLinesKey) }
+        set {
+            guard newValue != snapGuidesCenterLinesEnabled else { return }
+            UserDefaults.standard.set(newValue, forKey: snapGuidesCenterLinesKey)
+        }
+    }
+
     // MARK: - 两个截图热键（B 档：可在设置里改）
 
     /// 键名与 `Sources/BlinkClip/UI/` 侧读写的字符串必须一致（同一存储，两个 module）。

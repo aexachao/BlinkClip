@@ -555,10 +555,64 @@ class OverlayWindowController {
         return true
     }
 
+    /// Full window-list enumerations are not free, and the snap guide only
+    /// needs a fresh list when a window opens, closes, moves or changes z-order.
+    /// Enumerate once at open, then refresh the cached list at 8Hz: hit testing
+    /// on every mouse move stays a scan of the cache (no enumeration), and a
+    /// still pointer costs only eight lists a second.
+    private static let windowEnumerationInterval: TimeInterval = 1.0 / 8.0
+
+    private var windowEnumerationTimer: DispatchSourceTimer?
+    private var windowEnumerationInFlight = false
+
     private func startWindowEnumeration(generation: Int) {
-        guard presetImage == nil,
+        refreshWindowList(generation: generation)
+        startWindowEnumerationRefresh(generation: generation)
+    }
+
+    private func startWindowEnumerationRefresh(generation: Int) {
+        guard windowEnumerationTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(
+            deadline: .now() + Self.windowEnumerationInterval,
+            repeating: Self.windowEnumerationInterval,
+            leeway: .milliseconds(10)
+        )
+        timer.setEventHandler { [weak self] in
+            guard let self,
+                  generation == self.presentationGeneration,
+                  !self.sessionEnded else { return }
+            self.refreshWindowList(generation: generation)
+        }
+        timer.resume()
+        windowEnumerationTimer = timer
+    }
+
+    /// Every window this capture session owns: overlay panels (shown or being
+    /// prepared for a display) plus the lens/chip HUD.
+    private func currentSessionChromeWindowNumbers() -> Set<CGWindowID> {
+        var numbers: Set<CGWindowID> = []
+        let owned = windows
+            + Array(preparedOverlayPanels.values)
+            + [magnifierLensPanel, chipWindow].compactMap { $0 }
+        for window in owned where window.windowNumber > 0 {
+            numbers.insert(CGWindowID(window.windowNumber))
+        }
+        return numbers
+    }
+
+    private func stopWindowEnumerationRefresh() {
+        windowEnumerationTimer?.cancel()
+        windowEnumerationTimer = nil
+        windowEnumerationInFlight = false
+    }
+
+    private func refreshWindowList(generation: Int) {
+        guard !windowEnumerationInFlight,
+              presetImage == nil,
               suspendedDraft == nil,
               let primaryFrame = NSScreen.screens.first?.frame else { return }
+        windowEnumerationInFlight = true
         let primaryScreenArea = primaryFrame.width * primaryFrame.height
 
         let snapshotLoader = windowSnapshotLoader
@@ -567,13 +621,20 @@ class OverlayWindowController {
             let result = snapshotLoader(primaryScreenArea)
             context?.mark(.windowEnumerationReady)
             MainRunLoopScheduler.perform {
-                guard let self,
-                      generation == self.presentationGeneration,
+                guard let self else { return }
+                self.windowEnumerationInFlight = false
+                guard generation == self.presentationGeneration,
                       !self.sessionEnded else { return }
                 self.triggerContext?.mark(.windowEnumerationApplied)
                 switch result {
                 case .success(let windows):
-                    self.windowDetector.apply(windows)
+                    // The detector already drops product chrome by level. Own
+                    // window numbers are dropped here too: a pooled overlay
+                    // panel being prepared can still be at the default level
+                    // when this snapshot is taken, and it must never become
+                    // its own hover target.
+                    let sessionChrome = self.currentSessionChromeWindowNumbers()
+                    self.windowDetector.apply(windows.filter { !sessionChrome.contains($0.windowID) })
                     for selectionView in self.selectionViewsByDisplayID.values {
                         selectionView.refreshHoverAtCurrentMouseLocation()
                     }
@@ -732,16 +793,11 @@ class OverlayWindowController {
             selectionView.mayActivateAppForCursor = !pendingFocusSensitiveForegroundClaim
             selectionView.delegate = self
             selectionView.windowDetector = windowDetector
-            // The pointer guide is a desktop-wide reference: whichever display
-            // sees the mouse movement mirrors the screen point into every
-            // overlay, so the horizontal line continues over the neighbouring
-            // display instead of stopping at this screen's edge.
-            selectionView.onCrosshairMoved = { [weak self] screenPoint in
-                guard let self else { return }
-                for view in self.selectionViewsByDisplayID.values {
-                    view.updateCrosshair(globalPoint: screenPoint)
-                }
-            }
+            // Snap guides are per-display: each overlay resolves the window
+            // under the pointer only when the pointer is on its own display.
+            // Nothing is broadcast across screens, so a guide can never land on
+            // the wrong monitor or inherit a neighbour's Y coordinate.
+            selectionView.showsGuideCenterLines = BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled
             selectionView.aspectRatio = usesAspectRatioSelection ? Self.persistedSelectionAspectRatio : nil
             selectionView.onFirstDrawCompleted = { [weak self] in
                 self?.recordFirstDraw(generation: generation)
@@ -793,11 +849,11 @@ class OverlayWindowController {
         CATransaction.commit()
         triggerContext?.mark(.overlayOrderedFront)
 
-        // Seed the guides at the pointer location the overlay opened at, so the
-        // crosshair is there before the first mouse move arrives.
-        let pointerAtPresentation = NSEvent.mouseLocation
+        // Seed the hover target at the pointer location the overlay opened at,
+        // so the guide is already on the hovered window before the first mouse
+        // move arrives (and so a pointer resting still shows it).
         for view in selectionViewsByDisplayID.values {
-            view.updateCrosshair(globalPoint: pointerAtPresentation)
+            view.refreshHoverAtCurrentMouseLocation()
         }
 
         if shouldShowMagnifierLensPanel {
@@ -1367,6 +1423,7 @@ class OverlayWindowController {
         guard !sessionEnded else { return }
         sessionEnded = true
         presentationGeneration += 1
+        stopWindowEnumerationRefresh()
         snapshotCancellation?()
         snapshotCancellation = nil
         snapshotDeadline?.cancel()

@@ -27,31 +27,35 @@ extension SelectionViewDelegate {
     func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
 }
 
-/// One axis of the pointer guide: a 1.5pt solid `systemGray` line at 50%.
+/// The snap guide: the four edges of the window under the pointer (and,
+/// optionally, its horizontal/vertical centre lines) drawn as a 1.5pt
+/// `systemGray` 50% dashed line.
 ///
-/// The guide lives in its own layer, so following the pointer is a layer move
-/// rather than a repaint of the overlay's full-screen snapshot. The style is
-/// deliberately quiet: the pointer itself is the *system* crosshair
-/// (`NSCursor.crosshair`, hardware-composited, never hidden), so the guide only
-/// has to communicate alignment. A solid low-contrast line makes the one
-/// display frame an AppKit update can trail the pointer by almost invisible.
-private final class CrosshairBandView: NSView {
-    enum Axis {
-        case horizontal
-        case vertical
-    }
-
-    /// Guide weight and colour alpha. The line is solid: the source gate reads
-    /// these constants, so the documented style cannot drift from the drawn one.
+/// The guide lives in its own layer and is positioned by *window target*, not
+/// by pointer coordinate: moving inside one window writes nothing at all, and
+/// crossing into another window replaces the whole path in one synchronous
+/// update — the guide jumps, it never interpolates. The pointer itself is the
+/// *system* crosshair (`NSCursor.crosshair`, hardware-composited, never
+/// hidden), so the view never draws or hides it.
+private final class SnapGuideView: NSView {
+    /// Guide weight and colour alpha. The source gate reads these constants, so
+    /// the documented style cannot drift from the drawn one.
     static let lineWidth: CGFloat = 1.5
     static let alpha: CGFloat = 0.5
 
-    private let axis: Axis
-    private let lineLayer = CAShapeLayer()
-    private var placedRect: NSRect = .null
+    /// Dash rhythm in points: 6pt on, 4pt off.
+    ///
+    /// **This is the one and only place to change the guide's line style.**
+    /// The historical default was a solid line (1.0.25) and the SG spec calls
+    /// for a dashed one (6/4) again; setting this constant to `nil` restores
+    /// the solid line without touching any drawing or layout code.
+    static let dashPattern: [NSNumber]? = [6, 4]
 
-    init(axis: Axis) {
-        self.axis = axis
+    private let lineLayer = CAShapeLayer()
+    private var placedTarget: NSRect = .null
+    private var showsCenterLines = false
+
+    init() {
         super.init(frame: .zero)
         wantsLayer = true
         isHidden = true
@@ -68,13 +72,11 @@ private final class CrosshairBandView: NSView {
         lineLayer.strokeColor = NSColor.systemGray
             .withAlphaComponent(Self.alpha).cgColor
         lineLayer.lineWidth = Self.lineWidth
-        // Solid: a dashed guide was tried in 1.0.25 and rejected — the user
-        // reads the crossing point faster on a continuous line.
-        lineLayer.lineDashPattern = nil
+        lineLayer.lineDashPattern = Self.dashPattern
         lineLayer.lineCap = .butt
         lineLayer.isOpaque = false
         lineLayer.masksToBounds = false
-        // A move must not animate: the guide has to be at the pointer's new
+        // A move must not animate: the guide has to be at the target's new
         // position in this event, not ride a 0.25s implicit animation.
         lineLayer.actions = [
             "position": NSNull(),
@@ -94,35 +96,51 @@ private final class CrosshairBandView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Moves the band to `rect` (view coordinates), re-states its line path and
-    /// displays the layer synchronously, so the new position belongs to this
-    /// event instead of the next run-loop turn.
-    func place(_ rect: NSRect, visible: Bool) {
+    /// Four edge lines are the whole guide; the centre lines are optional chrome
+    /// (settings) and do not change the target geometry.
+    private func guidePath(in rect: NSRect, centerLines: Bool) -> CGPath {
+        let path = CGMutablePath()
+        // Keep the 1.5pt stroke inside the target rect, exactly on its edges.
+        let edge = rect.insetBy(dx: Self.lineWidth / 2, dy: Self.lineWidth / 2)
+        guard edge.width > 0, edge.height > 0 else { return path }
+        path.addRect(edge)
+        if centerLines {
+            path.move(to: CGPoint(x: edge.midX, y: edge.minY))
+            path.addLine(to: CGPoint(x: edge.midX, y: edge.maxY))
+            path.move(to: CGPoint(x: edge.minX, y: edge.midY))
+            path.addLine(to: CGPoint(x: edge.maxX, y: edge.midY))
+        }
+        return path
+    }
+
+    /// Positions the guide on `rect` (view coordinates) or hides it.
+    ///
+    /// The early return is the whole "snaps like a shadow" contract: while the
+    /// pointer stays inside the same window the target rect does not change, so
+    /// nothing is recomputed, no path is rebuilt and no layer is displayed.
+    /// - Returns: true when visibility or geometry was actually written.
+    @discardableResult
+    func place(_ rect: NSRect, visible: Bool, centerLines: Bool) -> Bool {
+        var wrote = false
         if isHidden != !visible {
             isHidden = !visible
+            wrote = true
         }
         guard visible else {
-            placedRect = .null
-            return
+            placedTarget = .null
+            return wrote
         }
-        guard !rect.equalTo(placedRect) else { return }
-        placedRect = rect
+        guard rect != placedTarget || centerLines != showsCenterLines else { return false }
+        placedTarget = rect
+        showsCenterLines = centerLines
         frame = rect
         lineLayer.frame = bounds
-        let path = CGMutablePath()
-        switch axis {
-        case .horizontal:
-            path.move(to: CGPoint(x: 0, y: bounds.midY))
-            path.addLine(to: CGPoint(x: bounds.maxX, y: bounds.midY))
-        case .vertical:
-            path.move(to: CGPoint(x: bounds.midX, y: 0))
-            path.addLine(to: CGPoint(x: bounds.midX, y: bounds.maxY))
-        }
-        lineLayer.path = path
+        lineLayer.path = guidePath(in: bounds, centerLines: centerLines)
         // Render the layer now, inside the caller's disabled-actions
-        // transaction: a guide movement is never deferred to the next run loop.
+        // transaction: a guide jump is never deferred to the next run loop.
         lineLayer.setNeedsDisplay()
         lineLayer.displayIfNeeded()
+        return true
     }
 }
 
@@ -157,9 +175,10 @@ class SelectionView: NSView {
     private var state: State = .idle {
         didSet {
             if state != oldValue {
-                // The guides are only shown while drawing; a committed frame
-                // hides them without repainting anything.
-                updateCrosshairLayers()
+                // The guide belonged to the idle hover; a click, a committed
+                // frame or a returned selection hides it without repainting
+                // the snapshot (it is a layer).
+                refreshSnapGuide()
             }
         }
     }
@@ -180,7 +199,7 @@ class SelectionView: NSView {
         didSet {
             if selectionLocked != oldValue {
                 refreshCursorRects()
-                updateCrosshairLayers()
+                refreshSnapGuide()
             }
         }
     }
@@ -189,7 +208,7 @@ class SelectionView: NSView {
     var scrollCaptureActive = false {
         didSet {
             if scrollCaptureActive != oldValue {
-                updateCrosshairLayers()
+                refreshSnapGuide()
             }
         }
     }
@@ -200,7 +219,7 @@ class SelectionView: NSView {
             if selectionInteractionEnabled != oldValue {
                 refreshCursorRects()
                 needsDisplay = true
-                updateCrosshairLayers()
+                refreshSnapGuide()
             }
         }
     }
@@ -253,28 +272,31 @@ class SelectionView: NSView {
     private var pendingWindowID: CGWindowID?
     private let windowClickThreshold: CGFloat = 4
 
-    // MARK: - Crosshair
+    // MARK: - Snap guide
 
-    /// Pointer position in screen (global) coordinates, or `nil` when the
-    /// crosshair is hidden. Stored globally so every display's overlay draws
-    /// the same crossing point at its own local coordinates — a pointer on one
-    /// screen then continues the horizontal line across a side-by-side setup.
-    private var crosshairScreenPoint: NSPoint?
-    /// The same point in this view's coordinates. Cached because hiding the
-    /// guides after the pointer has already moved on still needs it.
-    private var crosshairLocalPoint: NSPoint?
-    /// Set by `OverlayWindowController`: a pointer move seen by one display's
-    /// overlay is mirrored to the overlays of every other display.
-    var onCrosshairMoved: ((NSPoint) -> Void)?
+    /// The guide lives in its own view-backed layer (`SnapGuideView`), not in
+    /// the overlay's snapshot drawing. It is positioned by the hovered window,
+    /// not by the pointer: a move inside one window writes nothing, and a move
+    /// into another window replaces the path synchronously — the line jumps and
+    /// never trails the pointer by a run-loop turn. The pointer itself is the
+    /// system crosshair: this view never draws or hides it.
+    private let snapGuide = SnapGuideView()
 
-    /// The guides live in their own view-backed layers (`CrosshairBandView`),
-    /// not in the overlay's snapshot drawing. A pointer move then only moves a
-    /// layer — the full-screen snapshot is never invalidated, and the layer is
-    /// displayed inside the same transaction, so the line cannot trail the
-    /// pointer by a run-loop turn. The pointer itself is the system crosshair:
-    /// this view never draws or hides it.
-    private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)
-    private let crosshairVertical = CrosshairBandView(axis: .vertical)
+    /// Settings: draw the hovered window's horizontal/vertical centre lines too.
+    /// Off by default. Read by `OverlayWindowController` from the screenshot
+    /// preferences when the overlay opens.
+    var showsGuideCenterLines = false {
+        didSet {
+            guard showsGuideCenterLines != oldValue else { return }
+            refreshSnapGuide()
+        }
+    }
+
+    /// Evidence counters for the acceptance harness: how many times the hover
+    /// target actually changed, and how many times the guide layer was written.
+    /// Both are plain integers on the existing update path — no extra work.
+    private(set) var hoverTargetChangeCount = 0
+    private(set) var snapGuideWriteCount = 0
 
     // MARK: - Constants
 
@@ -317,130 +339,65 @@ class SelectionView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        installCrosshairBands()
+        installSnapGuide()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        installCrosshairBands()
+        installSnapGuide()
     }
 
-    /// Adds the two guide layers above everything the snapshot drawing puts on
-    /// screen. They stay hidden until a pointer position is known.
-    private func installCrosshairBands() {
-        for band in [crosshairHorizontal, crosshairVertical] {
-            band.isHidden = true
-            addSubview(band)
-        }
+    /// Adds the guide layer above everything the snapshot drawing puts on
+    /// screen. It stays hidden until a window is hovered.
+    private func installSnapGuide() {
+        snapGuide.isHidden = true
+        addSubview(snapGuide)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        // The guides span the whole overlay, so a resize re-states their length.
-        updateCrosshairLayers()
+        // A clamped target is expressed in this view's coordinates, so a resize
+        // re-states the guide against the new bounds.
+        refreshSnapGuide()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        updateCrosshairLayers()
+        refreshSnapGuide()
     }
 
     var currentSelectionRect: NSRect? { selectionRect }
 
     func refreshHoverAtCurrentMouseLocation() {
-        guard state == .idle, !selectionLocked else { return }
-        updateWindowHover(screenPoint: NSEvent.mouseLocation)
-    }
-
-    // MARK: - Crosshair
-
-    /// Mirrors the pointer (screen coordinates) into this overlay and moves the
-    /// two guide layers. No part of the frozen snapshot is redrawn, so this is
-    /// cheap enough to run on every mouse event. `nil` hides the crosshair.
-    func updateCrosshair(globalPoint: NSPoint?) {
-        crosshairScreenPoint = globalPoint
-        crosshairLocalPoint = globalPoint.flatMap(localPoint(forScreenPoint:))
-        updateCrosshairLayers()
-    }
-
-    /// Hides the crosshair without touching the pointer bookkeeping used by
-    /// the drag itself (mouse-exit on the display holding the pointer).
-    private func hideCrosshair() {
-        guard crosshairScreenPoint != nil || crosshairLocalPoint != nil else { return }
-        crosshairScreenPoint = nil
-        crosshairLocalPoint = nil
-        updateCrosshairLayers()
-    }
-
-    private func localPoint(forScreenPoint point: NSPoint) -> NSPoint? {
-        guard let window else { return nil }
-        return convert(window.convertPoint(fromScreen: point), from: nil)
-    }
-
-    /// Positions the two guide layers. Each axis is written only when its
-    /// geometry actually changes, every write happens inside one transaction
-    /// with implicit animations disabled, and `CrosshairBandView.place` renders
-    /// the layer synchronously — the guide therefore belongs to the mouse event
-    /// that moved it, not to the next run-loop turn. The pointer is not part of
-    /// this view at all: it is the system crosshair, drawn by the WindowServer
-    /// and never hidden, so there is no second pointer to keep in sync.
-    private func updateCrosshairLayers() {
-        let showsGuides = state == .idle || state == .drawing
-        guard showsGuides,
-              selectionInteractionEnabled,
-              !scrollCaptureActive,
-              !selectionLocked,
-              let point = crosshairLocalPoint
-        else {
-            crosshairHorizontal.isHidden = true
-            crosshairVertical.isHidden = true
+        guard state == .idle, !selectionLocked, selectionInteractionEnabled else {
+            clearHover()
             return
         }
+        updateHover(screenPoint: NSEvent.mouseLocation)
+    }
 
-        // Snap the hairline centre to the device pixel grid: a 1.5pt stroke is
-        // exactly three device pixels on a 2x display, and centring it on a
-        // half-pixel edge keeps it crisp instead of blurred.
-        let scale = window?.backingScaleFactor ?? 2
-        let widthPx = (CrosshairBandView.lineWidth * scale).rounded()
-        let offset: CGFloat = widthPx.truncatingRemainder(dividingBy: 2) == 1 ? 0.5 : 0
-        let x = ((point.x * scale).rounded(.down) + offset) / scale
-        let y = ((point.y * scale).rounded(.down) + offset) / scale
-        let showsHorizontal = bounds.minY...bounds.maxY ~= y
-        let showsVertical = bounds.minX...bounds.maxX ~= x
-        let thickness = CrosshairBandView.lineWidth
+    // MARK: - Snap guide
+
+    /// Positions (or hides) the guide for the current hover target.
+    ///
+    /// This is the only place the guide is written. It runs on the hover target
+    /// change, on state changes that affect visibility, and on a frame resize —
+    /// never on a plain pointer move. `SnapGuideView.place` early-returns while
+    /// the target rect is unchanged, so hovering one window is zero work for the
+    /// guide even if the pointer moves across it at 1000Hz.
+    private func refreshSnapGuide() {
+        let showsGuide = state == .idle
+            && selectionInteractionEnabled
+            && !scrollCaptureActive
+            && !selectionLocked
+            && hoverWindowRect != nil
+        let rect = showsGuide ? (hoverWindowRect ?? .zero) : .zero
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-
-        // A pointer on one display continues the horizontal line onto its
-        // neighbours, while the vertical line only lands on the pointer's own
-        // display: each overlay only writes the axis that changed.
-        let horizontalRect = showsHorizontal
-            ? NSRect(x: bounds.minX, y: y - thickness / 2, width: bounds.width, height: thickness)
-            : .zero
-        let verticalRect = showsVertical
-            ? NSRect(x: x - thickness / 2, y: bounds.minY, width: thickness, height: bounds.height)
-            : .zero
-        crosshairHorizontal.place(horizontalRect, visible: showsHorizontal)
-        crosshairVertical.place(verticalRect, visible: showsVertical)
-    }
-
-    /// Turns a local pointer position into a screen point and hands it to the
-    /// overlay controller, which mirrors it to every display. Without a
-    /// controller (e.g. a bare view in a harness) the lines still follow the
-    /// pointer on this display.
-    private func broadcastCrosshair(at point: NSPoint) {
-        let screenPoint: NSPoint
-        if let window {
-            screenPoint = window.convertPoint(toScreen: convert(point, to: nil))
-        } else {
-            screenPoint = NSEvent.mouseLocation
-        }
-        if let onCrosshairMoved {
-            onCrosshairMoved(screenPoint)
-        } else {
-            updateCrosshair(globalPoint: screenPoint)
+        if snapGuide.place(rect, visible: showsGuide, centerLines: showsGuideCenterLines) {
+            snapGuideWriteCount += 1
         }
     }
 
@@ -655,8 +612,6 @@ class SelectionView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
-        // Keep the guides glued to the pointer while the frame is being drawn.
-        broadcastCrosshair(at: point)
 
         switch dragAction {
         case .drawNew:
@@ -773,9 +728,8 @@ class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
-        broadcastCrosshair(at: point)
 
-        // In idle state, detect windows under cursor for hover highlight
+        // In idle state, detect windows under cursor for hover highlight.
         if state == .idle && !selectionLocked {
             // capcap may lose activation over time, which causes WindowServer
             // to ignore the crosshair cursor rect registered in resetCursorRects.
@@ -793,14 +747,16 @@ class SelectionView: NSView {
     override func mouseEntered(with event: NSEvent) {
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
-        broadcastCrosshair(at: point)
         updateCursor(at: point)
+        if state == .idle && !selectionLocked {
+            updateWindowHover(with: event)
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
-        // The pointer left this display: hide the guides until the next move
-        // (the receiving display broadcasts its own position right away).
-        hideCrosshair()
+        // The pointer left this display: hide the guide immediately. The guide
+        // is per-screen, so no other overlay is waiting for a broadcast.
+        clearHover()
     }
 
     private func updateCursor(at point: NSPoint) {
@@ -833,58 +789,105 @@ class SelectionView: NSView {
         let viewPoint = convert(event.locationInWindow, from: nil)
         let windowPoint = convert(viewPoint, to: nil)
         let screenPoint = win.convertPoint(toScreen: windowPoint)
-        updateWindowHover(screenPoint: screenPoint)
+        updateHover(screenPoint: screenPoint)
     }
 
-    private func updateWindowHover(screenPoint: NSPoint) {
+    /// Resolves the window under `screenPoint` and re-targets the guide.
+    ///
+    /// Internal so the acceptance harness can drive the production maths with
+    /// injected window frames (no pointer synthesis).
+    ///
+    /// Multi-display contract: `screenPoint` must belong to *this* overlay's
+    /// display — that is the "each display snaps on its own, nothing bleeds
+    /// across screens" rule. The CG→AppKit Y flip is done once, in global
+    /// coordinates, against the primary display's height (the origin of both
+    /// coordinate systems), so a window centre on any display lands correctly.
+    func updateHover(screenPoint: NSPoint) {
+        guard state == .idle, !selectionLocked, selectionInteractionEnabled else {
+            clearHover()
+            return
+        }
         guard let detector = windowDetector,
-              let win = self.window,
-              let screen = win.screen else {
+              let displayFrame = window?.frame,
+              let primary = NSScreen.screens.first else {
+            clearHover()
+            return
+        }
+        guard displayFrame.contains(screenPoint) else {
             clearHover()
             return
         }
 
-        // Convert screen point → CG point
-        let primaryHeight = NSScreen.screens[0].frame.height
-        let cgPoint = CGPoint(x: screenPoint.x, y: primaryHeight - screenPoint.y)
-
-        if let detected = detector.windowAt(cgPoint: cgPoint) {
-            // Convert CG window frame → AppKit screen coords → view coords
-            let appKitY = primaryHeight - detected.frame.origin.y - detected.frame.height
-            let viewRect = NSRect(
-                x: detected.frame.origin.x - screen.frame.origin.x,
-                y: appKitY - screen.frame.origin.y,
-                width: detected.frame.width,
-                height: detected.frame.height
-            )
-            // Clamp to view bounds
-            let clamped = viewRect.intersection(bounds)
-            guard !clamped.isNull, clamped.width > 1, clamped.height > 1 else {
-                clearHover()
-                return
-            }
-            if hoverWindowRect != clamped
-                || hoverWindowFullRect != viewRect
-                || hoverWindowID != detected.windowID {
-                hoverWindowRect = clamped
-                hoverWindowFullRect = viewRect
-                hoverWindowID = detected.windowID
-                delegate?.selectionDidHoverWindow(detected)
-                needsDisplay = true
-            }
-        } else {
+        // CG's origin is the top-left of the primary display (y down); AppKit's
+        // is its bottom-left (y up). One global flip handles every display.
+        let cgPoint = CGPoint(x: screenPoint.x, y: primary.frame.height - screenPoint.y)
+        guard let detected = detector.windowAt(cgPoint: cgPoint) else {
             clearHover()
+            return
         }
+
+        let viewRect = Self.viewRect(
+            forCGWindowFrame: detected.frame,
+            displayFrame: displayFrame,
+            primaryHeight: primary.frame.height
+        )
+        // Clamp to view bounds: a window partly off-screen is still the target,
+        // but only its visible part can be outlined.
+        let clamped = viewRect.intersection(bounds)
+        guard !clamped.isNull, clamped.width > 1, clamped.height > 1 else {
+            clearHover()
+            return
+        }
+
+        // The source of "snaps like a shadow": the hit test above is a scan of
+        // the 8Hz cached window list (no enumeration), and everything below is
+        // skipped while the target window and its rect stay the same.
+        guard clamped != hoverWindowRect
+            || viewRect != hoverWindowFullRect
+            || hoverWindowID != detected.windowID else {
+            return
+        }
+        hoverWindowRect = clamped
+        hoverWindowFullRect = viewRect
+        hoverWindowID = detected.windowID
+        hoverTargetChangeCount += 1
+        delegate?.selectionDidHoverWindow(detected)
+        // Hover dimming/border is drawn by `draw(_:)`; the guide is a layer and
+        // is written synchronously below, so it belongs to this event.
+        needsDisplay = true
+        refreshSnapGuide()
+    }
+
+    /// CG window frame → this overlay's view coordinates.
+    private static func viewRect(
+        forCGWindowFrame frame: CGRect,
+        displayFrame: NSRect,
+        primaryHeight: CGFloat
+    ) -> NSRect {
+        // Flip against the primary display's height, then subtract the display
+        // origin: the window's own display never enters the maths, which is why
+        // a display above or left of the primary cannot invert the result.
+        let appKitY = primaryHeight - frame.origin.y - frame.height
+        return NSRect(
+            x: frame.origin.x - displayFrame.origin.x,
+            y: appKitY - displayFrame.origin.y,
+            width: frame.width,
+            height: frame.height
+        )
     }
 
     private func clearHover() {
-        if hoverWindowRect != nil {
-            hoverWindowRect = nil
-            hoverWindowFullRect = nil
-            hoverWindowID = nil
-            delegate?.selectionDidHoverWindow(nil)
-            needsDisplay = true
+        guard hoverWindowRect != nil else {
+            // No target: make sure a guide left over from a state change is gone.
+            refreshSnapGuide()
+            return
         }
+        hoverWindowRect = nil
+        hoverWindowFullRect = nil
+        hoverWindowID = nil
+        delegate?.selectionDidHoverWindow(nil)
+        needsDisplay = true
+        refreshSnapGuide()
     }
 
     // MARK: - Drawing
