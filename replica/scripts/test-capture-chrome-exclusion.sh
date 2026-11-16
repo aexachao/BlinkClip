@@ -23,6 +23,7 @@ capture = root / 'Vendor/capcap/Capture'
 selection = (capture / 'SelectionView.swift').read_text()
 overlay = (capture / 'OverlayWindowController.swift').read_text()
 editor = (root / 'Vendor/capcap/Editor/EditWindowController.swift').read_text()
+design = (root.parent / 'DESIGN.md').read_text()
 
 
 def code(text):
@@ -49,7 +50,28 @@ checks = {
                                                         for fragment in (editor_crop_multiply, editor_size_multiply)),
     # 标签与选区顶边的间距 8pt：6pt 时胶囊会压到左上角手柄上。
     'size-label-gap-clears-handle': 'sizeLabelGap: CGFloat = 8' in code(selection)
-                                    and 'rect.origin.y + rect.height + SelectionView.sizeLabelGap' in code(selection),
+                                    and 'y: rect.maxY + sizeLabelGap' in code(selection),
+
+    # CL：尺寸标签必须完整落在屏幕 visibleFrame 内。默认左上外侧；上方空间不足
+    # 翻到选区下方；左右越界平移（各留 4pt）；下方也放不下时允许压在选区内部，
+    # 但仍在 visibleFrame 内。覆盖层与编辑器都通过带 view 的同一函数取屏幕。
+    'size-label-clamped-to-visible-frame': all(fragment in code(selection) for fragment in (
+        'window?.screen ?? NSScreen.main',
+        'window.convertFromScreen(screen.visibleFrame)',
+        'sizeLabelEdgeInset: CGFloat = 4',
+        'rect.maxY + sizeLabelGap <= visible.maxY - size.height',
+        'rect.minY - sizeLabelGap - size.height >= visible.minY',
+        'visible.maxY - size.height',
+        'sizeLabelRect(for: rect, in: view, text: text)',
+    )) and all(fragment in code(selection) for fragment in (
+        'SelectionView.drawSizeLabel(context: context, rect: hoverRect, in: self)',
+        'Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel, in: self)',
+    )) and 'drawSizeLabel(context: context, rect: rect, text: sizeLabel)' not in code(selection),
+
+    # 文档口径：规范必须写明「visibleFrame 内 / 左上外侧 / 顶部不足翻到下方 /
+    # 左右越界平移」，否则下次改绘制时没人知道这条规则存在。
+    'design-doc-size-label-visible-frame': all(fragment in design for fragment in (
+        'visibleFrame', '左上外侧', '翻到下方', '左右越界平移')),
 
     # POL：十字辅线住在独立图层里（每屏两条），鼠标移动只改 layer frame，不再
     # 让整屏快照重绘；旧的 draw(_:) 版辅线与失效带必须彻底消失，否则延迟会回来。

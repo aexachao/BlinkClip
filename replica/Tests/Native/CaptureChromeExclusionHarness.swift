@@ -65,6 +65,127 @@ private func rgbaComponents(_ color: CGColor?) -> [CGFloat]? {
     return converted.components
 }
 
+// MARK: - CL: size label clamp evidence
+
+/// A flat snapshot stand-in so the overlay draws the same pass it draws on the
+/// real desktop (snapshot → dimming → cutout → chrome).
+private func solidBackground(size: NSSize, gray: CGFloat) -> NSImage? {
+    let scale: CGFloat = 2
+    let width = max(1, Int((size.width * scale).rounded()))
+    let height = max(1, Int((size.height * scale).rounded()))
+    guard let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    context.setFillColor(CGColor(gray: gray, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    guard let image = context.makeImage() else { return nil }
+    return NSImage(cgImage: image, size: size)
+}
+
+/// Strict accent blue (`#007AFF` fill) and the label's white glyph pixels.
+private func isAccentBlue(_ r: Int, _ g: Int, _ b: Int) -> Bool {
+    b >= 240 && b - r >= 200 && g >= 90 && g <= 160
+}
+
+private func isLabelWhite(_ r: Int, _ g: Int, _ b: Int) -> Bool {
+    r >= 235 && g >= 235 && b >= 235
+}
+
+/// The rendered chrome of a view, normalised to RGBA8 with row 0 = top of the
+/// image (same orientation as `EditorChromeParityHarness`). Coordinates used by
+/// `count` are view coordinates (origin bottom-left).
+private struct LabelBitmap {
+    let image: CGImage
+    let width: Int
+    let height: Int
+    let scale: CGFloat
+    let bytes: [UInt8]
+
+    init?(_ view: NSView) {
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0,
+              let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        view.cacheDisplay(in: bounds, to: rep)
+        guard let image = rep.cgImage else { return nil }
+        let width = image.width
+        let height = image.height
+        let data = NSMutableData(length: width * height * 4)!
+        guard let context = CGContext(
+            data: data.mutableBytes, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        self.image = image
+        self.width = width
+        self.height = height
+        self.scale = CGFloat(width) / bounds.width
+        self.bytes = [UInt8](Data(bytes: data.bytes, count: data.length))
+    }
+
+    private func rgb(_ x: Int, _ y: Int) -> (Int, Int, Int) {
+        guard x >= 0, x < width, y >= 0, y < height else { return (-1, -1, -1) }
+        let i = (y * width + x) * 4
+        return (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
+    }
+
+    /// Counts pixels of a view-coordinate rect that match one predicate.
+    func count(in rect: NSRect, matching match: (Int, Int, Int) -> Bool) -> Int {
+        let x0 = max(0, Int((rect.minX * scale).rounded(.down)))
+        let x1 = min(width - 1, Int((rect.maxX * scale).rounded(.up)) - 1)
+        let y0 = max(0, Int((rect.minY * scale).rounded(.down)))
+        let y1 = min(height - 1, Int((rect.maxY * scale).rounded(.up)) - 1)
+        guard x0 <= x1, y0 <= y1 else { return 0 }
+        var matched = 0
+        for y in y0...y1 {
+            let row = height - 1 - y
+            for x in x0...x1 {
+                let (r, g, b) = rgb(x, row)
+                if match(r, g, b) { matched += 1 }
+            }
+        }
+        return matched
+    }
+
+    /// Every strict-accent pixel index, for a whole-frame set comparison.
+    func accentPixels() -> Set<Int> {
+        var set = Set<Int>()
+        for y in 0..<height {
+            for x in 0..<width {
+                let (r, g, b) = rgb(x, y)
+                if isAccentBlue(r, g, b) { set.insert(y * width + x) }
+            }
+        }
+        return set
+    }
+}
+
+/// Writes a PNG of `crop` (view coordinates, origin bottom-left) at `scale`×.
+@discardableResult
+private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale: Int, to path: String) -> Bool {
+    let width = Int((crop.width * CGFloat(scale)).rounded())
+    let height = Int((crop.height * CGFloat(scale)).rounded())
+    guard width > 0, height > 0,
+          let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+          ) else { return false }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSGraphicsContext.current?.imageInterpolation = scale > 1 ? .none : .default
+    NSImage(cgImage: image, size: sourceSize).draw(
+        in: NSRect(x: 0, y: 0, width: crop.width * CGFloat(scale), height: crop.height * CGFloat(scale)),
+        from: crop, operation: .copy, fraction: 1
+    )
+    NSGraphicsContext.restoreGraphicsState()
+    guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+    return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+}
+
 @main struct CaptureChromeExclusionHarness {
 
     @MainActor static func main() {
@@ -257,6 +378,202 @@ private func rgbaComponents(_ color: CGColor?) -> [CGFloat]? {
         geometry = CrosshairLayerGeometry(view: pointerView)
         check(geometry.horizontalBand?.isHidden == true && geometry.verticalBand?.isHidden == true,
               "an established selection shows no guides")
+
+        // --- CL: the size label never leaves the screen's visibleFrame ------
+        // The capsule is chrome and stays outside the selection whenever it
+        // fits. A selection hugging an edge used to push it off the screen,
+        // where macOS crops it. The render view below covers exactly the main
+        // display's `visibleFrame` (origin included), so "inside the bitmap"
+        // and "inside visibleFrame" are the same statement — measured, not
+        // inferred. Both the capture overlay and the editor's live chrome are
+        // rendered, because they share the one painter.
+        guard let display = NSScreen.main else {
+            preconditionFailure("a main screen is required to measure visibleFrame")
+        }
+        let visible = display.visibleFrame
+        let clampWindow = NSWindow(
+            contentRect: NSRect(origin: visible.origin, size: visible.size),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        clampWindow.isReleasedWhenClosed = false
+        let clampContainer = NSView(frame: NSRect(origin: .zero, size: visible.size))
+        clampWindow.contentView = clampContainer
+        let clampView = SelectionView(frame: clampContainer.bounds)
+        clampContainer.addSubview(clampView)
+        clampView.backgroundSnapshot = solidBackground(size: visible.size, gray: 0.75)
+        clampView.selectionInteractionEnabled = true
+        let clampEditorOverlay = SelectionChromeOverlay(frame: clampContainer.bounds)
+        clampEditorOverlay.selectionView = clampView
+        clampContainer.addSubview(clampEditorOverlay)
+
+        let screenTolerance: CGFloat = 0.01
+        let renderRoot = ProcessInfo.processInfo.environment["BLINKCLIP_LABEL_RENDER_DIR"]
+        if let renderRoot {
+            try? FileManager.default.createDirectory(atPath: renderRoot, withIntermediateDirectories: true)
+        }
+
+        struct LabelCase {
+            let name: String
+            let rect: NSRect
+            let flippedBelow: Bool
+            let allowsOverlap: Bool
+        }
+        let labelCases = [
+            LabelCase(name: "top", rect: NSRect(x: visible.minX + 300, y: visible.maxY - 220, width: 320, height: 220),
+                      flippedBelow: true, allowsOverlap: false),
+            LabelCase(name: "bottom", rect: NSRect(x: visible.minX + 300, y: visible.minY, width: 320, height: 220),
+                      flippedBelow: false, allowsOverlap: false),
+            LabelCase(name: "left", rect: NSRect(x: visible.minX, y: visible.minY + 380, width: 44, height: 260),
+                      flippedBelow: false, allowsOverlap: false),
+            LabelCase(name: "right", rect: NSRect(x: visible.maxX - 44, y: visible.minY + 380, width: 44, height: 260),
+                      flippedBelow: false, allowsOverlap: false),
+            LabelCase(name: "default", rect: NSRect(x: visible.minX + 600, y: visible.minY + 450, width: 300, height: 200),
+                      flippedBelow: false, allowsOverlap: false),
+            // Extreme: full-height selection, no room above or below on this
+            // display. The capsule is allowed to sit over the selection, but it
+            // still must stay completely inside visibleFrame.
+            LabelCase(name: "full-height", rect: NSRect(x: visible.minX + 200, y: visible.minY, width: 400, height: visible.height),
+                      flippedBelow: false, allowsOverlap: true),
+        ]
+
+        var labelRects: [String: NSRect] = [:]
+        var clampObservations: [[String: Any]] = []
+        for item in labelCases {
+            clampView.updateSelectionRect(item.rect)
+            clampEditorOverlay.update(rect: item.rect, active: true)
+            let label = SelectionView.sizeLabelRect(for: item.rect, in: clampView)
+            labelRects[item.name] = label
+            let onScreen = clampWindow.convertToScreen(clampView.convert(label, to: nil))
+            check(onScreen.minX >= visible.minX - screenTolerance
+                  && onScreen.maxX <= visible.maxX + screenTolerance
+                  && onScreen.minY >= visible.minY - screenTolerance
+                  && onScreen.maxY <= visible.maxY + screenTolerance,
+                  "\(item.name): label \(onScreen) must be inside visibleFrame \(visible)")
+            check(label.minX >= -screenTolerance && label.maxX <= visible.width + screenTolerance
+                  && label.minY >= -screenTolerance && label.maxY <= visible.height + screenTolerance,
+                  "\(item.name): label \(label) must be inside the rendered canvas")
+
+            let overlap = item.rect.intersection(label)
+            let overlapArea = overlap.isNull ? 0 : overlap.width * overlap.height
+            clampObservations.append([
+                "case": item.name,
+                "selection": [item.rect.minX, item.rect.minY, item.rect.width, item.rect.height],
+                "label": [label.minX, label.minY, label.width, label.height],
+                "labelOnScreen": [onScreen.minX, onScreen.minY, onScreen.width, onScreen.height],
+                "visibleFrame": [visible.minX, visible.minY, visible.width, visible.height],
+                "overlapAreaWithSelection": overlapArea,
+                "placement": item.flippedBelow ? "below" : (item.allowsOverlap ? "over-selection" : "above"),
+            ])
+            if item.allowsOverlap {
+                check(overlapArea > 0, "\(item.name): the no-room case is allowed to overlap the selection")
+            } else {
+                check(overlapArea < 0.01, "\(item.name): label must not overlap the selection (area \(overlapArea))")
+            }
+            if item.flippedBelow {
+                check(label.maxY <= item.rect.minY - 8 + screenTolerance,
+                      "top edge: label must flip below the selection (label maxY \(label.maxY), selection minY \(item.rect.minY))")
+            } else if !item.allowsOverlap {
+                check(label.minY >= item.rect.maxY + 8 - screenTolerance,
+                      "\(item.name): label must sit 8pt above the selection")
+            }
+            switch item.name {
+            case "left":
+                check(label.minX >= visible.minX + 4 - screenTolerance, "left edge: 4pt screen margin")
+                check(label.minX > item.rect.minX + 1, "left edge: label slid right instead of clipping")
+            case "right":
+                check(label.maxX <= visible.maxX - 4 + screenTolerance, "right edge: 4pt screen margin")
+                check(label.minX < item.rect.minX - 1, "right edge: label slid left instead of clipping")
+            case "default":
+                check(abs(label.minX - item.rect.minX) < screenTolerance, "default: left edges stay aligned")
+                check(abs(label.minY - (item.rect.maxY + 8)) < screenTolerance, "default: label stays 8pt above")
+            default:
+                break
+            }
+
+            guard let render = LabelBitmap(clampView) else {
+                preconditionFailure("cannot render the clamped selection view")
+            }
+            let capsule = render.count(in: label.insetBy(dx: 2, dy: 2), matching: isAccentBlue)
+            check(capsule > 300, "\(item.name): capsule painted inside labelRect (accent pixels \(capsule))")
+            let glyphs = render.count(in: label, matching: isLabelWhite)
+            check(glyphs > 20, "\(item.name): size text painted (white pixels \(glyphs))")
+            let edgeBands: [(String, NSRect)] = [
+                ("left", NSRect(x: label.minX + 0.25, y: label.midY - 4, width: 1.5, height: 8)),
+                ("right", NSRect(x: label.maxX - 1.75, y: label.midY - 4, width: 1.5, height: 8)),
+                ("bottom", NSRect(x: label.midX - 4, y: label.minY + 0.25, width: 8, height: 1.5)),
+                ("top", NSRect(x: label.midX - 4, y: label.maxY - 1.75, width: 8, height: 1.5)),
+            ]
+            for (edge, band) in edgeBands {
+                let painted = render.count(in: band, matching: isAccentBlue)
+                check(painted > 0, "\(item.name): capsule \(edge) edge is visible (not clipped)")
+            }
+            if !item.allowsOverlap {
+                // 14pt inside the selection excludes the 1pt frame, the 4pt
+                // edge bars and the 12pt corner brackets: only an intruding
+                // label could leave accent pixels there.
+                let intrusion = render.count(in: item.rect.insetBy(dx: 14, dy: 14), matching: isAccentBlue)
+                check(intrusion == 0, "\(item.name): no label pixels inside the selection (found \(intrusion))")
+            }
+
+            if let renderRoot {
+                let canvas = NSRect(origin: .zero, size: visible.size)
+                writePNG(render.image, sourceSize: visible.size, crop: canvas, scale: 1,
+                         to: "\(renderRoot)/cl-label-\(item.name).png")
+                let crop = label.insetBy(dx: -8, dy: -8).intersection(canvas)
+                writePNG(render.image, sourceSize: visible.size, crop: crop, scale: 4,
+                         to: "\(renderRoot)/cl-label-\(item.name)-4x.png")
+            }
+        }
+
+        if let renderRoot,
+           let payload = try? JSONSerialization.data(withJSONObject: [
+               "passed": true,
+               "visibleFrame": [visible.minX, visible.minY, visible.width, visible.height],
+               "cases": clampObservations,
+           ], options: [.prettyPrinted, .sortedKeys]) {
+            try? payload.write(to: URL(fileURLWithPath: "\(renderRoot)/cl-label-clamp-geometry.json"))
+        }
+
+        // Editor parity under clamping: the editor's layer must paint the very
+        // same clamped capsule as the capture overlay (one shared painter, one
+        // geometry). Assert on strict-accent pixels only, so the dimming and
+        // snapshot underneath cannot mask a difference.
+        let parityCase = labelCases[0]
+        clampView.updateSelectionRect(parityCase.rect)
+        clampEditorOverlay.update(rect: parityCase.rect, active: true)
+        // Parity is judged on the chrome alone, with the same (absent)
+        // background as `EditorChromeParityHarness`: an opaque snapshot changes
+        // how the anti-aliased capsule edge composites and would blur the
+        // pixel-set comparison.
+        let parityBackground = clampView.backgroundSnapshot
+        clampView.backgroundSnapshot = nil
+        clampEditorOverlay.isHidden = true
+        guard let captureChrome = LabelBitmap(clampContainer) else {
+            preconditionFailure("cannot render the capture overlay chrome")
+        }
+        clampEditorOverlay.isHidden = false
+        clampView.isHidden = true
+        guard let editorChrome = LabelBitmap(clampContainer) else {
+            preconditionFailure("cannot render the editor chrome")
+        }
+        clampView.isHidden = false
+        clampView.backgroundSnapshot = parityBackground
+        let captureMask = captureChrome.accentPixels()
+        let editorMask = editorChrome.accentPixels()
+        let onlyCapture = captureMask.subtracting(editorMask).count
+        let onlyEditor = editorMask.subtracting(captureMask).count
+        check(!captureMask.isEmpty, "clamped chrome must paint accent pixels")
+        check(onlyCapture == 0 && onlyEditor == 0,
+              "editor chrome must be pixel-identical to the overlay under clamping"
+              + " (only-capture \(onlyCapture), only-editor \(onlyEditor))")
+        let parityLabel = labelRects["top"] ?? .zero
+        check(captureChrome.count(in: parityLabel.insetBy(dx: 2, dy: 2), matching: isAccentBlue) > 300,
+              "the clamped label is part of the parity comparison")
+
+        clampWindow.orderOut(nil)
+        clampContainer.subviews.forEach { $0.removeFromSuperview() }
+        clampWindow.contentView = nil
+        clampWindow.close()
 
         // A pointer on one display continues the horizontal line onto its
         // neighbours, while the vertical line only lands on the pointer's own

@@ -310,6 +310,9 @@ class SelectionView: NSView {
     private static let sizeLabelPadding = NSSize(width: 10, height: 6)
     private static let sizeLabelCornerRadius: CGFloat = 6
     private static let sizeLabelGap: CGFloat = 8
+    /// Breathing room kept between the capsule and the screen's left/right
+    /// visible edges once it has to slide back inside them.
+    private static let sizeLabelEdgeInset: CGFloat = 4
     // MARK: - Public
 
     override init(frame frameRect: NSRect) {
@@ -917,7 +920,7 @@ class SelectionView: NSView {
             context.setLineDash(phase: 0, lengths: [])
             context.stroke(hoverRect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
             // Size label
-            SelectionView.drawSizeLabel(context: context, rect: hoverRect)
+            SelectionView.drawSizeLabel(context: context, rect: hoverRect, in: self)
             return
         }
 
@@ -994,9 +997,9 @@ class SelectionView: NSView {
 
         if showsHandles {
             drawHandles(context: context, rect: rect)
-            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel)
+            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel, in: self)
         } else if let sizeLabel {
-            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel)
+            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel, in: self)
         }
     }
 
@@ -1135,24 +1138,114 @@ class SelectionView: NSView {
         )
     }
 
-    static func drawSizeLabel(context: CGContext, rect: NSRect, text: String? = nil) {
-        // Same multiplication sign as the rest of the app's size badges
-        // (`ReplicaImagePreviewContent`, `PanelViews`, `ReplicaCanonicalCardContent`).
-        let text = text ?? "\(Int(rect.width)) × \(Int(rect.height))"
-        let attrs: [NSAttributedString.Key: Any] = [
+    /// Attributes for the capsule's text, kept in one place so measuring and
+    /// drawing cannot drift apart.
+    private static var sizeLabelAttributes: [NSAttributedString.Key: Any] {
+        [
             .foregroundColor: NSColor.white,
             .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         ]
+    }
+
+    /// Capsule size for one label text, content padding included.
+    static func sizeLabelSize(for text: String) -> NSSize {
+        let size = text.size(withAttributes: sizeLabelAttributes)
+        return NSSize(
+            width: size.width + sizeLabelPadding.width * 2,
+            height: size.height + sizeLabelPadding.height * 2
+        )
+    }
+
+    /// The screen's `visibleFrame` (menu bar and Dock excluded) expressed in
+    /// `view`'s coordinates, or `nil` when there is no screen to clamp to.
+    ///
+    /// The capture overlay and the editor's live chrome both live in a window
+    /// on one display, so `view.window.screen` is the screen the label is
+    /// drawn on; `NSScreen.main` is the fallback when the window has no screen
+    /// yet. A view without a window has no coordinate mapping, so its own
+    /// coordinates are treated as screen coordinates.
+    static func sizeLabelVisibleFrame(in view: NSView?) -> NSRect? {
+        guard let screen = view?.window?.screen ?? NSScreen.main else { return nil }
+        guard let view, let window = view.window else { return screen.visibleFrame }
+        let inWindow = window.convertFromScreen(screen.visibleFrame)
+        return view.convert(inWindow, from: nil)
+    }
+
+    /// The capsule rect in `view`'s coordinates, clamped to the screen's
+    /// `visibleFrame`.
+    ///
+    /// Default placement stays "outside the top-left corner": 8pt above the
+    /// selection with the left edges aligned. Three rules keep it visible:
+    /// 1. when the selection hugs the top of the screen there is no room
+    ///    above, so the capsule flips below it (8pt outside);
+    /// 2. horizontally it slides back inside, keeping a 4pt margin on each
+    ///    side when the screen is wide enough;
+    /// 3. when neither side fits (a tall selection on a small display) it is
+    ///    allowed to sit over the selection, but never outside the screen.
+    ///
+    /// Text, padding, radius and gap are untouched — only the origin moves.
+    static func sizeLabelRect(for rect: NSRect, in view: NSView?, text: String? = nil) -> NSRect {
+        let size = sizeLabelSize(for: text ?? SelectionView.sizeLabelText(for: rect))
+        var label = NSRect(
+            x: rect.minX,
+            y: rect.maxY + sizeLabelGap,
+            width: size.width,
+            height: size.height
+        )
+        guard let visible = sizeLabelVisibleFrame(in: view) else { return label }
+
+        // 2) Horizontal slide. With room, the capsule keeps 4pt off both
+        // screen edges; a screen narrower than the capsule pins its left edge.
+        let leftLimit = visible.minX + sizeLabelEdgeInset
+        let rightLimit = visible.maxX - sizeLabelEdgeInset - size.width
+        if rightLimit >= leftLimit {
+            label.origin.x = min(max(rect.minX, leftLimit), rightLimit)
+        } else {
+            // Too narrow for the 4pt margins: keep the capsule inside anyway,
+            // and only when it is wider than the screen itself pin its left
+            // edge (a capsule cannot be split).
+            let insideRight = visible.maxX - size.width
+            label.origin.x = insideRight >= visible.minX
+                ? min(max(rect.minX, visible.minX), insideRight)
+                : visible.minX
+        }
+
+        // 1) + 3) Vertical: above, else below, else over the selection.
+        let fitsAbove = rect.maxY + sizeLabelGap <= visible.maxY - size.height
+        let fitsBelow = rect.minY - sizeLabelGap - size.height >= visible.minY
+        if fitsAbove {
+            label.origin.y = rect.maxY + sizeLabelGap
+        } else if fitsBelow {
+            label.origin.y = rect.minY - sizeLabelGap - size.height
+        } else if visible.maxY - size.height >= visible.minY {
+            // Extreme case: nowhere outside. Pin the capsule inside the visible
+            // frame (it overlaps the selection, but stays fully on screen).
+            label.origin.y = min(max(rect.maxY + sizeLabelGap, visible.minY),
+                                 visible.maxY - size.height)
+        } else {
+            // Screen shorter than the capsule: no position satisfies both
+            // edges; keep the top-left corner on screen and let the shape
+            // itself spill, which is the only remaining option.
+            label.origin.y = visible.minY
+        }
+        return label
+    }
+
+    private static func sizeLabelText(for rect: NSRect) -> String {
+        // Same multiplication sign as the rest of the app's size badges
+        // (`ReplicaImagePreviewContent`, `PanelViews`, `ReplicaCanonicalCardContent`).
+        "\(Int(rect.width)) × \(Int(rect.height))"
+    }
+
+    static func drawSizeLabel(context: CGContext, rect: NSRect, text: String? = nil, in view: NSView?) {
+        let text = text ?? SelectionView.sizeLabelText(for: rect)
+        let attrs = SelectionView.sizeLabelAttributes
         let size = text.size(withAttributes: attrs)
         let padding = SelectionView.sizeLabelPadding
-        // Sit above the top-left corner of the frame, never over its pixels:
-        // the label is chrome, so anything inside `rect` would end up cropped.
-        let labelRect = NSRect(
-            x: rect.origin.x,
-            y: rect.origin.y + rect.height + SelectionView.sizeLabelGap,
-            width: size.width + padding.width * 2,
-            height: size.height + padding.height * 2
-        )
+        // Chrome, not content: the capsule is drawn outside the selection
+        // whenever it fits, and clamped to the screen's visibleFrame so a
+        // selection hugging an edge never crops it. See `sizeLabelRect`.
+        let labelRect = SelectionView.sizeLabelRect(for: rect, in: view, text: text)
 
         // Blue capsule with a soft drop shadow so it separates from both a
         // bright and a dark snapshot.
