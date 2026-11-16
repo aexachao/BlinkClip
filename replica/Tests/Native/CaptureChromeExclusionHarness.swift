@@ -525,6 +525,81 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
             }
         }
 
+        // Screen coordinates must be mapped through the window's own frame, not
+        // assumed to equal view coordinates: the editor's panel is a small
+        // window somewhere on the display, not a full-screen overlay. This
+        // window sits in the screen's top-right corner with a selection touching
+        // both the top and the right screen edges, so one case exercises the
+        // flip-down rule and the horizontal slide through a non-zero origin.
+        let offsetSize = NSSize(width: 600, height: 460)
+        let offsetWindow = NSWindow(
+            contentRect: NSRect(
+                origin: NSPoint(x: visible.maxX - offsetSize.width,
+                                y: visible.maxY - offsetSize.height),
+                size: offsetSize
+            ),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        offsetWindow.isReleasedWhenClosed = false
+        let offsetView = SelectionView(frame: NSRect(origin: .zero, size: offsetSize))
+        offsetWindow.contentView = offsetView
+        let offsetRect = NSRect(x: offsetSize.width - 40, y: offsetSize.height - 220, width: 40, height: 220)
+        offsetView.updateSelectionRect(offsetRect)
+        let offsetLabel = SelectionView.sizeLabelRect(for: offsetRect, in: offsetView)
+        let offsetOnScreen = offsetWindow.convertToScreen(offsetView.convert(offsetLabel, to: nil))
+        let offsetOverlap = offsetRect.intersection(offsetLabel)
+        let offsetOverlapArea = offsetOverlap.isNull ? 0 : offsetOverlap.width * offsetOverlap.height
+        check(offsetOnScreen.minX >= visible.minX - screenTolerance
+              && offsetOnScreen.maxX <= visible.maxX + screenTolerance
+              && offsetOnScreen.minY >= visible.minY - screenTolerance
+              && offsetOnScreen.maxY <= visible.maxY + screenTolerance,
+              "offset window: label \(offsetOnScreen) must be inside visibleFrame \(visible)")
+        check(offsetLabel.maxY <= offsetRect.minY - 8 + screenTolerance,
+              "offset window: label must flip below the selection")
+        check(offsetOnScreen.maxX <= visible.maxX - 4 + screenTolerance,
+              "offset window: label keeps the 4pt right margin")
+        check(offsetLabel.minX < offsetRect.minX - 1,
+              "offset window: label slid left of the selection")
+        check(offsetOverlapArea < 0.01, "offset window: label must not overlap the selection")
+        if let offsetRender = LabelBitmap(offsetView) {
+            let capsule = offsetRender.count(in: offsetLabel.insetBy(dx: 2, dy: 2), matching: isAccentBlue)
+            check(capsule > 300, "offset window: capsule painted (accent pixels \(capsule))")
+            let bands: [(String, NSRect)] = [
+                ("left", NSRect(x: offsetLabel.minX + 0.25, y: offsetLabel.midY - 4, width: 1.5, height: 8)),
+                ("right", NSRect(x: offsetLabel.maxX - 1.75, y: offsetLabel.midY - 4, width: 1.5, height: 8)),
+                ("bottom", NSRect(x: offsetLabel.midX - 4, y: offsetLabel.minY + 0.25, width: 8, height: 1.5)),
+                ("top", NSRect(x: offsetLabel.midX - 4, y: offsetLabel.maxY - 1.75, width: 8, height: 1.5)),
+            ]
+            for (edge, band) in bands {
+                check(offsetRender.count(in: band, matching: isAccentBlue) > 0,
+                      "offset window: capsule \(edge) edge is visible (not clipped)")
+            }
+            if let renderRoot {
+                writePNG(offsetRender.image, sourceSize: offsetSize, crop: NSRect(origin: .zero, size: offsetSize),
+                         scale: 1, to: "\(renderRoot)/cl-label-offset-top-right.png")
+                let crop = offsetLabel.insetBy(dx: -8, dy: -8)
+                    .intersection(NSRect(origin: .zero, size: offsetSize))
+                writePNG(offsetRender.image, sourceSize: offsetSize, crop: crop, scale: 4,
+                         to: "\(renderRoot)/cl-label-offset-top-right-4x.png")
+            }
+        } else {
+            preconditionFailure("cannot render the offset selection view")
+        }
+        let offsetSelectionOnScreen = offsetWindow.convertToScreen(offsetView.convert(offsetRect, to: nil))
+        clampObservations.append([
+            "case": "offset-top-right",
+            "selection": [offsetSelectionOnScreen.minX, offsetSelectionOnScreen.minY,
+                          offsetSelectionOnScreen.width, offsetSelectionOnScreen.height],
+            "label": [offsetLabel.minX, offsetLabel.minY, offsetLabel.width, offsetLabel.height],
+            "labelOnScreen": [offsetOnScreen.minX, offsetOnScreen.minY, offsetOnScreen.width, offsetOnScreen.height],
+            "visibleFrame": [visible.minX, visible.minY, visible.width, visible.height],
+            "overlapAreaWithSelection": offsetOverlapArea,
+            "placement": "below",
+        ])
+        offsetWindow.orderOut(nil)
+        offsetWindow.contentView = nil
+        offsetWindow.close()
+
         if let renderRoot,
            let payload = try? JSONSerialization.data(withJSONObject: [
                "passed": true,
