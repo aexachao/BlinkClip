@@ -6874,24 +6874,28 @@ private class BeautifySwatchView: NSView {
 
 // MARK: - Selection Chrome Overlay
 
-/// Sits above the editor's `canvasScrollView` (so the dashed border + handles
-/// stay visible even when beautify expands the canvas frame with a gradient
-/// background). Empty space falls through; only handle hits are claimed, and
-/// they drive `SelectionView`'s external resize API so the rest of the editor
-/// reuses the existing resize → relayout pipeline.
+/// Sits above the editor's `canvasScrollView` (so the selection frame and its
+/// handles stay visible even when beautify expands the canvas frame with a
+/// gradient background). Empty space falls through; only handle hits are
+/// claimed, and they drive `SelectionView`'s external resize API so the rest of
+/// the editor reuses the existing resize → relayout pipeline.
+///
+/// This overlay does not own a chrome style of its own: it delegates the whole
+/// drawing to `SelectionView.drawSelectionChrome(in:rect:showsHandles:sizeLabel:)`,
+/// so the editor's live selection reads exactly like the capture overlay — 1pt
+/// solid frame, 20×4pt edge bars, 12×2pt corner brackets, 22×22pt hit target.
 final class SelectionChromeOverlay: NSView {
     weak var selectionView: SelectionView?
 
     private(set) var selectionRectInView: NSRect = .zero
     private(set) var isActiveAndVisible: Bool = false
 
-    private let handleSize: CGFloat = 8
-    private let handleHitSize: CGFloat = 12
-    private let borderWidth: CGFloat = 2.0
-    private let dashPattern: [CGFloat] = [6, 4]
-
     private var dragHandle: SelectionView.HandlePosition?
     private var dragOriginalRect: NSRect = .zero
+
+    /// The grabbable target around each drawn handle. One number for both
+    /// phases: the capture overlay's `SelectionView.handleHitSize` (22×22pt).
+    private var handleHitSize: CGFloat { SelectionView.handleHitSize }
 
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -7015,33 +7019,18 @@ final class SelectionChromeOverlay: NSView {
         context.saveGState()
         defer { context.restoreGState() }
 
-        // Selection frame and handle dots use the shared selection accent (the
-        // same blue as the capture overlay), not `accentGreen`: this chrome is
-        // where the crop is, not which tool is active.
-        context.setStrokeColor(selectionAccent.cgColor)
-        context.setLineWidth(borderWidth)
-        context.setLineDash(phase: 0, lengths: dashPattern)
-        context.stroke(rect.insetBy(dx: -1, dy: -1))
-        context.setLineDash(phase: 0, lengths: [])
-
-        for pos in SelectionView.handlePositions(for: rect) {
-            let handleRect = NSRect(
-                x: pos.x - handleSize / 2,
-                y: pos.y - handleSize / 2,
-                width: handleSize,
-                height: handleSize
-            )
-            context.setFillColor(selectionAccent.cgColor)
-            context.fillEllipse(in: handleRect)
-        }
-
-        // The SelectionView draws its own size label underneath, but the
-        // editor image/beautify frame covers it. Re-draw it here, above the
-        // frame, preserving the original-pixel label used by fixed images.
-        SelectionView.drawSizeLabel(
-            context: context,
+        // No chrome of this view's own: the frame, the eight handles and the
+        // size label all come from `SelectionView`'s shared painter, which the
+        // capture overlay itself calls. The editor used to paint a 2pt dashed
+        // frame plus 8pt dots here — a second set of chrome on top of the
+        // overlay's bars and corner brackets. Handles still sit above the
+        // canvas/beautify gradient because this view does.
+        guard let selectionView else { return }
+        selectionView.drawSelectionChrome(
+            in: context,
             rect: rect,
-            text: selectionView?.selectionSizeLabelOverride
+            showsHandles: true,
+            sizeLabel: selectionView.selectionSizeLabelOverride
         )
     }
 }

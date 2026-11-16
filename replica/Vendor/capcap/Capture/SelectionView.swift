@@ -272,16 +272,18 @@ class SelectionView: NSView {
     /// Grabbable area around each handle. The drawn handle is a bar or an L
     /// bracket (see `drawHandles`), but the target is 22×22pt — at least the
     /// required 20×20 — so every point within ±10pt of a handle still grabs it.
-    private let handleHitSize: CGFloat = 22
+    /// The editor's live-selection chrome (`SelectionChromeOverlay`) hits the
+    /// same 22×22pt target by reading this value; there is no second number.
+    static let handleHitSize: CGFloat = 22
     /// Edge handles: one 20pt bar, 4pt thick, 2pt rounded ends. Top/bottom
     /// edges get a horizontal bar, left/right edges a vertical one.
-    private static let handleBarLength: CGFloat = 20
-    private static let handleBarThickness: CGFloat = 4
-    private static let handleBarCornerRadius: CGFloat = 2
+    static let handleBarLength: CGFloat = 20
+    static let handleBarThickness: CGFloat = 4
+    static let handleBarCornerRadius: CGFloat = 2
     /// Corner handles: an L of two 12pt arms, 2pt thick, drawn along the
     /// inside of the corner — no dots anywhere.
-    private static let handleCornerArmLength: CGFloat = 12
-    private static let handleCornerArmThickness: CGFloat = 2
+    static let handleCornerArmLength: CGFloat = 12
+    static let handleCornerArmThickness: CGFloat = 2
     /// One visual weight for every overlay frame. 1pt is exactly 2 device
     /// pixels on a 2x display (1 pixel at 1x), so the idle hover frame, the
     /// box being dragged, a committed selection and the scroll-capture marker
@@ -493,10 +495,10 @@ class SelectionView: NSView {
             for (index, handle) in HandlePosition.allCases.enumerated() {
                 let position = positions[index]
                 let cursorRect = NSRect(
-                    x: position.x - handleHitSize / 2,
-                    y: position.y - handleHitSize / 2,
-                    width: handleHitSize,
-                    height: handleHitSize
+                    x: position.x - Self.handleHitSize / 2,
+                    y: position.y - Self.handleHitSize / 2,
+                    width: Self.handleHitSize,
+                    height: Self.handleHitSize
                 ).intersection(bounds)
                 if !cursorRect.isNull {
                     addCursorRect(
@@ -935,19 +937,49 @@ class SelectionView: NSView {
             context.setLineWidth(strokeWidth)
             context.stroke(rect.insetBy(dx: outerInset, dy: outerInset))
         } else {
-            context.setStrokeColor(SelectionView.selectionTintCGColor)
-            context.setLineWidth(borderWidth)
-            context.setLineDash(phase: 0, lengths: [])
-            context.stroke(rect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
+            // Frame + handles + size label come from the one shared painter.
+            // The editor's live-selection chrome calls the same function, so a
+            // committed capture selection and the editor's live selection are
+            // drawn by one geometry, never two (no dots, no dashes anywhere).
+            let showsHandles = state == .selected && selectionInteractionEnabled
+            drawSelectionChrome(
+                in: context,
+                rect: rect,
+                showsHandles: showsHandles,
+                sizeLabel: showsHandles ? nil : (state == .selected ? selectionSizeLabelOverride : nil)
+            )
         }
+    }
 
-        if state == .selected && selectionInteractionEnabled {
-            // Draw 8 control handles
+    /// The one painter for the selection frame and its resize handles.
+    ///
+    /// `draw(_:)` uses it for the capture overlay; the editor's
+    /// `SelectionChromeOverlay` (which sits above the editor canvas so the
+    /// handles stay visible even when beautify expands the frame) calls it too.
+    /// Both phases therefore paint the same chrome — a 1pt solid frame, 20×4pt
+    /// edge bars and 12×2pt corner brackets — instead of each keeping a
+    /// drawing of its own (the editor used to paint a 2pt dashed frame plus
+    /// 8pt dots on top of this one).
+    ///
+    /// - Parameters:
+    ///   - showsHandles: draws the eight handles and the live size label.
+    ///   - sizeLabel: pinned label text (used instead of the live rect size).
+    func drawSelectionChrome(
+        in context: CGContext,
+        rect: NSRect,
+        showsHandles: Bool = true,
+        sizeLabel: String? = nil
+    ) {
+        context.setStrokeColor(Self.selectionTintCGColor)
+        context.setLineWidth(borderWidth)
+        context.setLineDash(phase: 0, lengths: [])
+        context.stroke(rect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
+
+        if showsHandles {
             drawHandles(context: context, rect: rect)
-            // Draw size label
-            SelectionView.drawSizeLabel(context: context, rect: rect)
-        } else if state == .selected, let selectionSizeLabelOverride {
-            SelectionView.drawSizeLabel(context: context, rect: rect, text: selectionSizeLabelOverride)
+            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel)
+        } else if let sizeLabel {
+            Self.drawSizeLabel(context: context, rect: rect, text: sizeLabel)
         }
     }
 
@@ -1167,7 +1199,7 @@ class SelectionView: NSView {
     }
 
     private func hitTestHandle(point: NSPoint, rect: NSRect) -> HandlePosition? {
-        SelectionView.hitTestHandle(point: point, rect: rect, hitSize: handleHitSize)
+        SelectionView.hitTestHandle(point: point, rect: rect, hitSize: Self.handleHitSize)
     }
 
     // MARK: - Resize Logic
