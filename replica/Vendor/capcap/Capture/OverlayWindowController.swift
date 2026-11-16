@@ -1,367 +1,8 @@
 import AppKit
-import Darwin
 import QuartzCore
 
 typealias WindowSnapshotLoader = @Sendable (CGFloat) -> Result<[DetectedWindow], WindowDetectionError>
 typealias WindowImageLoader = @Sendable (CGWindowID, NSSize) async throws -> NSImage?
-
-/// Holds the single system-cursor hide that the self-drawn selection pointer
-/// needs, and guarantees it is undone exactly once.
-///
-/// The WindowServer paints the hardware cursor at its own cadence; an AppKit
-/// layer update trails it by a display frame, which is what "the guides chase
-/// the pointer" looks like. The overlay therefore paints the pointer itself and
-/// hides the system one — but hide/unhide are reference counted, so a second
-/// `unhide()` would steal a hide that belongs to someone else, while a missing
-/// one leaves the user without a cursor.
-///
-/// Three layers keep that balance from either side:
-///
-/// 1. **Counting.** `hideDepth` is a 0/1 state machine: one *confirmed*
-///    `NSCursor.hide()` is on the books exactly while it is 1, `hide()` can
-///    never issue a second one, and `performUnhide()` is the only way down and
-///    refuses to run at 0. Every path calls `restore()`; repeats are no-ops.
-/// 2. **Activation.** AppKit drops cursor calls while another app owns the
-///    foreground. `restore()` while inactive therefore keeps the hide on the
-///    books and finishes it on the next `didBecomeActive` — otherwise the
-///    unhide is silently lost, the counter says "restored", and the cursor
-///    stays hidden until another app takes the foreground.
-/// 3. **Watchdog.** After a session closes, one delayed read-back of
-///    `CGCursorIsVisible()` proves the cursor came back; if it did not (or the
-///    read-back is unavailable), exactly one extra `unhide()` is forced and
-///    logged. A stray extra cursor is the cheaper failure than a user with no
-///    pointer.
-///
-/// Hiding is only half the job: if it cannot be *confirmed*, the overlay must
-/// not paint a second pointer on top of the system one. `CGCursorIsVisible()`
-/// is the only public read-back for "is a cursor being drawn"; it is marked
-/// unavailable in the SDK, so it is resolved by symbol name and treated as "no
-/// evidence" when absent — the caller then falls back to guides only.
-final class SystemCursorHider {
-    struct Drivers {
-        var hide: () -> Void = { NSCursor.hide() }
-        var unhide: () -> Void = { NSCursor.unhide() }
-        /// `nil` when the read-back is unavailable on this system.
-        var isCursorVisible: () -> Bool? = { SystemCursorHider.windowServerCursorIsVisible() }
-        /// AppKit ignores cursor changes from an app that does not own the
-        /// foreground. Defaults to the process's real activation state.
-        var isAppActive: () -> Bool = { NSApp?.isActive ?? false }
-        /// Waits for the next "this app became active" moment; the returned
-        /// closure cancels the wait. Observes `didBecomeActive` by default.
-        var waitForActivation: (@escaping () -> Void) -> () -> Void = { body in
-            SystemCursorHider.observeNextActivation(body)
-        }
-    }
-
-    private let drivers: Drivers
-    private let log: (String) -> Void
-    /// How long after a closed session the watchdog reads the cursor back.
-    private let watchdogDelay: TimeInterval
-
-    /// 0/1: one confirmed hide is on the books exactly while this is 1.
-    private(set) var hideDepth = 0
-    var isHidden: Bool { hideDepth > 0 }
-    /// Set after a hide that could not be confirmed: this session keeps the
-    /// system cursor and draws the guides only.
-    private(set) var isUnavailable = false
-    /// Failed confirmations so far; `NSCursor.hide()` is a no-op while another
-    /// app owns the foreground, so one retry after activation is worth it.
-    private(set) var attempts = 0
-    /// Every `restore()` request, including harmless repeats. The exit paths
-    /// must really reach it; the harness asserts on this.
-    private(set) var restoreRequests = 0
-    /// Extra unhides the watchdog had to force (bounded: at most one per close).
-    private(set) var forcedUnhides = 0
-    /// A hide was confirmed in this session, so a final blind unhide is allowed.
-    private(set) var everHid = false
-
-    /// Cancellation for the deferred restore, while it waits for activation.
-    private var pendingActivationRestore: (() -> Void)?
-    private var watchdog: DispatchWorkItem?
-    /// Bumped on every schedule/cancel so a stale item cannot fire twice.
-    private var watchdogGeneration = 0
-
-    /// `NSCursor.hide()`/`unhide()` are a single process-wide counter, so a
-    /// retry that outlives its hider must not undo a hide that a live session
-    /// now owns. This is the app-wide view of "we still own a hide".
-    private static let ownershipLock = NSLock()
-    private static var ownedHides = 0
-
-    private static func noteOwnedHide(_ delta: Int) {
-        ownershipLock.lock()
-        ownedHides = max(0, ownedHides + delta)
-        ownershipLock.unlock()
-    }
-
-    static var hasLiveOwnedHide: Bool {
-        ownershipLock.lock()
-        defer { ownershipLock.unlock() }
-        return ownedHides > 0
-    }
-
-    init(
-        drivers: Drivers = Drivers(),
-        watchdogDelay: TimeInterval = 0.5,
-        log: @escaping (String) -> Void = { NSLog("%@", $0) }
-    ) {
-        self.drivers = drivers
-        self.watchdogDelay = watchdogDelay
-        self.log = log
-    }
-
-    /// Hides the system cursor and confirms the WindowServer stopped drawing it.
-    /// A `false` return means the overlay must not draw its own pointer.
-    @discardableResult
-    func hide() -> Bool {
-        // Never past one: a second hide would need a second unhide, and one of
-        // those would steal a hide that belongs to another session.
-        if hideDepth > 0 { return true }
-        guard !isUnavailable else { return false }
-
-        // A probe that reports "not visible" *before* we asked cannot prove
-        // anything: it would also report that when it is broken. Only a visible
-        // baseline turning invisible is evidence.
-        let baseline = drivers.isCursorVisible()
-        drivers.hide()
-        var confirmed = false
-        if baseline == true {
-            // Measured on this machine the state flips in under 1 ms; poll a
-            // few times so one slow window-server round trip is not a failure.
-            for _ in 0..<8 {
-                if drivers.isCursorVisible() == false {
-                    confirmed = true
-                    break
-                }
-                usleep(1_000)
-            }
-        }
-        guard confirmed else {
-            // Balance the hide we just made and stay on the system cursor.
-            // (An ignored hide is balanced as well: an unhide too many only
-            // shows a cursor, a hide too many hides it.)
-            drivers.unhide()
-            attempts += 1
-            // `NSCursor.hide()` is only honoured while this app owns the
-            // foreground, so the first attempt can fail before activation
-            // lands. Give the caller a couple of chances, then stop asking.
-            if baseline == nil || attempts >= 3 {
-                isUnavailable = true
-            }
-            if attempts == 1 || isUnavailable {
-                log("BlinkClip: system cursor could not be hidden"
-                    + " (read-back \(baseline.map { $0 ? "visible" : "not visible" } ?? "unavailable"));"
-                    + " keeping the system cursor and drawing the guides only")
-            }
-            return false
-        }
-        hideDepth = 1
-        everHid = true
-        Self.noteOwnedHide(1)
-        // A restore that was waiting for activation would undo this fresh hide
-        // the moment activation landed; the caller asked to hide again instead.
-        cancelActivationRestore()
-        return true
-    }
-
-    /// Restores the system cursor exactly once. Safe from every exit path:
-    /// selection lock, teardown, lost activation, window close, termination,
-    /// `deinit`.
-    func restore() {
-        restoreRequests += 1
-        guard hideDepth > 0 else { return }
-        if drivers.isAppActive() {
-            cancelActivationRestore()
-            performUnhide()
-            return
-        }
-        // An unhide issued right now would be dropped by AppKit, and the 0/1
-        // counter would claim a restored cursor that is still not drawn. Keep
-        // the hide on the books and finish it on the next activation.
-        armActivationRestore()
-    }
-
-    /// After the overlay closed: one delayed read-back that proves the cursor
-    /// came back. Schedules at most one check per call.
-    ///
-    /// The item holds the hider *strongly*: the controller usually deallocates
-    /// right after `tearDown`, and a weakly captured watchdog would be gone
-    /// with it — the exact hole this net exists to close.
-    func scheduleRestoreWatchdog() {
-        guard everHid else { return }
-        cancelRestoreWatchdog()
-        watchdogGeneration += 1
-        let generation = watchdogGeneration
-        let item = DispatchWorkItem { [self] in
-            guard watchdogGeneration == generation else { return }
-            runRestoreWatchdog()
-        }
-        watchdog = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + watchdogDelay, execute: item)
-    }
-
-    func cancelRestoreWatchdog() {
-        watchdogGeneration += 1
-        watchdog?.cancel()
-        watchdog = nil
-    }
-
-    /// The delayed verification itself (also callable directly by the harness).
-    /// It balances a restore that never got its activation, then forces at most
-    /// one extra unhide if the WindowServer still draws no cursor.
-    func runRestoreWatchdog() {
-        watchdog = nil
-        guard everHid else {
-            // Nothing was ever hidden here: never steal another app's unhide.
-            cancelActivationRestore()
-            return
-        }
-        if hideDepth > 0 {
-            // Activation never arrived after the overlay closed; leaving the
-            // counter at 1 would outlive this session. Balance it now.
-            performUnhide()
-        }
-        var visible = drivers.isCursorVisible()
-        // A read-back taken right after an unhide can trail it by a moment;
-        // the poll only keeps that from becoming a false alarm.
-        var polls = 0
-        while visible == false, polls < 8 {
-            usleep(1_000)
-            visible = drivers.isCursorVisible()
-            polls += 1
-        }
-        switch visible {
-        case .some(true):
-            cancelActivationRestore()
-            log("BlinkClip: cursor-restore watchdog: system cursor visible after the overlay closed")
-        case .some(false):
-            // The counter is balanced but no cursor is drawn: the unhide was
-            // dropped (background app) or the hide was never really ours.
-            // One bounded extra unhide, then keep retrying on activation.
-            drivers.unhide()
-            forcedUnhides += 1
-            // Only a background app needs the extra activation retry; when this
-            // app is frontmost the unhide above is the one that lands.
-            if !drivers.isAppActive() {
-                armActivationRestore()
-            }
-            log("BlinkClip: cursor-restore watchdog still saw a hidden system cursor; forced one unhide")
-        case .none:
-            // No read-back: cannot verify. Restore visibility unconditionally —
-            // one extra cursor is the cheaper failure.
-            drivers.unhide()
-            forcedUnhides += 1
-            log("BlinkClip: no cursor read-back after the overlay closed; forced one unhide (verification unavailable)")
-        }
-    }
-
-    /// `NSApp` is terminating: there is no later run-loop turn, so this must be
-    /// synchronous, and it must not leave a pending watchdog behind.
-    func forceRestoreForTermination() {
-        cancelRestoreWatchdog()
-        cancelActivationRestore()
-        if performUnhide() {
-            log("BlinkClip: system cursor restored before the app terminated")
-        }
-        guard everHid, drivers.isCursorVisible() == false else { return }
-        drivers.unhide()
-        forcedUnhides += 1
-        log("BlinkClip: system cursor was still hidden at termination; forced one unhide")
-    }
-
-    deinit {
-        cancelRestoreWatchdog()
-        cancelActivationRestore()
-        let wasHidden = hideDepth > 0
-        if wasHidden {
-            // Last-resort net: a controller that dies without `tearDown` must
-            // not leave the user without a cursor. There is no run loop left to
-            // wait on, so balance now.
-            hideDepth = 0
-            Self.noteOwnedHide(-1)
-            drivers.unhide()
-        }
-        guard everHid else { return }
-        guard wasHidden || !drivers.isAppActive() || drivers.isCursorVisible() == false else { return }
-        // When another app owns the foreground the unhide above can be dropped.
-        // Leave one activation retry that does not need this object to survive,
-        // but never let it undo a hide that a live session has taken over.
-        let drivers = self.drivers
-        let log = self.log
-        _ = drivers.waitForActivation {
-            guard !SystemCursorHider.hasLiveOwnedHide,
-                  drivers.isCursorVisible() == false else { return }
-            drivers.unhide()
-            log("BlinkClip: activation retry after the cursor hider was released; forced one unhide")
-        }
-    }
-
-    private func performUnhide() -> Bool {
-        guard hideDepth > 0 else { return false }
-        hideDepth = 0
-        Self.noteOwnedHide(-1)
-        drivers.unhide()
-        return true
-    }
-
-    private func armActivationRestore() {
-        guard pendingActivationRestore == nil else { return }
-        log("BlinkClip: system cursor restore deferred until this app is active again")
-        pendingActivationRestore = drivers.waitForActivation { [weak self] in
-            guard let self else { return }
-            self.pendingActivationRestore = nil
-            if self.performUnhide() {
-                self.log("BlinkClip: system cursor restored after activation returned")
-                return
-            }
-            // The watchdog already balanced the counter, but its unhide can be
-            // dropped while the app is in the background; verify on activation.
-            if self.drivers.isCursorVisible() == false {
-                self.drivers.unhide()
-                self.forcedUnhides += 1
-                self.log("BlinkClip: activation retry found the system cursor still hidden; forced one unhide")
-            }
-        }
-    }
-
-    private func cancelActivationRestore() {
-        pendingActivationRestore?()
-        pendingActivationRestore = nil
-    }
-
-    /// One-shot `didBecomeActive` wait; the returned closure cancels it.
-    static func observeNextActivation(_ body: @escaping () -> Void) -> () -> Void {
-        let observation = ActivationObservation()
-        observation.token = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            observation.cancel()
-            body()
-        }
-        return { observation.cancel() }
-    }
-
-    private final class ActivationObservation {
-        var token: NSObjectProtocol?
-
-        func cancel() {
-            if let token { NotificationCenter.default.removeObserver(token) }
-            token = nil
-        }
-    }
-
-    /// `CGCursorIsVisible()` reached by symbol name, because the SDK marks it
-    /// unavailable. Returns `nil` when the symbol is gone (then no hide can be
-    /// confirmed).
-    static func windowServerCursorIsVisible() -> Bool? {
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGCursorIsVisible") else {
-            return nil
-        }
-        typealias Function = @convention(c) () -> UInt32
-        return unsafeBitCast(symbol, to: Function.self)() != 0
-    }
-}
 
 struct CaptureResult {
     let rect: CGRect       // In CG coordinates (top-left origin) for capture
@@ -609,9 +250,6 @@ class OverlayWindowController {
         postCaptureAction: PostCaptureAction = .edit,
         triggerContext: CaptureTriggerContext = CaptureTriggerContext(source: .programmatic),
         snapshotProvider: ScreenSnapshotProviding = ScreenSnapshotProvider.shared,
-        // Injectable so the harness can exercise the "hide not confirmed" path
-        // without touching the real cursor.
-        cursorHider: SystemCursorHider = SystemCursorHider(),
         windowSnapshotLoader: @escaping WindowSnapshotLoader = {
             WindowDetector.snapshot(primaryScreenArea: $0)
         },
@@ -646,7 +284,6 @@ class OverlayWindowController {
         self.postCaptureAction = postCaptureAction
         self.triggerContext = triggerContext
         self.snapshotProvider = snapshotProvider
-        self.systemCursor = cursorHider
         self.windowSnapshotLoader = windowSnapshotLoader
         self.windowImageLoader = windowImageLoader ?? WindowCaptureSource.makeLoader()
         self.snapshotTimeout = snapshotTimeout
@@ -1105,11 +742,6 @@ class OverlayWindowController {
                     view.updateCrosshair(globalPoint: screenPoint)
                 }
             }
-            // The overlay tells the controller when it starts/stops painting the
-            // pointer; the controller owns the system cursor's hide/restore.
-            selectionView.onPointerCursorDrawnChanged = { [weak self] _ in
-                self?.pointerCursorDrawnStateChanged()
-            }
             selectionView.aspectRatio = usesAspectRatioSelection ? Self.persistedSelectionAspectRatio : nil
             selectionView.onFirstDrawCompleted = { [weak self] in
                 self?.recordFirstDraw(generation: generation)
@@ -1283,7 +915,6 @@ class OverlayWindowController {
         if presetImage == nil, suspendedDraft == nil {
             NSCursor.crosshair.push()
             cursorWasPushed = true
-            installActivationObserverIfNeeded()
             if !pendingFocusSensitiveForegroundClaim || pendingFocusSensitiveSnapshotDisplayIDs.isEmpty {
                 claimSelectionForeground()
             }
@@ -1327,12 +958,13 @@ class OverlayWindowController {
         refreshSelectionCursor()
         NSCursor.crosshair.set()
         NSApp.activate(ignoringOtherApps: true)
-        // `NSCursor.hide()` only takes effect while this app owns the foreground,
-        // so the self-drawn pointer starts here, after the activation — and once
-        // more on the next run-loop turn in case the activation is still landing.
-        beginSelfDrawnPointer()
+        // Activation can still be landing when the cursor call above runs, so
+        // the system crosshair is re-asserted once the activation has landed.
+        // The system cursor is never hidden: there is nothing to restore later.
         DispatchQueue.main.async { [weak self] in
-            self?.beginSelfDrawnPointer()
+            guard let self else { return }
+            self.refreshSelectionCursor()
+            NSCursor.crosshair.set()
         }
     }
 
@@ -1730,165 +1362,6 @@ class OverlayWindowController {
 
     private var cursorPopped = false
     private var cursorWasPushed = false
-    /// Owns this session's single system-cursor hide. The overlay paints the
-    /// pointer itself while it is hidden, so pointer and guides share one layer
-    /// update instead of the guides trailing the hardware cursor.
-    private var systemCursor: SystemCursorHider = SystemCursorHider()
-    /// One unconfirmed hide (or one lost activation) is enough: this session
-    /// then keeps the system cursor and draws the guides only, so the user never
-    /// sees two pointers.
-    private var suppressesSelfDrawnPointer = false
-    private var isUpdatingPointerCursor = false
-    private var pendingSystemCursorRestore: DispatchWorkItem?
-    private var activationObserver: NSObjectProtocol?
-    private var terminationObserver: NSObjectProtocol?
-    private var windowCloseObserver: NSObjectProtocol?
-
-    deinit {
-        // Last-resort net: a controller that dies without `tearDown` must not
-        // leave the user without a cursor.
-        if let activationObserver {
-            NotificationCenter.default.removeObserver(activationObserver)
-        }
-        if let terminationObserver {
-            NotificationCenter.default.removeObserver(terminationObserver)
-        }
-        if let windowCloseObserver {
-            NotificationCenter.default.removeObserver(windowCloseObserver)
-        }
-        systemCursor.restore()
-    }
-
-    // MARK: - Self-drawn pointer
-
-    /// Starts painting the pointer inside the overlays. The system cursor is
-    /// hidden *first*: if the hide cannot be confirmed, nothing is drawn and this
-    /// session stays on the system cursor plus guides.
-    private func beginSelfDrawnPointer() {
-        guard !suppressesSelfDrawnPointer, !isUpdatingPointerCursor else { return }
-        guard systemCursor.hide() else {
-            // No confirmed hide: keep the system cursor and the guides only, so
-            // the user never sees two pointers. The hider bounds its own retries
-            // (a first attempt can lose to the activation still landing).
-            activeSelectionViews.forEach { $0.drawsPointerCursor = false }
-            return
-        }
-        activeSelectionViews.forEach { $0.drawsPointerCursor = true }
-    }
-
-    /// One overlay started or stopped painting the pointer. Only state changes
-    /// reach this — never pointer motion — so the hide/show pair never sits on
-    /// the per-event path.
-    private func pointerCursorDrawnStateChanged() {
-        guard !sessionEnded, !suppressesSelfDrawnPointer, !isUpdatingPointerCursor else { return }
-        isUpdatingPointerCursor = true
-        defer { isUpdatingPointerCursor = false }
-
-        let drawsItsOwnPointer = activeSelectionViews.contains(where: \.isDrawingPointerCursor)
-        guard drawsItsOwnPointer else {
-            // A pointer crossing displays hides one overlay and reveals the next
-            // in the same event batch; restoring on the next run-loop turn keeps
-            // that from turning into a visible show/hide/show flicker.
-            scheduleSystemCursorRestore()
-            return
-        }
-        cancelPendingSystemCursorRestore()
-        guard !systemCursor.isHidden else { return }
-        _ = systemCursor.hide()
-    }
-
-    private func scheduleSystemCursorRestore() {
-        guard systemCursor.isHidden else { return }
-        cancelPendingSystemCursorRestore()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingSystemCursorRestore = nil
-            guard !self.activeSelectionViews.contains(where: \.isDrawingPointerCursor) else { return }
-            self.systemCursor.restore()
-        }
-        pendingSystemCursorRestore = item
-        DispatchQueue.main.async(execute: item)
-    }
-
-    private func cancelPendingSystemCursorRestore() {
-        pendingSystemCursorRestore?.cancel()
-        pendingSystemCursorRestore = nil
-    }
-
-    /// Ends the self-drawn pointer: the system cursor comes back and no overlay
-    /// paints a pointer any more. Idempotent; called from every exit path. A
-    /// watchdog is always armed afterwards: if the unhide was dropped (the app
-    /// was in the background) or never happened, it forces the cursor back.
-    private func restoreSystemCursorNow() {
-        cancelPendingSystemCursorRestore()
-        let wasHidden = systemCursor.isHidden
-        activeSelectionViews.forEach { $0.drawsPointerCursor = false }
-        systemCursor.restore()
-        systemCursor.scheduleRestoreWatchdog()
-        if wasHidden {
-            NSLog("%@", "BlinkClip: system cursor restored after the selection overlay")
-        }
-    }
-
-    /// A capture overlay that loses activation can still be on screen (snapshot
-    /// or window-capture wait, editor hand-off). Whatever the user does next must
-    /// have a visible cursor, so this session falls back to guides only. The
-    /// unhide is usually deferred to the next activation (AppKit drops cursor
-    /// calls from a background app), so the watchdog is the second net.
-    private func handleApplicationWillResignActive() {
-        guard !sessionEnded else { return }
-        guard systemCursor.isHidden || activeSelectionViews.contains(where: \.drawsPointerCursor) else {
-            return
-        }
-        suppressesSelfDrawnPointer = true
-        cancelPendingSystemCursorRestore()
-        activeSelectionViews.forEach { $0.drawsPointerCursor = false }
-        systemCursor.restore()
-        systemCursor.scheduleRestoreWatchdog()
-        NSLog("%@", "BlinkClip: overlay lost activation; restored the system cursor and stopped drawing the pointer")
-    }
-
-    /// `NSApp` is terminating: no run loop is left for the watchdog, so the
-    /// cursor is forced back synchronously.
-    private func handleApplicationWillTerminate() {
-        cancelPendingSystemCursorRestore()
-        activeSelectionViews.forEach { $0.drawsPointerCursor = false }
-        systemCursor.forceRestoreForTermination()
-    }
-
-    /// One of this session's surfaces went away without the normal exit path.
-    /// The user must not be left without a cursor: restore now and let the
-    /// watchdog prove it took effect.
-    private func handleOverlayWindowWillClose(_ window: NSWindow) {
-        guard !sessionEnded, windows.contains(where: { $0 === window }) else { return }
-        restoreSystemCursorNow()
-    }
-
-    private func installActivationObserverIfNeeded() {
-        guard activationObserver == nil else { return }
-        activationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleApplicationWillResignActive()
-        }
-        terminationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleApplicationWillTerminate()
-        }
-        windowCloseObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
-            guard let window = note.object as? NSWindow else { return }
-            self?.handleOverlayWindowWillClose(window)
-        }
-    }
 
     private func tearDown() {
         guard !sessionEnded else { return }
@@ -1912,23 +1385,6 @@ class OverlayWindowController {
             cursorPopped = true
         }
         cursorWasPushed = false
-        if let activationObserver {
-            NotificationCenter.default.removeObserver(activationObserver)
-            self.activationObserver = nil
-        }
-        if let terminationObserver {
-            NotificationCenter.default.removeObserver(terminationObserver)
-            self.terminationObserver = nil
-        }
-        if let windowCloseObserver {
-            NotificationCenter.default.removeObserver(windowCloseObserver)
-            self.windowCloseObserver = nil
-        }
-        // The selection is over (or the session failed): the user gets the
-        // system cursor back before anything else happens, and a watchdog is
-        // armed to prove it (the unhide can be dropped while the app is in the
-        // background, and this is the last exit path that can catch it).
-        restoreSystemCursorNow()
 
         chipWindow?.dismiss()
         chipWindow = nil
@@ -2244,8 +1700,8 @@ extension OverlayWindowController: SelectionViewDelegate {
             cursorPopped = true
         }
         // The frame is committed: from here on the editor (or the snapshot /
-        // window-capture wait) needs a real, visible pointer.
-        restoreSystemCursorNow()
+        // window-capture wait) owns the pointer, and the system cursor was never
+        // hidden, so nothing has to be restored.
     }
 
     private func resumePendingSelectionIfReady(displayID: CGDirectDisplayID) {

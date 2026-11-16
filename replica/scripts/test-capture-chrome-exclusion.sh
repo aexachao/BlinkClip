@@ -83,14 +83,14 @@ assert all(checks.values()), checks
 print(f'SEL label source gate: {len(checks)} checks passed')
 PY
 
-# --- CUR 源码门：框选期自绘十字光标 ---------------------------------------------
+# --- CUR4 源码门：系统十字光标 + 独立图层低对比辅线 ---------------------------
 python3 - "$replica_root" "$ARTIFACT_TASK_DIR/out" <<'PY'
 import json, pathlib, sys
 root, out = map(pathlib.Path, sys.argv[1:])
 capture = root / 'Vendor/capcap/Capture'
 selection = (capture / 'SelectionView.swift').read_text()
-overlay = (capture / 'OverlayWindowController.swift').read_text()
 design = (root.parent / 'DESIGN.md').read_text()
+harness = (root / 'Tests/Native/CaptureChromeExclusionHarness.swift').read_text()
 
 
 def code(text):
@@ -105,90 +105,103 @@ def body(text, signature, next_signature):
     return text[start:end]
 
 
-update_layers = body(code(selection), 'private func updateCrosshairLayers()', 'private func reportPointerCursorDrawn')
-begin_pointer = body(code(overlay), 'private func beginSelfDrawnPointer()', 'private func pointerCursorDrawnStateChanged')
-tear_down = body(code(overlay), 'private func tearDown()', 'private func takeWindowCaptureTask')
-lock_selection = body(code(overlay), 'private func lockSelectionForCompletion', 'private func resumePendingSelectionIfReady')
+selection_code = code(selection)
+update_layers = body(selection_code, 'private func updateCrosshairLayers()', 'private func broadcastCrosshair')
+band = body(selection_code, 'private final class CrosshairBandView: NSView', 'class SelectionView: NSView')
+cursor_rects = body(selection_code, 'override func resetCursorRects()', 'func refreshCursorRects()')
+overlay = (capture / 'OverlayWindowController.swift').read_text()
+
+# 全仓库的 Swift 源（生产代码 + 测试工具），不是只有覆盖层。
+swift_sources = {p: p.read_text() for p in root.rglob('*.swift')}
 
 checks = {
-    # CUR：光标是覆盖层内的一份图层/子视图（18pt 十字、1pt 白线、3pt 深色描边、
-    # 中心 2pt 空隙），不是系统光标，也不是 draw(_:) 像素。
-    'self-drawn-pointer-lives-in-the-overlay': all(fragment in code(selection) for fragment in (
-        'private final class CrosshairCursorView: NSView',
-        'crosshairCursor = CrosshairCursorView()',
-        'addSubview(crosshairCursor)',
-        'strandLength: CGFloat = 18',
-        'centerGap: CGFloat = 2',
-        'lineWidth: CGFloat = 1',
-        'strokeWidth: CGFloat = 3',
-        'func hitTest(_ point: NSPoint) -> NSView? { nil }',
-        'var drawsPointerCursor = false',
-        'onPointerCursorDrawnChanged: ((Bool) -> Void)?',
+    # CUR4：自绘光标（视图、状态回调和它引出的控制端逻辑）彻底删除。
+    'self-drawn-pointer-is-gone': all(fragment not in selection_code for fragment in (
+        'CrosshairCursorView',
+        'crosshairCursor',
+        'drawsPointerCursor',
+        'onPointerCursorDrawnChanged',
+        'isDrawingPointerCursor',
     )),
 
-    # CUR：光标与两条辅线在同一个函数、同一次 CATransaction 里写 frame；这条
-    # 路径不排整窗重绘，否则「同一帧」就无从保证。
-    'self-drawn-pointer-shares-the-guide-transaction': all(fragment in update_layers for fragment in (
-        'CATransaction.setDisableActions(true)',
-        'crosshairHorizontal.place(',
-        'crosshairVertical.place(',
-        'crosshairCursor.place(',
-        'let showsPointer = drawsPointerCursor',
-        'crosshairCursor.place(centre: NSPoint(x: x, y: y), visible: showsPointer)',
+    # CUR4：全仓库不再隐藏/恢复系统光标——这是「关掉覆盖层后光标一定可见」
+    # 的结构性保证（没有 hide 就没有需要恢复的 unhide，也就不存在被吞的恢复）。
+    'system-cursor-is-never-hidden': all(
+        token not in text
+        for token in (
+            'NSCursor.' + 'hide(',
+            'NSCursor.' + 'unhide(',
+            'CGDisplay' + 'HideCursor',
+            'CGDisplay' + 'ShowCursor',
+            'System' + 'CursorHider',
+            'CG' + 'CursorIsVisible',
+        )
+        for text in swift_sources.values()
+    ),
+
+    # CUR4：指针交还系统 crosshair：覆盖层视图注册 crosshair cursor rect，
+    # 并且在覆盖层激活时主动 set 一次。
+    'pointer-is-the-system-crosshair': 'addCursorRect(bounds, cursor: .crosshair)' in cursor_rects
+        and 'resetCursorRects()' in selection_code
+        and 'NSCursor.crosshair.set()' in selection_code
+        and 'NSCursor.crosshair.set()' in code(overlay),
+
+    # CUR4：辅线仍是独立图层（每个轴一个 CAShapeLayer），鼠标移动只改图层，
+    # 不排整窗 draw(_:)。
+    'guides-live-in-independent-layers': all(fragment in selection_code for fragment in (
+        'private final class CrosshairBandView: NSView',
+        'crosshairHorizontal = CrosshairBandView(axis: .horizontal)',
+        'crosshairVertical = CrosshairBandView(axis: .vertical)',
+        'private let lineLayer = CAShapeLayer()',
     )) and 'needsDisplay' not in update_layers,
 
-    # CUR：系统光标成对隐藏/恢复，幂等标志防多减一次；选区提交、会话结束、
-    # 失去激活、deinit 都必须恢复。
-    # CUR2：计数守恒（0/1 状态机，不能重复 hide）、非激活恢复延后到激活、
-    # 关闭后看门狗兜底，任何退出路径都不能让光标长期不可见。
-    'system-cursor-hide-is-paired-and-balanced': all(fragment in code(overlay) for fragment in (
-        'final class SystemCursorHider',
-        'NSCursor.hide()',
-        'NSCursor.unhide()',
-        'private(set) var hideDepth = 0',
-        'var isHidden: Bool { hideDepth > 0 }',
-        'guard hideDepth > 0 else { return }',
-        'private(set) var isUnavailable = false',
-        'func restore()',
-        'deinit {',
-        'systemCursor.hide()',
-        'restoreSystemCursorNow()',
-        'NSApplication.willResignActiveNotification',
-        'NSApplication.didBecomeActiveNotification',
-        'NSApplication.willTerminateNotification',
-        'NSWindow.willCloseNotification',
-        'func scheduleRestoreWatchdog()',
-        'func runRestoreWatchdog()',
-        'private func armActivationRestore()',
-        'private func performUnhide() -> Bool',
-        'if drivers.isAppActive()',
-        'forcedUnhides += 1',
-    ))
-    and 'systemCursor.restore()' in code(overlay)
-    and 'restoreSystemCursorNow()' in tear_down
-    and 'restoreSystemCursorNow()' in lock_selection
-    # 关闭/失去激活/终止三条退出路径都挂看门狗或同步兜底。
-    and 'systemCursor.scheduleRestoreWatchdog()' in code(overlay)
-    and 'systemCursor.forceRestoreForTermination()' in code(overlay)
-    # 先隐藏、确认成功后才开始自绘（失败不出现第二个光标）。
-    and begin_pointer.index('systemCursor.hide()') < begin_pointer.index('drawsPointerCursor = true'),
+    # CUR4：同一关闭隐式动画的事务内更新，并对图层同步 display/displayIfNeeded，
+    # 不把位置留给下一轮 runloop。
+    'guides-update-synchronously': all(fragment in update_layers for fragment in (
+        'CATransaction.begin()',
+        'CATransaction.setDisableActions(true)',
+        'CATransaction.commit()',
+        'crosshairHorizontal.place(',
+        'crosshairVertical.place(',
+    )) and all(fragment in band for fragment in (
+        'lineLayer.setNeedsDisplay()',
+        'lineLayer.displayIfNeeded()',
+    )),
 
-    # CUR：确认不了隐藏就退化，且写日志。
-    'system-cursor-fallback-draws-guides-only': 'could not be hidden' in code(overlay)
-        and 'drawsPointerCursor = false' in code(overlay)
-        and 'suppressesSelfDrawnPointer = true' in code(overlay),
+    # 样式：systemGray 50%、1.5pt、**实线**（低对比是为了让一帧偏差几乎不可见）。
+    # 实线是用户明确要求：虚线在穿越点反而更难读。源码里不得再出现虚线常量或
+    # 非 nil 的 dash pattern 赋值。
+    # 选框本体不在本门里改：SEL 门继续管蓝色实线 / 横条 / L 角标 / 尺寸标签。
+    'guide-style-is-low-contrast-solid': all(fragment in band for fragment in (
+        'static let lineWidth: CGFloat = 1.5',
+        'static let alpha: CGFloat = 0.5',
+        'NSColor.systemGray',
+        'lineLayer.lineDashPattern = nil',
+    )) and 'static let dashPattern' not in band,
 
-    # CUR：文档写清「自绘光标 + 同一帧 + 必须恢复 + 都不入图」。
-    # CUR2：文档写清计数守恒 / 非激活延后 / 看门狗 / 任何路径不得长期不可见。
-    'design-doc-self-drawn-pointer': all(fragment in design for fragment in (
-        '十字光标本身也画在覆盖层内',
-        '同一次 `CATransaction.setDisableActions(true)` 里写 frame',
-        '结束必须恢复系统光标',
-        '均不入图',
-        '系统光标隐藏必须计数守恒',
-        '恢复在 App 非激活时延后到下一条 `didBecomeActive`',
-        '看门狗',
-        '任何退出路径都不得让光标长期不可见',
+    # 行为：idle/drawing 显示，selected/滚动截图/编辑器接管/交互关闭时隐藏。
+    'guide-visibility-rules': all(fragment in update_layers for fragment in (
+        'state == .idle || state == .drawing',
+        'selectionInteractionEnabled',
+        '!scrollCaptureActive',
+        '!selectionLocked',
+    )),
+
+    # harness：五轮开关期间拦截 cursor-hide 入口并断言 0 调用；辅线样式与几何
+    # 有对应断言，不是只靠文本门。
+    'harness-proves-no-cursor-hide': 'hideCalls == 0 && unhideCalls == 0' in harness
+        and 'NSSelectorFromString("hide")' in harness
+        and 'guides are solid (no dash pattern)' in harness,
+
+    # 文档写清「系统十字光标 + 独立图层同步更新 + 低对比实线 + 选框本体不变」。
+    'design-doc-system-crosshair': all(fragment in design for fragment in (
+        '系统十字光标',
+        '不再自绘、不再隐藏系统光标',
+        '独立图层',
+        '同步 `displayIfNeeded()`',
+        '1.5pt',
+        '实线',
+        '选框本体保持',
     )),
 }
 (out / 'cur-cursor-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')

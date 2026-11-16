@@ -27,24 +27,27 @@ extension SelectionViewDelegate {
     func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
 }
 
-/// One axis of the pointer guide: a 2pt dark halo with a 1pt white core.
+/// One axis of the pointer guide: a 1.5pt solid `systemGray` line at 50%.
 ///
-/// Both strands are layers, so following the pointer is a layer move rather
-/// than a repaint of the overlay's full-screen snapshot. That is the whole
-/// point of this type: `draw(_:)`-based lines only reach the screen after the
-/// next display refresh (and after the snapshot has been re-composited), which
-/// is exactly the lag the pointer guide must not have.
+/// The guide lives in its own layer, so following the pointer is a layer move
+/// rather than a repaint of the overlay's full-screen snapshot. The style is
+/// deliberately quiet: the pointer itself is the *system* crosshair
+/// (`NSCursor.crosshair`, hardware-composited, never hidden), so the guide only
+/// has to communicate alignment. A solid low-contrast line makes the one
+/// display frame an AppKit update can trail the pointer by almost invisible.
 private final class CrosshairBandView: NSView {
     enum Axis {
         case horizontal
         case vertical
     }
 
-    static let haloThickness: CGFloat = 2
-    static let coreThickness: CGFloat = 1
+    /// Guide weight and colour alpha. The line is solid: the source gate reads
+    /// these constants, so the documented style cannot drift from the drawn one.
+    static let lineWidth: CGFloat = 1.5
+    static let alpha: CGFloat = 0.5
 
     private let axis: Axis
-    private let coreLayer = CALayer()
+    private let lineLayer = CAShapeLayer()
     private var placedRect: NSRect = .null
 
     init(axis: Axis) {
@@ -52,8 +55,6 @@ private final class CrosshairBandView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         isHidden = true
-        layer?.backgroundColor = NSColor.black
-            .withAlphaComponent(SelectionView.crosshairHaloAlpha).cgColor
         layer?.isOpaque = false
         layer?.masksToBounds = false
         // A guide is decoration: never a hit or cursor target.
@@ -63,12 +64,26 @@ private final class CrosshairBandView: NSView {
             "hidden": NSNull(),
             "opacity": NSNull()
         ]
-        coreLayer.backgroundColor = NSColor.white
-            .withAlphaComponent(SelectionView.crosshairCoreAlpha).cgColor
-        coreLayer.isOpaque = false
-        coreLayer.masksToBounds = false
-        coreLayer.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
-        layer?.addSublayer(coreLayer)
+        lineLayer.fillColor = nil
+        lineLayer.strokeColor = NSColor.systemGray
+            .withAlphaComponent(Self.alpha).cgColor
+        lineLayer.lineWidth = Self.lineWidth
+        // Solid: a dashed guide was tried in 1.0.25 and rejected — the user
+        // reads the crossing point faster on a continuous line.
+        lineLayer.lineDashPattern = nil
+        lineLayer.lineCap = .butt
+        lineLayer.isOpaque = false
+        lineLayer.masksToBounds = false
+        // A move must not animate: the guide has to be at the pointer's new
+        // position in this event, not ride a 0.25s implicit animation.
+        lineLayer.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "path": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull()
+        ]
+        layer?.addSublayer(lineLayer)
     }
 
     required init?(coder: NSCoder) {
@@ -79,8 +94,9 @@ private final class CrosshairBandView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Moves the band to `rect` (view coordinates) and re-states the core,
-    /// writing only the layers whose geometry or visibility changed.
+    /// Moves the band to `rect` (view coordinates), re-states its line path and
+    /// displays the layer synchronously, so the new position belongs to this
+    /// event instead of the next run-loop turn.
     func place(_ rect: NSRect, visible: Bool) {
         if isHidden != !visible {
             isHidden = !visible
@@ -92,164 +108,21 @@ private final class CrosshairBandView: NSView {
         guard !rect.equalTo(placedRect) else { return }
         placedRect = rect
         frame = rect
-        let core: NSRect
+        lineLayer.frame = bounds
+        let path = CGMutablePath()
         switch axis {
         case .horizontal:
-            core = NSRect(
-                x: 0,
-                y: (rect.height - Self.coreThickness) / 2,
-                width: rect.width,
-                height: Self.coreThickness
-            )
+            path.move(to: CGPoint(x: 0, y: bounds.midY))
+            path.addLine(to: CGPoint(x: bounds.maxX, y: bounds.midY))
         case .vertical:
-            core = NSRect(
-                x: (rect.width - Self.coreThickness) / 2,
-                y: 0,
-                width: Self.coreThickness,
-                height: rect.height
-            )
+            path.move(to: CGPoint(x: bounds.midX, y: 0))
+            path.addLine(to: CGPoint(x: bounds.midX, y: bounds.maxY))
         }
-        coreLayer.frame = core
-    }
-}
-
-/// The pointer itself, drawn inside the overlay.
-///
-/// The WindowServer paints the hardware cursor at its own cadence; an AppKit
-/// layer update for the guides therefore always lands one display frame later,
-/// which reads as the guides chasing the pointer no matter how cheap the update
-/// is. Drawing the pointer into the same overlay makes "pointer + guides" one
-/// layer update, so their relative displacement is exactly zero at every speed.
-/// That is only true while the system cursor is out of the way — the overlay
-/// controller hides it for as long as this view is on screen and falls back to
-/// guides-only when it cannot confirm the hide.
-///
-/// Shape: two 1pt white strands, 18pt across, over a 3pt dark outline, with a
-/// 2pt hole at the crossing so the aimed pixel stays readable on both a light
-/// and a dark desktop.
-private final class CrosshairCursorView: NSView {
-    /// Total length of one strand, gap included.
-    static let strandLength: CGFloat = 18
-    /// The strands stop this far short of the crossing (1pt on each side).
-    static let centerGap: CGFloat = 2
-    /// White core thickness.
-    static let lineWidth: CGFloat = 1
-    /// Dark outline thickness around the core (1pt either side).
-    static let strokeWidth: CGFloat = 3
-
-    private let outlineLayer = CAShapeLayer()
-    private let coreLayer = CAShapeLayer()
-    private var placedCentre: NSPoint?
-
-    init() {
-        super.init(frame: NSRect(
-            x: 0,
-            y: 0,
-            width: Self.strandLength,
-            height: Self.strandLength
-        ))
-        wantsLayer = true
-        isHidden = true
-        layer?.isOpaque = false
-        layer?.masksToBounds = false
-        // A pointer is decoration: never a hit or cursor target, and a move
-        // must not animate.
-        layer?.actions = [
-            "position": NSNull(),
-            "bounds": NSNull(),
-            "hidden": NSNull(),
-            "opacity": NSNull()
-        ]
-
-        let centre = NSPoint(x: Self.strandLength / 2, y: Self.strandLength / 2)
-        let half = Self.strandLength / 2
-        let gap = Self.centerGap / 2
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: centre.x - half, y: centre.y))
-        path.addLine(to: CGPoint(x: centre.x - gap, y: centre.y))
-        path.move(to: CGPoint(x: centre.x + gap, y: centre.y))
-        path.addLine(to: CGPoint(x: centre.x + half, y: centre.y))
-        path.move(to: CGPoint(x: centre.x, y: centre.y - half))
-        path.addLine(to: CGPoint(x: centre.x, y: centre.y - gap))
-        path.move(to: CGPoint(x: centre.x, y: centre.y + gap))
-        path.addLine(to: CGPoint(x: centre.x, y: centre.y + half))
-
-        configure(
-            outlineLayer,
-            path: path,
-            color: NSColor.black.withAlphaComponent(0.62),
-            width: Self.strokeWidth
-        )
-        configure(
-            coreLayer,
-            path: path,
-            color: NSColor.white.withAlphaComponent(0.95),
-            width: Self.lineWidth
-        )
-        layer?.addSublayer(outlineLayer)
-        layer?.addSublayer(coreLayer)
-        updateContentsScale()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var isOpaque: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        updateContentsScale()
-    }
-
-    /// Shape layers are rasterised at their contents scale, so a 1pt stroke
-    /// stays one device pixel wide (two on a 2x display) instead of blurring.
-    private func updateContentsScale() {
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        guard outlineLayer.contentsScale != scale else { return }
-        outlineLayer.contentsScale = scale
-        coreLayer.contentsScale = scale
-    }
-
-    private func configure(_ shape: CAShapeLayer, path: CGPath, color: NSColor, width: CGFloat) {
-        shape.path = path
-        shape.fillColor = nil
-        shape.strokeColor = color.cgColor
-        shape.lineWidth = width
-        shape.lineCap = .butt
-        shape.isOpaque = false
-        shape.masksToBounds = false
-        shape.frame = bounds
-        shape.actions = [
-            "position": NSNull(),
-            "bounds": NSNull(),
-            "path": NSNull(),
-            "hidden": NSNull(),
-            "opacity": NSNull(),
-            "contentsScale": NSNull()
-        ]
-    }
-
-    /// Centres the pointer on `point` (view coordinates, already snapped to the
-    /// device pixel grid by the caller) and hides it when not drawn.
-    func place(centre point: NSPoint, visible: Bool) {
-        guard visible else {
-            if !isHidden { isHidden = true }
-            placedCentre = nil
-            return
-        }
-        if isHidden { isHidden = false }
-        guard placedCentre != point else { return }
-        placedCentre = point
-        let half = Self.strandLength / 2
-        frame = NSRect(
-            x: point.x - half,
-            y: point.y - half,
-            width: Self.strandLength,
-            height: Self.strandLength
-        )
+        lineLayer.path = path
+        // Render the layer now, inside the caller's disabled-actions
+        // transaction: a guide movement is never deferred to the next run loop.
+        lineLayer.setNeedsDisplay()
+        lineLayer.displayIfNeeded()
     }
 }
 
@@ -396,30 +269,12 @@ class SelectionView: NSView {
 
     /// The guides live in their own view-backed layers (`CrosshairBandView`),
     /// not in the overlay's snapshot drawing. A pointer move then only moves a
-    /// layer — the full-screen snapshot is never invalidated, so the lines
-    /// cannot trail the pointer by the display refresh a `draw(_:)` line costs.
+    /// layer — the full-screen snapshot is never invalidated, and the layer is
+    /// displayed inside the same transaction, so the line cannot trail the
+    /// pointer by a run-loop turn. The pointer itself is the system crosshair:
+    /// this view never draws or hides it.
     private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)
     private let crosshairVertical = CrosshairBandView(axis: .vertical)
-    /// The pointer. It lives here, in the same layer tree as the guides, so the
-    /// two are written in one `CATransaction` and therefore reach the screen in
-    /// the same frame — there is no relative displacement to see, at any speed.
-    private let crosshairCursor = CrosshairCursorView()
-
-    /// Set by `OverlayWindowController` once the WindowServer confirmed that the
-    /// system cursor is hidden. When the confirmation fails this stays false and
-    /// the overlay draws the guides only, so the user never sees two pointers.
-    var drawsPointerCursor = false {
-        didSet {
-            guard drawsPointerCursor != oldValue else { return }
-            updateCrosshairLayers()
-        }
-    }
-
-    /// True while this overlay is actually painting the pointer. Only state
-    /// changes cross this callback — never pointer motion — so the controller
-    /// can hide/show the system cursor without a per-event cost.
-    var onPointerCursorDrawnChanged: ((Bool) -> Void)?
-    private(set) var isDrawingPointerCursor = false
 
     // MARK: - Constants
 
@@ -455,11 +310,6 @@ class SelectionView: NSView {
     private static let sizeLabelPadding = NSSize(width: 10, height: 6)
     private static let sizeLabelCornerRadius: CGFloat = 6
     private static let sizeLabelGap: CGFloat = 8
-    /// Crosshair: a 1pt white hairline at 42% over a 2pt dark halo, so the lines
-    /// read on both a light and a dark desktop without becoming harsh.
-    fileprivate static let crosshairCoreAlpha: CGFloat = 0.42
-    fileprivate static let crosshairHaloAlpha: CGFloat = 0.35
-
     // MARK: - Public
 
     override init(frame frameRect: NSRect) {
@@ -473,14 +323,12 @@ class SelectionView: NSView {
     }
 
     /// Adds the two guide layers above everything the snapshot drawing puts on
-    /// screen. They stay hidden until a pointer position is known. The pointer
-    /// is added last so it sits on top of its own guides.
+    /// screen. They stay hidden until a pointer position is known.
     private func installCrosshairBands() {
         for band in [crosshairHorizontal, crosshairVertical] {
             band.isHidden = true
             addSubview(band)
         }
-        addSubview(crosshairCursor)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -526,11 +374,13 @@ class SelectionView: NSView {
         return convert(window.convertPoint(fromScreen: point), from: nil)
     }
 
-    /// Positions the two guide layers and the self-drawn pointer. Each axis is
-    /// written only when its geometry actually changes, all three writes happen
-    /// inside one transaction with implicit animations disabled, and there is no
-    /// second update path for the pointer: a move can never separate "cursor"
-    /// from "guides", not even for one frame.
+    /// Positions the two guide layers. Each axis is written only when its
+    /// geometry actually changes, every write happens inside one transaction
+    /// with implicit animations disabled, and `CrosshairBandView.place` renders
+    /// the layer synchronously — the guide therefore belongs to the mouse event
+    /// that moved it, not to the next run-loop turn. The pointer is not part of
+    /// this view at all: it is the system crosshair, drawn by the WindowServer
+    /// and never hidden, so there is no second pointer to keep in sync.
     private func updateCrosshairLayers() {
         let showsGuides = state == .idle || state == .drawing
         guard showsGuides,
@@ -541,22 +391,20 @@ class SelectionView: NSView {
         else {
             crosshairHorizontal.isHidden = true
             crosshairVertical.isHidden = true
-            crosshairCursor.place(centre: .zero, visible: false)
-            reportPointerCursorDrawn(false)
             return
         }
 
-        // Snap the hairline centre to a device pixel edge: on a 2x display a
-        // 1pt stroke then covers exactly two pixels instead of two blurred ones.
+        // Snap the hairline centre to the device pixel grid: a 1.5pt stroke is
+        // exactly three device pixels on a 2x display, and centring it on a
+        // half-pixel edge keeps it crisp instead of blurred.
         let scale = window?.backingScaleFactor ?? 2
-        let x = (point.x * scale).rounded() / scale
-        let y = (point.y * scale).rounded() / scale
+        let widthPx = (CrosshairBandView.lineWidth * scale).rounded()
+        let offset: CGFloat = widthPx.truncatingRemainder(dividingBy: 2) == 1 ? 0.5 : 0
+        let x = ((point.x * scale).rounded(.down) + offset) / scale
+        let y = ((point.y * scale).rounded(.down) + offset) / scale
         let showsHorizontal = bounds.minY...bounds.maxY ~= y
         let showsVertical = bounds.minX...bounds.maxX ~= x
-        // The pointer is only painted by the display it is standing on, so the
-        // other screens' overlays keep nothing at the crossing point.
-        let showsPointer = drawsPointerCursor && showsHorizontal && showsVertical
-        let halo = CrosshairBandView.haloThickness
+        let thickness = CrosshairBandView.lineWidth
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -566,23 +414,13 @@ class SelectionView: NSView {
         // neighbours, while the vertical line only lands on the pointer's own
         // display: each overlay only writes the axis that changed.
         let horizontalRect = showsHorizontal
-            ? NSRect(x: bounds.minX, y: y - halo / 2, width: bounds.width, height: halo)
+            ? NSRect(x: bounds.minX, y: y - thickness / 2, width: bounds.width, height: thickness)
             : .zero
         let verticalRect = showsVertical
-            ? NSRect(x: x - halo / 2, y: bounds.minY, width: halo, height: bounds.height)
+            ? NSRect(x: x - thickness / 2, y: bounds.minY, width: thickness, height: bounds.height)
             : .zero
         crosshairHorizontal.place(horizontalRect, visible: showsHorizontal)
         crosshairVertical.place(verticalRect, visible: showsVertical)
-        // Same snapped point as the two guide centres: the pointer stands
-        // exactly on its own crossing, in this frame.
-        crosshairCursor.place(centre: NSPoint(x: x, y: y), visible: showsPointer)
-        reportPointerCursorDrawn(showsPointer)
-    }
-
-    private func reportPointerCursorDrawn(_ drawn: Bool) {
-        guard isDrawingPointerCursor != drawn else { return }
-        isDrawingPointerCursor = drawn
-        onPointerCursorDrawnChanged?(drawn)
     }
 
     /// Turns a local pointer position into a screen point and hands it to the
