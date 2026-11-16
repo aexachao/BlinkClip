@@ -27,6 +27,15 @@ private final class CursorDriverState {
     /// When false the hide is silently ignored (what happens when the app does
     /// not own the foreground), so a visible read-back proves the failure.
     var hideIsHonoured = true
+    /// AppKit drops cursor calls from a background app. This is the injection
+    /// point for the activation timing (production reads `NSApp.isActive`).
+    var appActive = true
+    /// Drop the effect of this many `unhide()` calls, as AppKit does when the
+    /// app is in the background — the counter moves, the cursor stays hidden.
+    var swallowUnhides = 0
+    /// The body the hider is waiting to run on the next activation.
+    var activationBody: (() -> Void)?
+    var watchdogDelay: TimeInterval = 0.5
     var logs: [String] = []
 
     func makeHider() -> SystemCursorHider {
@@ -39,16 +48,35 @@ private final class CursorDriverState {
                     }
                 },
                 unhide: { [weak self] in
-                    self?.unhides += 1
-                    self?.cursorVisible = true
+                    guard let self else { return }
+                    self.unhides += 1
+                    if self.swallowUnhides > 0 {
+                        self.swallowUnhides -= 1
+                    } else {
+                        self.cursorVisible = true
+                    }
                 },
                 isCursorVisible: { [weak self] in
                     guard let self, self.probeAvailable else { return nil }
                     return self.cursorVisible
+                },
+                isAppActive: { [weak self] in self?.appActive ?? true },
+                waitForActivation: { [weak self] body in
+                    guard let self else { return {} }
+                    self.activationBody = body
+                    return { [weak self] in self?.activationBody = nil }
                 }
             ),
+            watchdogDelay: watchdogDelay,
             log: { [weak self] message in self?.logs.append(message) }
         )
+    }
+
+    /// Delivers the activation the hider is waiting for.
+    func fireActivation() {
+        let body = activationBody
+        activationBody = nil
+        body?()
     }
 }
 
@@ -315,6 +343,172 @@ private struct CrosshairLayerGeometry {
         dyingHider = nil
         check(dyingState.unhides == 1, "deinit restores the system cursor")
 
+        // --- The 1.0.23 cursor-loss failure ---------------------------------
+        // Observed on a real machine: the overlay lost activation while the
+        // cursor was hidden, the unhide was issued from the background (AppKit
+        // dropped it), the flag then said "restored", and no later path ever
+        // tried again — the cursor stayed hidden until another app took the
+        // foreground. The hider must keep the hide on the books until an
+        // unhide can actually land, and a watchdog must prove it afterwards.
+
+        // 1) restore() while inactive: no dropped unhide, one unhide on activation.
+        let deferredState = CursorDriverState()
+        deferredState.appActive = false
+        let deferredHider = deferredState.makeHider()
+        check(deferredHider.hide(), "the hide itself still confirms")
+        deferredHider.restore()
+        check(deferredHider.hideDepth == 1, "a restore from the background keeps the hide on the books")
+        check(deferredState.unhides == 0, "…and issues no unhide that AppKit would drop")
+        check(deferredHider.restoreRequests == 1, "the exit path reached restore()")
+        check(deferredState.logs.contains { $0.contains("restore deferred") },
+              "the deferral is logged")
+        deferredState.appActive = true
+        deferredState.fireActivation()
+        check(deferredHider.hideDepth == 0, "activation balances the deferred hide")
+        check(deferredState.unhides == 1, "exactly one unhide once the app is active")
+        deferredHider.restore()
+        check(deferredState.unhides == 1, "restore stays idempotent after the deferral")
+
+        // 2) A restore whose unhide the WindowServer drops: one watchdog retry.
+        let stuckState = CursorDriverState()
+        stuckState.swallowUnhides = 1
+        let stuckHider = stuckState.makeHider()
+        check(stuckHider.hide(), "the cursor is hidden before the stuck-restore test")
+        stuckHider.restore()
+        check(stuckHider.hideDepth == 0 && stuckState.unhides == 1,
+              "the first unhide is issued but dropped by the simulated WindowServer")
+        check(stuckState.cursorVisible == false, "…so the cursor is still hidden")
+        stuckHider.runRestoreWatchdog()
+        check(stuckState.unhides == 2, "the watchdog forces exactly one extra unhide")
+        check(stuckState.cursorVisible == true, "the watchdog leaves the cursor visible")
+        check(stuckHider.forcedUnhides == 1, "the extra unhide is counted once")
+        check(stuckState.logs.contains { $0.contains("watchdog") && $0.contains("forced one unhide") },
+              "the watchdog recovery is logged")
+
+        // 3) No read-back at all: the watchdog restores visibility blindly.
+        let blindWatchdogState = CursorDriverState()
+        let blindWatchdogHider = blindWatchdogState.makeHider()
+        check(blindWatchdogHider.hide(), "the cursor is hidden before the blind-watchdog test")
+        blindWatchdogHider.restore()
+        blindWatchdogState.probeAvailable = false
+        blindWatchdogHider.runRestoreWatchdog()
+        check(blindWatchdogState.unhides == 2, "without a read-back the watchdog forces one unhide")
+        check(blindWatchdogState.cursorVisible == true, "…which restores a visible cursor")
+        check(blindWatchdogState.logs.contains { $0.contains("no cursor read-back") },
+              "the unverifiable watchdog path is logged")
+
+        // 4) A session that never hid the cursor must not steal an unhide.
+        let untouchedState = CursorDriverState()
+        let untouchedHider = untouchedState.makeHider()
+        untouchedHider.runRestoreWatchdog()
+        check(untouchedState.unhides == 0, "a session that never hid the cursor forces no unhide")
+        untouchedHider.scheduleRestoreWatchdog()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(untouchedState.unhides == 0, "…and arms no watchdog")
+
+        // 5) The reported timing, end to end: hide, lose activation, tear down
+        //    (Esc) before activation returns. The watchdog is the last net and
+        //    must leave the counter at 0 with the cursor visible.
+        fronted.removeAll()
+        let dragState = CursorDriverState()
+        // Long enough that the willResignActive watchdog cannot fire while the
+        // test still checks the deferred state; the teardown one is verified
+        // below by running the loop past it.
+        dragState.watchdogDelay = 0.2
+        let dragHider = dragState.makeHider()
+        let dragController = OverlayWindowController(
+            postCaptureAction: .edit,
+            snapshotProvider: SnapshotRecorder(),
+            cursorHider: dragHider,
+            windowSnapshotLoader: { _ in .success([]) },
+            eventTrackingStateProvider: { false },
+            colorSamplerActiveProvider: { false },
+            modalWindowProvider: { nil },
+            onComplete: { _ in }
+        )
+        dragController.activate()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(dragState.hides == 1 && dragHider.hideDepth == 1,
+              "drag-before-first-frame: the overlay hid the cursor exactly once")
+        // The drag starts before the first frame; the overlay loses activation.
+        dragState.appActive = false
+        NotificationCenter.default.post(name: NSApplication.willResignActiveNotification, object: nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(dragHider.hideDepth == 1,
+              "drag-before-first-frame: losing activation keeps the hide on the books")
+        check(dragHider.restoreRequests >= 1,
+              "drag-before-first-frame: the lost-activation path asked for a restore")
+        check(dragState.unhides == 0,
+              "drag-before-first-frame: no unhide is issued from the background")
+        // Esc: the session tears down before activation ever returns.
+        dragController.cancel()
+        check(dragController.isCaptureSessionEnded, "drag-before-first-frame: Esc ends the session")
+        check(dragHider.hideDepth == 1,
+              "drag-before-first-frame: teardown alone cannot finish the deferred restore")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        check(dragHider.hideDepth == 0, "drag-before-first-frame: the watchdog leaves hideDepth 0")
+        check(dragState.unhides == 1 && dragState.hides == 1,
+              "drag-before-first-frame: one hide, one unhide after everything settles")
+        check(dragState.cursorVisible, "drag-before-first-frame: the system cursor is visible again")
+        check(dragState.logs.contains { $0.contains("watchdog") },
+              "drag-before-first-frame: the watchdog reported the closed session")
+        dragController.cancel()
+
+        // 6) The watchdog must outlive the controller: production releases the
+        //    controller right after `tearDown`, and a weakly held watchdog would
+        //    die with it (the hole that made the fix ineffective on a real run).
+        var releasedState: CursorDriverState?
+        do {
+            fronted.removeAll()
+            let state = CursorDriverState()
+            state.watchdogDelay = 0.01
+            releasedState = state
+            let hider = state.makeHider()
+            let controller = OverlayWindowController(
+                postCaptureAction: .edit,
+                snapshotProvider: SnapshotRecorder(),
+                cursorHider: hider,
+                windowSnapshotLoader: { _ in .success([]) },
+                eventTrackingStateProvider: { false },
+                colorSamplerActiveProvider: { false },
+                modalWindowProvider: { nil },
+                onComplete: { _ in }
+            )
+            controller.activate()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            controller.cancel()
+            check(hider.hideDepth == 0, "released controller: teardown restored the cursor")
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        check(releasedState?.logs.contains { $0.contains("watchdog") && $0.contains("visible") } == true,
+              "the watchdog still runs after the controller is released")
+
+        // 7) Five open/close cycles: the counter never drifts.
+        for cycle in 0..<5 {
+            fronted.removeAll()
+            let state = CursorDriverState()
+            state.watchdogDelay = 0.01
+            let hider = state.makeHider()
+            let controller = OverlayWindowController(
+                postCaptureAction: .edit,
+                snapshotProvider: SnapshotRecorder(),
+                cursorHider: hider,
+                windowSnapshotLoader: { _ in .success([]) },
+                eventTrackingStateProvider: { false },
+                colorSamplerActiveProvider: { false },
+                modalWindowProvider: { nil },
+                onComplete: { _ in }
+            )
+            controller.activate()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            controller.cancel()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            check(hider.hideDepth == 0, "cycle \(cycle): the closed overlay leaves hideDepth 0")
+            check(state.hides == 1 && state.unhides == 1,
+                  "cycle \(cycle): one hide and one unhide per session")
+            check(state.cursorVisible, "cycle \(cycle): the cursor is visible after closing")
+        }
+
         // Controller contract: confirmed hide -> overlays paint the pointer;
         // unconfirmed hide -> guides only; teardown restores exactly once.
         for scenario in ["confirmed", "hide-ignored", "probe-missing"] {
@@ -357,6 +551,24 @@ private struct CrosshairLayerGeometry {
             controller.cancel()
             check(state.unhides == state.hides, "repeated cancellation cannot unhide twice")
         }
+
+        // 8) A released hider's activation retry must not steal a hide that a
+        //    live session has taken over (NSCursor's counter is process-wide).
+        let staleState = CursorDriverState()
+        staleState.appActive = false
+        var staleHider: SystemCursorHider? = staleState.makeHider()
+        check(staleHider?.hide() == true, "stale-retry: the released session hid the cursor")
+        staleHider = nil
+        check(staleState.activationBody != nil, "stale-retry: release left one activation retry")
+        let liveState = CursorDriverState()
+        let liveHider = liveState.makeHider()
+        check(liveHider.hide(), "stale-retry: a new session hides the cursor again")
+        check(liveHider.hideDepth == 1, "stale-retry: the live session owns the hide")
+        staleState.fireActivation()
+        check(liveState.unhides == 0 && liveState.cursorVisible == false,
+              "stale-retry: the released hider does not steal the live session's hide")
+        liveHider.restore()
+        check(liveState.unhides == 1, "stale-retry: the live session still restores exactly once")
 
         print("{\"passed\":true,\"checks\":\(checks),\"boundary\":\"Real capture controller, native window IDs and explicit snapshot exclusion request; injected snapshot provider and intercepted orderFrontRegardless (no desktop overlay, ScreenCaptureKit pixels, TCC, user clipboard, or physical key event)\"}")
     }

@@ -139,22 +139,37 @@ checks = {
 
     # CUR：系统光标成对隐藏/恢复，幂等标志防多减一次；选区提交、会话结束、
     # 失去激活、deinit 都必须恢复。
+    # CUR2：计数守恒（0/1 状态机，不能重复 hide）、非激活恢复延后到激活、
+    # 关闭后看门狗兜底，任何退出路径都不能让光标长期不可见。
     'system-cursor-hide-is-paired-and-balanced': all(fragment in code(overlay) for fragment in (
         'final class SystemCursorHider',
         'NSCursor.hide()',
         'NSCursor.unhide()',
-        'private(set) var isHidden = false',
+        'private(set) var hideDepth = 0',
+        'var isHidden: Bool { hideDepth > 0 }',
+        'guard hideDepth > 0 else { return }',
         'private(set) var isUnavailable = false',
         'func restore()',
-        'guard isHidden else { return }',
         'deinit {',
         'systemCursor.hide()',
         'restoreSystemCursorNow()',
         'NSApplication.willResignActiveNotification',
+        'NSApplication.didBecomeActiveNotification',
+        'NSApplication.willTerminateNotification',
+        'NSWindow.willCloseNotification',
+        'func scheduleRestoreWatchdog()',
+        'func runRestoreWatchdog()',
+        'private func armActivationRestore()',
+        'private func performUnhide() -> Bool',
+        'if drivers.isAppActive()',
+        'forcedUnhides += 1',
     ))
     and 'systemCursor.restore()' in code(overlay)
     and 'restoreSystemCursorNow()' in tear_down
     and 'restoreSystemCursorNow()' in lock_selection
+    # 关闭/失去激活/终止三条退出路径都挂看门狗或同步兜底。
+    and 'systemCursor.scheduleRestoreWatchdog()' in code(overlay)
+    and 'systemCursor.forceRestoreForTermination()' in code(overlay)
     # 先隐藏、确认成功后才开始自绘（失败不出现第二个光标）。
     and begin_pointer.index('systemCursor.hide()') < begin_pointer.index('drawsPointerCursor = true'),
 
@@ -164,11 +179,16 @@ checks = {
         and 'suppressesSelfDrawnPointer = true' in code(overlay),
 
     # CUR：文档写清「自绘光标 + 同一帧 + 必须恢复 + 都不入图」。
+    # CUR2：文档写清计数守恒 / 非激活延后 / 看门狗 / 任何路径不得长期不可见。
     'design-doc-self-drawn-pointer': all(fragment in design for fragment in (
         '十字光标本身也画在覆盖层内',
         '同一次 `CATransaction.setDisableActions(true)` 里写 frame',
         '结束必须恢复系统光标',
         '均不入图',
+        '系统光标隐藏必须计数守恒',
+        '恢复在 App 非激活时延后到下一条 `didBecomeActive`',
+        '看门狗',
+        '任何退出路径都不得让光标长期不可见',
     )),
 }
 (out / 'cur-cursor-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
