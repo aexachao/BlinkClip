@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,7 +44,10 @@ TIMINGS_PATH = os.path.join(REPO_ROOT, ".local", "test-affected", "timings.json"
 ITEMS = {}
 
 
-def _item(key, cmd, group, covers, checks, requires=(), note=""):
+def _item(key, cmd, group, covers, checks, requires=(), note="", manual="", prep=()):
+    # manual: 非自动化项的原因（缺环境变量时记为「手工」而不是「未执行」，见 run_selection）
+    # prep : 运行前必须先在同一个隔离目录里跑完的前置命令（列表 of argv）
+    # cmd  : 其中出现的 {artifact_task_dir} 会替换成该项自己的隔离目录
     ITEMS[key] = {
         "id": key,
         "cmd": cmd,
@@ -52,6 +56,8 @@ def _item(key, cmd, group, covers, checks, requires=(), note=""):
         "checks": checks,
         "requires": list(requires),
         "note": note,
+        "manual": manual,
+        "prep": [list(step) for step in prep],
     }
 
 
@@ -234,21 +240,67 @@ for key, label, covers, checks, *rest in _SHELL_ITEMS:
     _item(key, ["bash", "replica/scripts/test-%s.sh" % key], "native", covers, checks,
           rest[0] if rest else ())
 
+# 真实 CloudKit 探针也必须显式声明「只写合成数据」，否则脚本按用法错误退出 2。
+ITEMS["cloudkit-live"]["cmd"] += ["--synthetic-only"]
+
+# 旧版迁移需要一份审计过的真实旧版数据目录，仓库里没有可提交的等价夹具：
+# 显式降级为手工项（docs/TESTING.md「手工项」一节写了怎么跑），缺变量时不算失败。
+ITEMS["blinkclip-legacy-migration"]["manual"] = (
+    "需要真实旧版数据目录（BLINKCLIP_LEGACY_FIXTURE）；仓库不提交该夹具，故不在自动门禁里")
+
+# 真实 CloudKit 探针要自有容器 + 本机 Apple 签名身份（docs/CLOUDKIT_SETUP.md）。没有一整套
+# 凭据时按手工项处理；配齐环境变量后照常执行（--synthetic-only 只写合成内容）。
+ITEMS["cloudkit-live"]["manual"] = (
+    "需要 BLINKCLIP_CLOUDKIT_* + 本机签名身份（docs/CLOUDKIT_SETUP.md）；未配置时按手工项")
+
+# 权限面板交互的 QA 进程按设计不自己退出：它轮询 `finish` 文件，由协调者（CUA）点完再收尾。
+# 没有协调者时脚本会一直 wait（曾把 --full 卡住 9 分钟），因此默认按手工项处理；
+# 设 BLINKCLIP_QA_COORDINATOR=1 时照常执行。
+ITEMS["panel-permission-interaction"]["requires"] = ["BLINKCLIP_QA_COORDINATOR"]
+ITEMS["panel-permission-interaction"]["manual"] = (
+    "需要 GUI 协调（真实点击/权限面板；协作者写 finish 收尾，CUA 证据单独记录）")
+
 # --- Python 测试 ----------------------------------------------------------------
-_item("app-monitor", [sys.executable, "replica/scripts/test-app-monitor.py"], "python",
-      "真实 app 二进制（replica/dist/BlinkClip.app）、scripts/build-store-reader.sh、"
+_item("app-monitor",
+      [sys.executable, "replica/scripts/test-app-monitor.py",
+       "--app", "{artifact_task_dir}/out/BlinkClip.app"],
+      "python",
+      "本项刚构建的 BlinkClip.app（build-app.sh release native）、scripts/build-store-reader.sh、"
       "Tests/Native/StoreReadHarness.swift",
       "定时监控在私有 pasteboard 上写入",
-      note="需先跑 bash replica/scripts/build-app.sh 产出 dist")
+      note="前置命令先构建 app；--app 指向本次构建产物，不再读 replica/dist 里的旧包",
+      prep=[["bash", "replica/scripts/build-app.sh", "release", "native"]])
 _item("distribution-signing", [sys.executable, "replica/scripts/test-distribution-signing.py"], "python",
       "replica/scripts/sign-app.py、replica/scripts/notarize-distribution.py",
       "嵌套签名顺序、公证失败关闭")
 _item("helper-lifecycle", [sys.executable, "replica/scripts/test-helper-lifecycle.py"], "python",
       "Sources/BlinkClipHelper/HelperMain.swift（真实 helper 二进制以一次性身份启动）",
       "工作区创建、重启与退出")
-_item("mcp", [sys.executable, "replica/scripts/test-mcp.py"], "python",
+_MCP_PREP = r"""set -euo pipefail
+replica_root="$PWD/replica"
+source "$replica_root/Tests/Native/build-support.sh"
+export BLINKCLIP_TEST_CONFIGURATION=debug
+prepare_native_test_core
+test_root="$ARTIFACT_TASK_DIR/build/fixture"
+compile_native_test_harness mcp-store-fixture "$replica_root/scripts/MCPStoreFixture.swift"
+bin="$(swift build --package-path "$replica_root" --scratch-path "$ARTIFACT_TASK_DIR/build/swiftpm" \
+  -c debug --show-bin-path)"
+swift build --package-path "$replica_root" --scratch-path "$ARTIFACT_TASK_DIR/build/swiftpm" \
+  -c debug --product blinkclip-mcp >/dev/null
+printf '%s\n' "$bin" > "$ARTIFACT_TASK_DIR/build/mcp-bin-path"
+"""
+
+_item("mcp",
+      ["bash", "-c",
+       'set -euo pipefail\n'
+       'bin="$(cat "$ARTIFACT_TASK_DIR/build/mcp-bin-path")"\n'
+       'exec python3 replica/scripts/test-mcp.py --binary "$bin/blinkclip-mcp" '
+       '--fixture "$ARTIFACT_TASK_DIR/build/fixture/mcp-store-fixture.app/Contents/MacOS/harness"'],
+      "python",
       "Sources/BlinkClipMCP/**、replica/scripts/MCPStoreFixture.swift（链接 BlinkClipCore）",
-      "MCP stdio 初始化、工具调用、私有 pasteboard 读写")
+      "MCP stdio 初始化、工具调用、私有 pasteboard 读写",
+      note="前置：编译 blinkclip-mcp 与 MCPStoreFixture（均隔离目录内），再显式传 --binary/--fixture",
+      prep=[["bash", "-c", _MCP_PREP]])
 _item("cloudkit-signing", [sys.executable, "replica/Tests/Native/test_cloudkit_signing.py"],
       "python",
       "replica/scripts/configure-cloudkit-signing.py",
@@ -1075,7 +1127,15 @@ def render(sel, args, timings):
         lines.append("")
         lines.append("结论：本次改动只涉及文档/元数据，无测试项，跳过。")
 
-    required_env = sorted({var for item in selected for var in ITEMS[item.id]["requires"]})
+    manual_items = [item.id for item in selected if ITEMS[item.id]["manual"]]
+    if manual_items:
+        lines.append("")
+        lines.append("手工项（缺环境变量时记为「手工」而不是失败；执行方式见 docs/TESTING.md）：")
+        for test_id in manual_items:
+            lines.append("  · %-30s %s" % (test_id, ITEMS[test_id]["manual"]))
+
+    required_env = sorted({var for item in selected if not ITEMS[item.id]["manual"]
+                           for var in ITEMS[item.id]["requires"]})
     if required_env:
         missing = [var for var in required_env if not os.environ.get(var)]
         lines.append("")
@@ -1096,6 +1156,7 @@ def as_json(sel, timings):
         "docs": [p for p, _ in sel.docs],
         "ignored": sel.ignored,
         "selected": [{"id": item.id, "group": item.group, "cmd": item.cmd,
+                      "manual": ITEMS[item.id]["manual"],
                       "rules": [r for r, _ in item.reasons],
                       "files": item.files,
                       "estimated_seconds": timings.get(item.id)} for item in selected],
@@ -1106,23 +1167,76 @@ def as_json(sel, timings):
 # --------------------------------------------------------------------------------------
 # 执行
 # --------------------------------------------------------------------------------------
-def run_selection(selected, timings, keep_going):
+def artifact_root():
+    """本次执行的产物根目录（永远在仓库之外）。
+
+    在 storage-guard 里跑时嵌到 `$ARTIFACT_TASK_DIR/items`，让受管预算照旧统计；
+    独立运行时用 `BLINKCLIP_TEST_ARTIFACT_ROOT`，否则在系统临时目录建一个。
+    """
+    guard_task = os.environ.get("ARTIFACT_TASK_DIR")
+    if guard_task:
+        root = os.path.join(guard_task, "items")
+    else:
+        root = os.environ.get("BLINKCLIP_TEST_ARTIFACT_ROOT") or tempfile.mkdtemp(
+            prefix="blinkclip-test-affected-")
+    os.makedirs(root, exist_ok=True)
+    return os.path.abspath(root)
+
+
+def expand(argv, task_dir):
+    return [str(arg).replace("{artifact_task_dir}", task_dir) for arg in argv]
+
+
+def run_selection(selected, timings, keep_going, root=None, keep_artifacts=False):
+    """逐项跑。
+
+    **每一项一个隔离目录**：所有 `test-*.sh` 都把中间文件写在 `$ARTIFACT_TASK_DIR/build`
+    下，共用同一个目录时 `build/harness` 这类路径会在不同测试之间既当文件又当目录
+    （`capture-integration` 的假失败就是这么来的）。这里给每项分配
+    `$root/<id>` 并把它作为该项的 `ARTIFACT_TASK_DIR`，跑完删掉该项 `build/`，只留 `out/`。
+    """
+    root = root or artifact_root()
     durations = {}
     failures = []
     blocked = []
+    manual = []
     ran = 0
+    print("隔离产物目录：%s（每项一个子目录，跑完删除该项 build/）" % root, flush=True)
     for item in selected:
         meta = ITEMS[item.id]
         missing = [var for var in meta["requires"] if not os.environ.get(var)]
         if item.id == "website-i18n" and shutil.which("node") is None:
             missing.append("node")
+        if missing and meta["manual"]:
+            print("\n===== %s：手工项（%s） =====" % (item.id, meta["manual"]), flush=True)
+            manual.append((item.id, meta["manual"]))
+            continue
         if missing:
             print("\n===== %s：未执行（缺少 %s） =====" % (item.id, ", ".join(missing)), flush=True)
             blocked.append((item.id, "缺少 " + ", ".join(missing)))
             continue
-        print("\n===== %s：%s =====" % (item.id, " ".join(item.cmd)), flush=True)
+        task_dir = os.path.join(root, item.id)
+        os.makedirs(task_dir, exist_ok=True)
+        env = os.environ.copy()
+        env["ARTIFACT_TASK_DIR"] = task_dir
+        prepared = True
+        for step in meta["prep"]:
+            step_cmd = expand(step, task_dir)
+            print("\n===== %s：前置 %s =====" % (item.id, " ".join(step_cmd[:2]) + (" …" if len(step_cmd) > 2 else "")),
+                  flush=True)
+            if subprocess.call(step_cmd, cwd=REPO_ROOT, env=env) != 0:
+                print("----- %s：FAIL（前置命令失败）" % item.id, flush=True)
+                failures.append((item.id, "prep"))
+                prepared = False
+                break
+        if not prepared:
+            if not keep_going:
+                break
+            continue
+        cmd = expand(meta["cmd"], task_dir)
+        print("\n===== %s：%s =====" % (item.id, " ".join(cmd)), flush=True)
         started = time.monotonic()
-        code = subprocess.call(item.cmd, cwd=REPO_ROOT)
+        code = subprocess.call(cmd, cwd=REPO_ROOT, env=env)
         elapsed = time.monotonic() - started
         durations[item.id] = elapsed
         ran += 1
@@ -1131,23 +1245,32 @@ def run_selection(selected, timings, keep_going):
         else:
             print("----- %s：FAIL（exit %d，%.1fs）" % (item.id, code, elapsed), flush=True)
             failures.append((item.id, code))
-            if not keep_going:
-                break
+        if not keep_artifacts:
+            shutil.rmtree(os.path.join(task_dir, "build"), ignore_errors=True)
+        if code != 0 and not keep_going:
+            break
     write_timings(durations)
 
     print("\n===== 汇总 =====")
-    print("执行 %d 项，失败 %d 项，未执行 %d 项"
-          % (ran, len(failures), len(blocked)))
+    print("执行 %d 项，失败 %d 项，未执行 %d 项，手工项 %d 项"
+          % (ran, len(failures), len(blocked), len(manual)))
     for test_id, code in failures:
-        print("  FAIL %s（exit %d）" % (test_id, code))
+        print("  FAIL %s（exit %s）" % (test_id, code))
     for test_id, reason in blocked:
         print("  未执行 %s：%s" % (test_id, reason))
+    for test_id, reason in manual:
+        print("  手工项 %s：%s（需按 docs/TESTING.md 手工执行，不计入自动门禁）"
+              % (test_id, reason))
+    print("产物目录：%s" % root)
     if failures:
         return 1
     if blocked:
         print("注意：存在未执行项，不能视为全部通过。")
         return 2
-    print("全部选中测试通过。")
+    if manual:
+        print("全部自动测试通过；另有 %d 个手工项未在本次执行。" % len(manual))
+    else:
+        print("全部选中测试通过。")
     return 0
 
 
@@ -1218,6 +1341,8 @@ def main(argv=None):
     parser.add_argument("--audit", action="store_true", help="映射表体检：列出未覆盖源码文件")
     parser.add_argument("--keep-going", action="store_true",
                         help="有测试失败时继续跑剩余测试（默认首个失败即停）")
+    parser.add_argument("--keep-artifacts", action="store_true",
+                        help="保留每项隔离目录里的 build/（默认跑完即删，只留 out/ 证据）")
     args = parser.parse_args(argv)
 
     if args.audit:
@@ -1252,7 +1377,8 @@ def main(argv=None):
         return 0
     if not selected:
         return 0
-    return run_selection(selected, timings, args.keep_going)
+    return run_selection(selected, timings, args.keep_going,
+                         keep_artifacts=args.keep_artifacts)
 
 
 if __name__ == "__main__":
