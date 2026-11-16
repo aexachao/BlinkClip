@@ -406,6 +406,19 @@ final class ClipboardPersistence {
         try snapshotReader.searchIndexRecords(identifiers: identifiers)
     }
 
+    /// Runs a merge-driven write under the `syncApply` transaction author.
+    ///
+    /// `BlinkClipManagedObject.willSave()` advances `updatedAt` only for local edits and keys
+    /// that decision off this author, so rows changed purely by imported sync data must be
+    /// saved under it; otherwise every merged row is stamped with `Date()`, the peers' copies
+    /// diverge on `updatedAt`, and no-op syncs/conflicts/deletions never settle.
+    func withSyncApplyAuthor<T>(_ body: () throws -> T) rethrows -> T {
+        let previous = context.transactionAuthor
+        context.transactionAuthor = "syncApply"
+        defer { context.transactionAuthor = previous }
+        return try body()
+    }
+
     func searchItems(identifiers: [String]?) throws -> [ClipboardItem] {
         try snapshotReader.searchItems(identifiers: identifiers)
     }

@@ -160,6 +160,30 @@ struct ICloudSyncMetadata: Codable, Equatable {
     }
 }
 
+extension ICloudSyncSnapshot {
+    /// The snapshot as it is archived: read-time projections that `Codable` never writes are
+    /// cleared, so an in-memory snapshot compares equal to the same snapshot decoded from disk.
+    ///
+    /// `ClipboardItem.sourceApplicationSnapshot` / `hasSourceApplicationSnapshot` are filled in
+    /// by the store's read path and are not part of the archived form. A file written from an
+    /// `applyICloudSync` result therefore decodes without them, while the next
+    /// `prepareICloudSync` carries them — comparing the two directly made every no-op sync look
+    /// like a change and rewrite the document (extra iCloud uploads).
+    public var archivedContent: ICloudSyncSnapshot {
+        var value = self
+        value.records = records.map { record in
+            var record = record
+            if var item = record.entity?.item {
+                item.sourceApplicationSnapshot = nil
+                item.hasSourceApplicationSnapshot = false
+                record.entity?.item = item
+            }
+            return record
+        }
+        return value
+    }
+}
+
 /// Each device owns one file; devices never race to replace the same iCloud document.
 /// Blocking NSFileCoordinator work stays on this actor, away from the app's MainActor.
 public actor ICloudDriveSyncTransport {
@@ -249,8 +273,10 @@ public actor ICloudDriveSyncTransport {
         try coordinate(at: file, writing: true) { destination in
             try Task.checkCancellation()
             // No-op sync must not rewrite a document and retrigger iCloud uploads.
+            // Compare archived content: decoding the existing file yields no read-time
+            // projections, so a direct `==` would rewrite an unchanged document.
             if let existing = try? Data(contentsOf: destination),
-               let previous = try? JSONDecoder().decode(ICloudSyncSnapshot.self, from: existing), previous == snapshot { return }
+               let previous = try? JSONDecoder().decode(ICloudSyncSnapshot.self, from: existing), previous == snapshot.archivedContent { return }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(snapshot)

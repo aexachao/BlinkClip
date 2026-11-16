@@ -638,26 +638,30 @@ public final class ClipboardStore: ObservableObject {
     /// Validate all incoming data before committing. Local preferences never leave this Mac.
     public func applyICloudSync(_ snapshots: [ICloudSyncSnapshot], now: Date = Date()) throws -> ICloudSyncSnapshot {
         for snapshot in snapshots { try snapshot.validate() }
-        return try mutate { state in
-            var metadata = state.cloudSyncMetadata ?? ICloudSyncMetadata()
-            try reconcileICloud(&metadata, state: state, now: now)
-            var entities = Self.cloudEntities(state)
-            for snapshot in snapshots {
-                for record in snapshot.records {
-                    metadata.observe(record.revision)
-                    if let stamp = metadata.stamps[record.key], !(stamp.revision < record.revision) { continue }
-                    entities[record.key] = record.entity
-                    metadata.stamps[record.key] = try ICloudSyncStamp(revision: record.revision, digest: record.entity?.digest())
+        // Imported records keep the winning row's own timestamps: the save runs under the
+        // `syncApply` author so the model's willSave hook does not restamp them with Date().
+        return try persistence.withSyncApplyAuthor {
+            try mutate { state in
+                var metadata = state.cloudSyncMetadata ?? ICloudSyncMetadata()
+                try reconcileICloud(&metadata, state: state, now: now)
+                var entities = Self.cloudEntities(state)
+                for snapshot in snapshots {
+                    for record in snapshot.records {
+                        metadata.observe(record.revision)
+                        if let stamp = metadata.stamps[record.key], !(stamp.revision < record.revision) { continue }
+                        entities[record.key] = record.entity
+                        metadata.stamps[record.key] = try ICloudSyncStamp(revision: record.revision, digest: record.entity?.digest())
+                    }
                 }
+                state.items = entities.values.compactMap(\.item)
+                state.pinboards = entities.values.compactMap(\.pinboard)
+                state.sourceApplications = entities.values.compactMap(\.application)
+                // A group removal on another Mac must not leave dangling ownership here.
+                normalize(&state)
+                try reconcileICloud(&metadata, state: state, now: now)
+                state.cloudSyncMetadata = metadata
+                return Self.cloudSnapshot(state, metadata: metadata)
             }
-            state.items = entities.values.compactMap(\.item)
-            state.pinboards = entities.values.compactMap(\.pinboard)
-            state.sourceApplications = entities.values.compactMap(\.application)
-            // A group removal on another Mac must not leave dangling ownership here.
-            normalize(&state)
-            try reconcileICloud(&metadata, state: state, now: now)
-            state.cloudSyncMetadata = metadata
-            return Self.cloudSnapshot(state, metadata: metadata)
         }
     }
 
