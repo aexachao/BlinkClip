@@ -82,3 +82,96 @@ checks = {
 assert all(checks.values()), checks
 print(f'SEL label source gate: {len(checks)} checks passed')
 PY
+
+# --- CUR 源码门：框选期自绘十字光标 ---------------------------------------------
+python3 - "$replica_root" "$ARTIFACT_TASK_DIR/out" <<'PY'
+import json, pathlib, sys
+root, out = map(pathlib.Path, sys.argv[1:])
+capture = root / 'Vendor/capcap/Capture'
+selection = (capture / 'SelectionView.swift').read_text()
+overlay = (capture / 'OverlayWindowController.swift').read_text()
+design = (root.parent / 'DESIGN.md').read_text()
+
+
+def code(text):
+    """去掉行注释：注释里可以举例子，那不是实现。"""
+    return '\n'.join(line.split('//', 1)[0] for line in text.splitlines())
+
+
+def body(text, signature, next_signature):
+    """取出一个函数体，用来断言「同一处更新」这类结构性质。"""
+    start = text.index(signature)
+    end = text.index(next_signature, start)
+    return text[start:end]
+
+
+update_layers = body(code(selection), 'private func updateCrosshairLayers()', 'private func reportPointerCursorDrawn')
+begin_pointer = body(code(overlay), 'private func beginSelfDrawnPointer()', 'private func pointerCursorDrawnStateChanged')
+tear_down = body(code(overlay), 'private func tearDown()', 'private func takeWindowCaptureTask')
+lock_selection = body(code(overlay), 'private func lockSelectionForCompletion', 'private func resumePendingSelectionIfReady')
+
+checks = {
+    # CUR：光标是覆盖层内的一份图层/子视图（18pt 十字、1pt 白线、3pt 深色描边、
+    # 中心 2pt 空隙），不是系统光标，也不是 draw(_:) 像素。
+    'self-drawn-pointer-lives-in-the-overlay': all(fragment in code(selection) for fragment in (
+        'private final class CrosshairCursorView: NSView',
+        'crosshairCursor = CrosshairCursorView()',
+        'addSubview(crosshairCursor)',
+        'strandLength: CGFloat = 18',
+        'centerGap: CGFloat = 2',
+        'lineWidth: CGFloat = 1',
+        'strokeWidth: CGFloat = 3',
+        'func hitTest(_ point: NSPoint) -> NSView? { nil }',
+        'var drawsPointerCursor = false',
+        'onPointerCursorDrawnChanged: ((Bool) -> Void)?',
+    )),
+
+    # CUR：光标与两条辅线在同一个函数、同一次 CATransaction 里写 frame；这条
+    # 路径不排整窗重绘，否则「同一帧」就无从保证。
+    'self-drawn-pointer-shares-the-guide-transaction': all(fragment in update_layers for fragment in (
+        'CATransaction.setDisableActions(true)',
+        'crosshairHorizontal.place(',
+        'crosshairVertical.place(',
+        'crosshairCursor.place(',
+        'let showsPointer = drawsPointerCursor',
+        'crosshairCursor.place(centre: NSPoint(x: x, y: y), visible: showsPointer)',
+    )) and 'needsDisplay' not in update_layers,
+
+    # CUR：系统光标成对隐藏/恢复，幂等标志防多减一次；选区提交、会话结束、
+    # 失去激活、deinit 都必须恢复。
+    'system-cursor-hide-is-paired-and-balanced': all(fragment in code(overlay) for fragment in (
+        'final class SystemCursorHider',
+        'NSCursor.hide()',
+        'NSCursor.unhide()',
+        'private(set) var isHidden = false',
+        'private(set) var isUnavailable = false',
+        'func restore()',
+        'guard isHidden else { return }',
+        'deinit {',
+        'systemCursor.hide()',
+        'restoreSystemCursorNow()',
+        'NSApplication.willResignActiveNotification',
+    ))
+    and 'systemCursor.restore()' in code(overlay)
+    and 'restoreSystemCursorNow()' in tear_down
+    and 'restoreSystemCursorNow()' in lock_selection
+    # 先隐藏、确认成功后才开始自绘（失败不出现第二个光标）。
+    and begin_pointer.index('systemCursor.hide()') < begin_pointer.index('drawsPointerCursor = true'),
+
+    # CUR：确认不了隐藏就退化，且写日志。
+    'system-cursor-fallback-draws-guides-only': 'could not be hidden' in code(overlay)
+        and 'drawsPointerCursor = false' in code(overlay)
+        and 'suppressesSelfDrawnPointer = true' in code(overlay),
+
+    # CUR：文档写清「自绘光标 + 同一帧 + 必须恢复 + 都不入图」。
+    'design-doc-self-drawn-pointer': all(fragment in design for fragment in (
+        '十字光标本身也画在覆盖层内',
+        '同一次 `CATransaction.setDisableActions(true)` 里写 frame',
+        '结束必须恢复系统光标',
+        '均不入图',
+    )),
+}
+(out / 'cur-cursor-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
+assert all(checks.values()), checks
+print(f'CUR cursor source gate: {len(checks)} checks passed')
+PY
