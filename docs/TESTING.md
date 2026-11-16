@@ -68,6 +68,20 @@ python3 replica/scripts/test-affected.py --full             # 必跑，全绿才
 
 默认跑完删 `build/`，想留现场加 `--keep-artifacts`。汇总会打印本次产物根。
 
+### 随包产物门取哪份 app
+
+`app-monitor`、`sound-effects`、`toolbar-upload-removal` 都要读真实 app bundle（前者跑进程，后两者分别断言
+音效落在 Core bundle 里、用随包 `.lproj` 渲染工具栏）。三项都是**先构建再指过去**：
+
+| 测试项 | 怎么拿到产物 |
+| --- | --- |
+| `app-monitor` | 前置 `build-app.sh release native`，再用 `--app <产物根>/<id>/out/BlinkClip.app` |
+| `sound-effects`、`toolbar-upload-removal` | 前置 `build-app.sh release native`，再用 `BLINKCLIP_APP_PATH=<产物根>/<id>/out/BlinkClip.app` |
+
+`replica/dist` 下的旧包不参与任何测试（那里的 `BlinkClip.app` 已删除）。单独跑这两个脚本时，如果
+`BLINKCLIP_APP_PATH` 未设置、缺省路径也不存在，脚本会打印 `随包…校验已跳过：…` 并把原因写进
+`out/packaged-*-skipped.txt`，其余断言照跑——跳过**一定会说出来**，不会静默算通过。
+
 ### 手工项
 
 有些项要真实凭据或真实旧版数据，自动门禁里跑不了。它们在 `ITEMS` 里带 `manual` 说明：
@@ -136,9 +150,11 @@ python3 replica/scripts/test-affected.py --full             # 必跑，全绿才
 | --- | --- | --- | --- |
 | 2026-11-16 | `3c613aa`（1.0.25 集成前） | 未执行 `--full` | 本工具落地（基线 `ba7591e`）后首轮集成只跑受影响测试（`test-affected.py --worktree` 选中项），全量待发版前补 |
 | 2026-11-16 | `12a2afd`（1.0.25 发版前） | `--full` 全绿：执行 53 项、失败 0、未执行 0，手工项 3 个（`blinkclip-legacy-migration`、`cloudkit-live`、`panel-permission-interaction`） | 修掉 5 项测试腐化 + 4 个编排缺陷；iCloud 空转写盘为产品缺陷（`syncApply` 事务作者缺失 + 快照比较带上读时投影） |
+| 2026-11-17 | `7f75ee6`（v1.0.25 发布后） | `--full` 全绿：执行 53 项、失败 0、未执行 0，手工项 3 个（同上） | v1.0.25 发布后补跑。`toolbar-upload-removal`、`sound-effects` 改为先构建、`BLINKCLIP_APP_PATH` 指向本次产物，不再读 `replica/dist` 的旧包（那份 1.0.17 包已删除） |
 
 ## 与既有入口的关系
 
 - `replica/scripts/validate.sh`、`replica/scripts/regress-local.sh` 保持原样，它们仍是
   「固定子集 + 全量回归」的执行者；本工具只负责**选**，不替换它们。
-- 本工具不改任何既有测试脚本的行为；它只是决定跑哪些。
+- 本工具不改任何既有测试脚本的**断言**；它只决定跑哪些，并把「读哪份构建产物」显式传给需要 app 的项
+  （见「随包产物门取哪份 app」）。
