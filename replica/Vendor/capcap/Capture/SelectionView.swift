@@ -27,6 +27,92 @@ extension SelectionViewDelegate {
     func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
 }
 
+/// One axis of the pointer guide: a 2pt dark halo with a 1pt white core.
+///
+/// Both strands are layers, so following the pointer is a layer move rather
+/// than a repaint of the overlay's full-screen snapshot. That is the whole
+/// point of this type: `draw(_:)`-based lines only reach the screen after the
+/// next display refresh (and after the snapshot has been re-composited), which
+/// is exactly the lag the pointer guide must not have.
+private final class CrosshairBandView: NSView {
+    enum Axis {
+        case horizontal
+        case vertical
+    }
+
+    static let haloThickness: CGFloat = 2
+    static let coreThickness: CGFloat = 1
+
+    private let axis: Axis
+    private let coreLayer = CALayer()
+    private var placedRect: NSRect = .null
+
+    init(axis: Axis) {
+        self.axis = axis
+        super.init(frame: .zero)
+        wantsLayer = true
+        isHidden = true
+        layer?.backgroundColor = NSColor.black
+            .withAlphaComponent(SelectionView.crosshairHaloAlpha).cgColor
+        layer?.isOpaque = false
+        layer?.masksToBounds = false
+        // A guide is decoration: never a hit or cursor target.
+        layer?.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull()
+        ]
+        coreLayer.backgroundColor = NSColor.white
+            .withAlphaComponent(SelectionView.crosshairCoreAlpha).cgColor
+        coreLayer.isOpaque = false
+        coreLayer.masksToBounds = false
+        coreLayer.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+        layer?.addSublayer(coreLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Moves the band to `rect` (view coordinates) and re-states the core,
+    /// writing only the layers whose geometry or visibility changed.
+    func place(_ rect: NSRect, visible: Bool) {
+        if isHidden != !visible {
+            isHidden = !visible
+        }
+        guard visible else {
+            placedRect = .null
+            return
+        }
+        guard !rect.equalTo(placedRect) else { return }
+        placedRect = rect
+        frame = rect
+        let core: NSRect
+        switch axis {
+        case .horizontal:
+            core = NSRect(
+                x: 0,
+                y: (rect.height - Self.coreThickness) / 2,
+                width: rect.width,
+                height: Self.coreThickness
+            )
+        case .vertical:
+            core = NSRect(
+                x: (rect.width - Self.coreThickness) / 2,
+                y: 0,
+                width: Self.coreThickness,
+                height: rect.height
+            )
+        }
+        coreLayer.frame = core
+    }
+}
+
 class SelectionView: NSView {
     weak var delegate: SelectionViewDelegate?
     var onFirstDrawCompleted: (() -> Void)?
@@ -55,7 +141,15 @@ class SelectionView: NSView {
         case topCenter, bottomCenter, leftCenter, rightCenter
     }
 
-    private var state: State = .idle
+    private var state: State = .idle {
+        didSet {
+            if state != oldValue {
+                // The guides are only shown while drawing; a committed frame
+                // hides them without repainting anything.
+                updateCrosshairLayers()
+            }
+        }
+    }
     private var dragAction: DragAction = .none
     private var selectionOrigin: NSPoint = .zero
     private var selectionRect: NSRect?
@@ -73,12 +167,19 @@ class SelectionView: NSView {
         didSet {
             if selectionLocked != oldValue {
                 refreshCursorRects()
+                updateCrosshairLayers()
             }
         }
     }
 
     // Scroll capture mode: update border styling while the controller manages event routing.
-    var scrollCaptureActive = false
+    var scrollCaptureActive = false {
+        didSet {
+            if scrollCaptureActive != oldValue {
+                updateCrosshairLayers()
+            }
+        }
+    }
 
     // When false, the selection frame becomes a fixed viewport.
     var selectionInteractionEnabled = true {
@@ -86,6 +187,7 @@ class SelectionView: NSView {
             if selectionInteractionEnabled != oldValue {
                 refreshCursorRects()
                 needsDisplay = true
+                updateCrosshairLayers()
             }
         }
     }
@@ -145,12 +247,19 @@ class SelectionView: NSView {
     /// the same crossing point at its own local coordinates — a pointer on one
     /// screen then continues the horizontal line across a side-by-side setup.
     private var crosshairScreenPoint: NSPoint?
-    /// The same point in this view's coordinates. Cached because invalidating
-    /// the previous hairline needs it after the pointer has already moved on.
+    /// The same point in this view's coordinates. Cached because hiding the
+    /// guides after the pointer has already moved on still needs it.
     private var crosshairLocalPoint: NSPoint?
     /// Set by `OverlayWindowController`: a pointer move seen by one display's
     /// overlay is mirrored to the overlays of every other display.
     var onCrosshairMoved: ((NSPoint) -> Void)?
+
+    /// The guides live in their own view-backed layers (`CrosshairBandView`),
+    /// not in the overlay's snapshot drawing. A pointer move then only moves a
+    /// layer — the full-screen snapshot is never invalidated, so the lines
+    /// cannot trail the pointer by the display refresh a `draw(_:)` line costs.
+    private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)
+    private let crosshairVertical = CrosshairBandView(axis: .vertical)
 
     // MARK: - Constants
 
@@ -160,9 +269,24 @@ class SelectionView: NSView {
     /// `UI/SelectionAccent.swift`; there is no second literal here.
     private static let selectionTint: NSColor = selectionAccent
     private static let selectionTintCGColor: CGColor = selectionTint.cgColor
-    private let handleSize: CGFloat = 8
-    private let handleHitSize: CGFloat = 12
-    private let borderWidth: CGFloat = 2.0
+    /// Grabbable area around each handle. The drawn handle is a bar or an L
+    /// bracket (see `drawHandles`), but the target is 22×22pt — at least the
+    /// required 20×20 — so every point within ±10pt of a handle still grabs it.
+    private let handleHitSize: CGFloat = 22
+    /// Edge handles: one 20pt bar, 4pt thick, 2pt rounded ends. Top/bottom
+    /// edges get a horizontal bar, left/right edges a vertical one.
+    private static let handleBarLength: CGFloat = 20
+    private static let handleBarThickness: CGFloat = 4
+    private static let handleBarCornerRadius: CGFloat = 2
+    /// Corner handles: an L of two 12pt arms, 2pt thick, drawn along the
+    /// inside of the corner — no dots anywhere.
+    private static let handleCornerArmLength: CGFloat = 12
+    private static let handleCornerArmThickness: CGFloat = 2
+    /// One visual weight for every overlay frame. 1pt is exactly 2 device
+    /// pixels on a 2x display (1 pixel at 1x), so the idle hover frame, the
+    /// box being dragged, a committed selection and the scroll-capture marker
+    /// all read as the same line instead of 3pt vs 2pt.
+    private let borderWidth: CGFloat = 1.0
     private let dimmingOverlayAlpha: CGFloat = 0.45
     /// Size label geometry: 10x6 content padding, 6pt radius, 8pt above the frame
     /// (6pt let the capsule crowd the top-left handle).
@@ -171,10 +295,40 @@ class SelectionView: NSView {
     private static let sizeLabelGap: CGFloat = 8
     /// Crosshair: a 1pt white hairline at 42% over a 2pt dark halo, so the lines
     /// read on both a light and a dark desktop without becoming harsh.
-    private static let crosshairCoreAlpha: CGFloat = 0.42
-    private static let crosshairHaloAlpha: CGFloat = 0.35
+    fileprivate static let crosshairCoreAlpha: CGFloat = 0.42
+    fileprivate static let crosshairHaloAlpha: CGFloat = 0.35
 
     // MARK: - Public
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        installCrosshairBands()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        installCrosshairBands()
+    }
+
+    /// Adds the two guide layers above everything the snapshot drawing puts on
+    /// screen. They stay hidden until a pointer position is known.
+    private func installCrosshairBands() {
+        for band in [crosshairHorizontal, crosshairVertical] {
+            band.isHidden = true
+            addSubview(band)
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // The guides span the whole overlay, so a resize re-states their length.
+        updateCrosshairLayers()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateCrosshairLayers()
+    }
 
     var currentSelectionRect: NSRect? { selectionRect }
 
@@ -185,25 +339,22 @@ class SelectionView: NSView {
 
     // MARK: - Crosshair
 
-    /// Mirrors the pointer (screen coordinates) into this overlay and repaints
-    /// only the two hairline bands, so a full-screen snapshot is not redrawn
-    /// for every mouse event. `nil` hides the crosshair.
+    /// Mirrors the pointer (screen coordinates) into this overlay and moves the
+    /// two guide layers. No part of the frozen snapshot is redrawn, so this is
+    /// cheap enough to run on every mouse event. `nil` hides the crosshair.
     func updateCrosshair(globalPoint: NSPoint?) {
-        let previousLocal = crosshairLocalPoint
         crosshairScreenPoint = globalPoint
         crosshairLocalPoint = globalPoint.flatMap(localPoint(forScreenPoint:))
-        invalidateCrosshairBands(at: previousLocal)
-        invalidateCrosshairBands(at: crosshairLocalPoint)
+        updateCrosshairLayers()
     }
 
     /// Hides the crosshair without touching the pointer bookkeeping used by
     /// the drag itself (mouse-exit on the display holding the pointer).
     private func hideCrosshair() {
         guard crosshairScreenPoint != nil || crosshairLocalPoint != nil else { return }
-        let previousLocal = crosshairLocalPoint
         crosshairScreenPoint = nil
         crosshairLocalPoint = nil
-        invalidateCrosshairBands(at: previousLocal)
+        updateCrosshairLayers()
     }
 
     private func localPoint(forScreenPoint point: NSPoint) -> NSPoint? {
@@ -211,21 +362,46 @@ class SelectionView: NSView {
         return convert(window.convertPoint(fromScreen: point), from: nil)
     }
 
-    /// Invalidates a 4pt band around each line so the redraw covers both the
-    /// lateral anti-aliasing and the 2pt halo.
-    private func invalidateCrosshairBands(at point: NSPoint?) {
-        guard let point else { return }
-        let halfBand: CGFloat = 4
-        let bands = [
-            NSRect(x: bounds.minX, y: point.y - halfBand, width: bounds.width, height: halfBand * 2),
-            NSRect(x: point.x - halfBand, y: bounds.minY, width: halfBand * 2, height: bounds.height)
-        ]
-        for band in bands {
-            let clipped = band.intersection(bounds)
-            if !clipped.isNull, !clipped.isEmpty {
-                setNeedsDisplay(clipped)
-            }
+    /// Positions the two guide layers. Each axis is written only when its
+    /// geometry actually changes and everything happens inside a transaction
+    /// with implicit animations disabled, so a move never animates/fades in.
+    private func updateCrosshairLayers() {
+        let showsGuides = state == .idle || state == .drawing
+        guard showsGuides,
+              selectionInteractionEnabled,
+              !scrollCaptureActive,
+              !selectionLocked,
+              let point = crosshairLocalPoint
+        else {
+            crosshairHorizontal.isHidden = true
+            crosshairVertical.isHidden = true
+            return
         }
+
+        // Snap the hairline centre to a device pixel edge: on a 2x display a
+        // 1pt stroke then covers exactly two pixels instead of two blurred ones.
+        let scale = window?.backingScaleFactor ?? 2
+        let x = (point.x * scale).rounded() / scale
+        let y = (point.y * scale).rounded() / scale
+        let showsHorizontal = bounds.minY...bounds.maxY ~= y
+        let showsVertical = bounds.minX...bounds.maxX ~= x
+        let halo = CrosshairBandView.haloThickness
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        // A pointer on one display continues the horizontal line onto its
+        // neighbours, while the vertical line only lands on the pointer's own
+        // display: each overlay only writes the axis that changed.
+        let horizontalRect = showsHorizontal
+            ? NSRect(x: bounds.minX, y: y - halo / 2, width: bounds.width, height: halo)
+            : .zero
+        let verticalRect = showsVertical
+            ? NSRect(x: x - halo / 2, y: bounds.minY, width: halo, height: bounds.height)
+            : .zero
+        crosshairHorizontal.place(horizontalRect, visible: showsHorizontal)
+        crosshairVertical.place(verticalRect, visible: showsVertical)
     }
 
     /// Turns a local pointer position into a screen point and hands it to the
@@ -714,21 +890,22 @@ class SelectionView: NSView {
             context.setFillColor(NSColor.black.withAlphaComponent(dimmingOverlayAlpha).cgColor)
             context.addPath(path)
             context.fillPath(using: .evenOdd)
-            // Solid accent border
+            // Solid accent border — same 1pt weight as the committed frame
+            // and the dragged box, so the three never look like different
+            // line thicknesses. The stroke sits just outside the hover rect.
             context.setStrokeColor(SelectionView.selectionTintCGColor)
-            context.setLineWidth(borderWidth + 1)
+            context.setLineWidth(borderWidth)
             context.setLineDash(phase: 0, lengths: [])
-            context.stroke(hoverRect.insetBy(dx: -1.5, dy: -1.5))
+            context.stroke(hoverRect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
             // Size label
             SelectionView.drawSizeLabel(context: context, rect: hoverRect)
-            drawCrosshair(context: context)
             return
         }
 
-        // In idle state with no selection, just show the snapshot (already drawn above)
+        // In idle state with no selection, just show the snapshot (already drawn above).
+        // The pointer guides are not drawn here: they live in their own layers.
         guard let rect = selectionRect, (state == .drawing || state == .selected),
               rect.width > 0 || rect.height > 0 else {
-            drawCrosshair(context: context)
             return
         }
 
@@ -752,7 +929,7 @@ class SelectionView: NSView {
             // red lines at the left/right edges and at each stitch seam.
             // Inset enough that the stroke (and its anti-aliased fringe) sits
             // entirely outside the captured rect.
-            let strokeWidth: CGFloat = borderWidth + 1
+            let strokeWidth = borderWidth
             let outerInset = -(strokeWidth / 2 + 1)
             context.setStrokeColor(NSColor.systemRed.cgColor)
             context.setLineWidth(strokeWidth)
@@ -761,10 +938,8 @@ class SelectionView: NSView {
             context.setStrokeColor(SelectionView.selectionTintCGColor)
             context.setLineWidth(borderWidth)
             context.setLineDash(phase: 0, lengths: [])
-            context.stroke(rect.insetBy(dx: -1, dy: -1))
+            context.stroke(rect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
         }
-
-        drawCrosshair(context: context)
 
         if state == .selected && selectionInteractionEnabled {
             // Draw 8 control handles
@@ -804,67 +979,111 @@ class SelectionView: NSView {
         onFirstFramePresented = nil
     }
 
+    /// Draws the eight resize handles in the macOS screenshot-tool language:
+    /// edge midpoints are short bars (horizontal on the top/bottom edge,
+    /// vertical on the left/right edge) and the four corners are L-shaped
+    /// brackets hugging the inside of the corner. No dots.
     private func drawHandles(context: CGContext, rect: NSRect) {
+        context.setFillColor(SelectionView.selectionTintCGColor)
         let positions = SelectionView.handlePositions(for: rect)
-        for pos in positions {
-            let handleRect = NSRect(
-                x: pos.x - handleSize / 2,
-                y: pos.y - handleSize / 2,
-                width: handleSize,
-                height: handleSize
-            )
-            context.setFillColor(SelectionView.selectionTintCGColor)
-            context.fillEllipse(in: handleRect)
+        for (index, handle) in HandlePosition.allCases.enumerated() {
+            let position = positions[index]
+            switch handle {
+            case .topCenter, .bottomCenter:
+                context.addPath(Self.barPath(
+                    centered: position,
+                    horizontal: true,
+                    pixelAligned: pixelAligned
+                ))
+                context.fillPath()
+            case .leftCenter, .rightCenter:
+                context.addPath(Self.barPath(
+                    centered: position,
+                    horizontal: false,
+                    pixelAligned: pixelAligned
+                ))
+                context.fillPath()
+            case .topLeft, .topRight, .bottomLeft, .bottomRight:
+                for arm in SelectionView.cornerBracketRects(handle: handle, rect: rect) {
+                    context.addRect(pixelAligned(arm))
+                    context.fillPath()
+                }
+            }
         }
     }
 
-    /// Draws the full-width/full-height pointer guides. The lines are driven by
-    /// a screen-space point, so on a multi-display desktop every overlay draws
-    /// the same crossing: displays side by side continue the horizontal line,
-    /// while the vertical line only lands on the display holding the pointer.
-    /// Only `.idle` and `.drawing` show them; a committed frame hides them.
-    private func drawCrosshair(context: CGContext) {
-        guard state == .idle || state == .drawing,
-              selectionInteractionEnabled,
-              !scrollCaptureActive,
-              !selectionLocked,
-              let point = crosshairLocalPoint
-        else { return }
+    /// Bar geometry for an edge handle: 20pt long, 4pt thick, 2pt rounded
+    /// ends, centred on the edge so it straddles the frame line.
+    private static func barPath(
+        centered position: NSPoint,
+        horizontal: Bool,
+        pixelAligned: (NSRect) -> NSRect
+    ) -> CGPath {
+        let length = SelectionView.handleBarLength
+        let thickness = SelectionView.handleBarThickness
+        let rect = horizontal
+            ? NSRect(
+                x: position.x - length / 2,
+                y: position.y - thickness / 2,
+                width: length,
+                height: thickness
+            )
+            : NSRect(
+                x: position.x - thickness / 2,
+                y: position.y - length / 2,
+                width: thickness,
+                height: length
+            )
+        return CGPath(
+            roundedRect: pixelAligned(rect),
+            cornerWidth: SelectionView.handleBarCornerRadius,
+            cornerHeight: SelectionView.handleBarCornerRadius,
+            transform: nil
+        )
+    }
 
-        // Snap the hairline centre to a device pixel edge: on a 2x display a
-        // 1pt stroke then covers exactly two pixels instead of two blurred ones.
-        let scale = window?.backingScaleFactor ?? 2
-        let x = (point.x * scale).rounded() / scale
-        let y = (point.y * scale).rounded() / scale
-        let showsHorizontal = bounds.minY...bounds.maxY ~= y
-        let showsVertical = bounds.minX...bounds.maxX ~= x
-        guard showsHorizontal || showsVertical else { return }
-
-        func addLines() {
-            if showsHorizontal {
-                context.move(to: CGPoint(x: bounds.minX, y: y))
-                context.addLine(to: CGPoint(x: bounds.maxX, y: y))
-            }
-            if showsVertical {
-                context.move(to: CGPoint(x: x, y: bounds.minY))
-                context.addLine(to: CGPoint(x: x, y: bounds.maxY))
-            }
+    /// The two 12pt × 2pt arms of a corner bracket, lying inside the selection
+    /// and meeting at the corner itself.
+    static func cornerBracketRects(handle: HandlePosition, rect: NSRect) -> [NSRect] {
+        let arm = SelectionView.handleCornerArmLength
+        let thickness = SelectionView.handleCornerArmThickness
+        switch handle {
+        case .topLeft:
+            return [
+                NSRect(x: rect.minX, y: rect.maxY - thickness, width: arm, height: thickness),
+                NSRect(x: rect.minX, y: rect.maxY - arm, width: thickness, height: arm)
+            ]
+        case .topRight:
+            return [
+                NSRect(x: rect.maxX - arm, y: rect.maxY - thickness, width: arm, height: thickness),
+                NSRect(x: rect.maxX - thickness, y: rect.maxY - arm, width: thickness, height: arm)
+            ]
+        case .bottomLeft:
+            return [
+                NSRect(x: rect.minX, y: rect.minY, width: arm, height: thickness),
+                NSRect(x: rect.minX, y: rect.minY, width: thickness, height: arm)
+            ]
+        case .bottomRight:
+            return [
+                NSRect(x: rect.maxX - arm, y: rect.minY, width: arm, height: thickness),
+                NSRect(x: rect.maxX - thickness, y: rect.minY, width: thickness, height: arm)
+            ]
+        case .topCenter, .bottomCenter, .leftCenter, .rightCenter:
+            return []
         }
+    }
 
-        context.saveGState()
-        defer { context.restoreGState() }
-        context.setLineDash(phase: 0, lengths: [])
-        context.setLineCap(.butt)
-        // Dark halo first, then the white core: on a light desktop the halo
-        // carries the contrast, on a dark one the white core does.
-        context.setStrokeColor(NSColor.black.withAlphaComponent(SelectionView.crosshairHaloAlpha).cgColor)
-        context.setLineWidth(2)
-        addLines()
-        context.strokePath()
-        context.setStrokeColor(NSColor.white.withAlphaComponent(SelectionView.crosshairCoreAlpha).cgColor)
-        context.setLineWidth(1)
-        addLines()
-        context.strokePath()
+    /// Rounds handle geometry onto the display's pixel grid so a 20×4pt bar is
+    /// exactly 40×8 device pixels on a 2x display instead of a blurred 41×9.
+    private func pixelAligned(_ rect: NSRect) -> NSRect {
+        let scale = window?.backingScaleFactor ?? 2
+        func snap(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+        return NSRect(
+            x: snap(rect.origin.x),
+            y: snap(rect.origin.y),
+            width: snap(rect.width),
+            height: snap(rect.height)
+        )
     }
 
     static func drawSizeLabel(context: CGContext, rect: NSRect, text: String? = nil) {

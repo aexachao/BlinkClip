@@ -47,9 +47,36 @@ checks = {
                                                    for fragment in (overlay_multiply, overlay_scaled_multiply))
                                                 and all(fragment in code(editor)
                                                         for fragment in (editor_crop_multiply, editor_size_multiply)),
-    # 标签与选区顶边的间距 8pt：6pt 时胶囊会压到左上角 8pt 手柄上。
+    # 标签与选区顶边的间距 8pt：6pt 时胶囊会压到左上角手柄上。
     'size-label-gap-clears-handle': 'sizeLabelGap: CGFloat = 8' in code(selection)
                                     and 'rect.origin.y + rect.height + SelectionView.sizeLabelGap' in code(selection),
+
+    # POL：十字辅线住在独立图层里（每屏两条），鼠标移动只改 layer frame，不再
+    # 让整屏快照重绘；旧的 draw(_:) 版辅线与失效带必须彻底消失，否则延迟会回来。
+    'overlay-guides-live-in-layers': 'CrosshairBandView' in code(selection)
+                                     and 'crosshairHorizontal = CrosshairBandView(axis: .horizontal)' in code(selection)
+                                     and 'crosshairVertical = CrosshairBandView(axis: .vertical)' in code(selection)
+                                     and 'CATransaction.setDisableActions(true)' in code(selection)
+                                     and 'drawCrosshair' not in code(selection)
+                                     and 'invalidateCrosshairBands' not in code(selection),
+
+    # POL：四态边框同一视觉重量 1pt（2x 下 2px）。任何 `borderWidth + 1` 形式的
+    # 加粗都会把悬停/滚动红框顶回 3pt，与框选的 1pt 不一致。
+    'overlay-border-width-unified': 'private let borderWidth: CGFloat = 1.0' in code(selection)
+                                    and 'borderWidth + 1' not in code(selection)
+                                    and code(selection).count('insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2)') == 2,
+
+    # POL：手柄是横条 + L 形角标，不是圆点；抓取区 ≥20×20（实测 22×22）。
+    'overlay-handles-are-bars-and-corners': 'fillEllipse' not in code(selection)
+        and all(fragment in code(selection) for fragment in (
+            'handleBarLength: CGFloat = 20', 'handleBarThickness: CGFloat = 4',
+            'handleBarCornerRadius: CGFloat = 2', 'handleCornerArmLength: CGFloat = 12',
+            'handleCornerArmThickness: CGFloat = 2', 'handleHitSize: CGFloat = 22')),
+
+    # POL：滚动截图的红色防渗色标记保留「整条描边落在选区外」的外扩逻辑。
+    'scroll-marker-keeps-outer-offset': 'NSColor.systemRed.cgColor' in code(selection)
+                                        and 'let outerInset = -(strokeWidth / 2 + 1)' in code(selection)
+                                        and 'let strokeWidth = borderWidth' in code(selection),
 }
 (out / 'sel-label-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
 assert all(checks.values()), checks
