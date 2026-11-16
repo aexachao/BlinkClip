@@ -235,8 +235,10 @@ final class ReplicaToast {
                                       backing: .buffered, defer: false)
         toast.backgroundColor = .clear
         toast.isOpaque = false
-        // 透明无边框窗口的系统阴影按整块窗口矩形算，会在圆角盘面外面套一个方框；
-        // 这里关掉系统阴影，改用盘面自带的 1pt 描边 + 毛玻璃层次定形。
+        // 关掉系统窗口阴影：它不可调，实机实测（浅色壁纸、128×128 盘面）是包在圆角盘面外的
+        // 一个**方框**，紧贴盘外沿的 2px 环带被压到比壁纸深 ~52/255（超出「外沿环带与壁纸
+        // 差 ≤ 8/255」这条验收线），比原来那条 1pt 描边更脏。盘面改用「HUD 材质 + 16pt 圆角」
+        // 自己定形：不描边、也不挂投影。
         toast.hasShadow = false
         toast.isFloatingPanel = true
         // 截图编辑器的浮层是 `.screenSaver + 3` / `+ 4`（见 capcap `EditWindowController`），
@@ -313,10 +315,19 @@ final class ReplicaToastView: NSVisualEffectView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        // 圆角只靠 `maskToBounds` 收口，**盘面不加任何描边**。
+        // 旧实现在这里写 `borderWidth = 1` + `borderColor = NSColor.separatorColor`：
+        // 盘面的外观固定成 vibrantDark，而 `separatorColor` 是动态色，`.cgColor` 一旦在
+        // 这个上下文里解析就是**不透明的 #232323（35/255）**，与系统外观无关——所以浅色
+        // 壁纸上那 1pt（Retina 2px）就是一整圈近黑边，深色外观下也还是同一条深灰边。
+        // 实机 2x 逐像素：盘面最外 2px = (35,35,35)，盘内材质 = (148,155,159)，差 ~120/255；
+        // 深色外观下材质是 (50,55,62)，那条边仍然是 (35,35,35)。用户明确不要这条边，
+        // 所以删掉，边界交给 HUD 材质与 16pt 圆角自己。
+        // 也不额外加投影：盘面就是窗口内容，128×128 的窗口会把图层投影裁掉（实测一条像素
+        // 都不出，且 `masksToBounds = false` 会让 16pt 圆角变回直角）；系统窗口投影不可调，
+        // 实测是包在圆角盘面外的一个方框，紧贴外沿 2px 被压到比壁纸深 ~52/255。
         layer?.cornerRadius = Self.cornerRadius
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
         // 深色 HUD 底：两套系统外观下**都是深玻璃**，白色图标/文案因此始终有对比度。
         // `appearance` 固定成 `vibrantDark`，浅色外观下也不会把衬底提亮成浅灰。
         material = .hudWindow
@@ -331,11 +342,9 @@ final class ReplicaToastView: NSVisualEffectView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// 动态色（`separatorColor`）只在当前外观下解析，切浅/深后要重新取一次。
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        layer?.borderColor = NSColor.separatorColor.cgColor
-    }
+    // 这里原本有一个 `viewDidChangeEffectiveAppearance` 覆写，只做一件事：外观切换后
+    // 重新解析 `separatorColor` 写回 `layer.borderColor`。描边删除之后它没有别的作用，
+    // 一并删掉——否则只剩一处「为了已消失的描边而存在」的钩子。
 
     /// 整块可点：子视图不参与命中，点击一律落到盘面本身。
     override func hitTest(_ point: NSPoint) -> NSView? {

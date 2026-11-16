@@ -100,6 +100,20 @@ checks = {
                                      'cornerRadius: CGFloat = 16', 'iconPointSize: CGFloat = 42',
                                      'iconTextSpacing: CGFloat = 16', 'textPointSize: CGFloat = 14',
                                      'textLineSpacing: CGFloat = 2')),
+    # 盘面**没有描边**（2026-11-16 用户反馈「toast 有一圈黑边」）：`borderWidth` /
+    # `borderColor` 两处赋值都不许再出现。旧代码写的是 `borderWidth = 1` +
+    # `NSColor.separatorColor.cgColor`；盘面外观固定 vibrantDark，那个动态色在这个上下文里
+    # 解析成不透明 #232323，与系统外观无关——实机 2x 逐像素：盘面最外 2px = (35,35,35)，
+    # 盘内材质 = (148,155,159)，一头一尾差 ~120/255，浅色壁纸上看过去就是一圈黑框。
+    'toast-plate-has-no-stroke': '.borderWidth' not in code(toast)
+                                 and '.borderColor' not in code(toast)
+                                 and 'separatorColor' not in code(toast),
+    # 圆角仍然只靠 mask 收口（删描边不能顺手把圆角也删了），边界交给 HUD 材质自己。
+    # 反方向也钉一次：不许把去掉的描边换成别的「定形」层（阴影、外框、第二层视图）。
+    'toast-plate-boundary-is-material-only': code(toast).count('masksToBounds = true') == 1
+                                             and 'shadowOpacity' not in code(toast)
+                                             and 'shadowRadius' not in code(toast)
+                                             and 'hasShadow = true' not in code(toast),
 }
 (out / 'toast-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
 assert all(checks.values()), checks

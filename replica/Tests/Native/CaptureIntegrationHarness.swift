@@ -327,6 +327,22 @@ enum ReplicaBrand {
                         "\(what): the plate view fills 128×128pt, got \(view.bounds.size)")
             try require(abs((view.layer?.cornerRadius ?? 0) - ReplicaToastView.cornerRadius) <= 0.01,
                         "\(what): corner radius is 16pt")
+            // 盘面不加描边（2026-11-16 用户反馈「toast 有一圈黑边」）：旧实现是
+            // `borderWidth = 1` + `separatorColor`——盘面外观固定 vibrantDark，那个动态色在
+            // 这个上下文里解析成不透明 #232323，与系统外观无关；实机 2x 逐像素量到盘面最外
+            // 2px = (35,35,35)，盘内材质 = (148,155,159)，一头一尾差 ~120/255。
+            // 只断言线宽：`CALayer.borderColor` 的默认值本身就是「不透明黑」，线宽为 0 时画不出来，
+            // 所以「颜色是不是 nil」不是有效判据；「有人再给它写颜色」这件事由源码门
+            // （`test-capture-integration.sh` 的 `toast-plate-has-no-stroke`）钉住。
+            try require((view.layer?.borderWidth ?? -1) == 0,
+                        "\(what): the plate draws no stroke, borderWidth=\(view.layer?.borderWidth ?? -1)")
+            // 圆角靠 mask 收口；投影一概不要（盘面就是窗口内容，128×128 的窗口会把图层投影
+            // 裁掉，`masksToBounds = false` 又会让 16pt 圆角变直角；系统窗口投影不可调，
+            // 实测是圆角盘面外的方框、紧贴外沿 2px 比壁纸深 ~52/255）。
+            try require(view.layer?.masksToBounds == true,
+                        "\(what): the plate still clips itself to the 16pt rounded corners")
+            try require(window.hasShadow == false,
+                        "\(what): the toast window stays shadowless")
             try require(view.copyNodeCount == 1, "\(what): only one copy node, no second line of small text")
             try require(!view.copyText.contains("\n"), "\(what): copy carries no line break")
             try require(view.renderedLineCount >= 1 && view.renderedLineCount <= 2,
