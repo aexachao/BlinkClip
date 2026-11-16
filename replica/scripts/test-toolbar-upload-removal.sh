@@ -241,11 +241,27 @@ assert all(spot_checks.values()), [k for k,v in spot_checks.items() if not v]
   'note': 'zh-Hant 由 macOS ICU Hans-Hant 逐值转换 + 台湾用语术语表修正后生成；此处只校验键集合与抽查值，不校验文案风格。',
 }, ensure_ascii=False, indent=2)+'\n')
 PY
-# Prefer the installed app's resources (what ships); fall back to the source
-# .lproj when the app has not been built in this checkout.
-strings_root="$replica_root/dist/BlinkClip.app/Contents/Resources"
+# Prefer the built product's resources (what ships) over the source .lproj.
+# `BLINKCLIP_APP_PATH` names that build explicitly — `test-affected.py` builds the
+# app and points here, so the harness never reads a stale package from dist/
+# (which may hold an older release or nothing at all). Without the variable the
+# default keeps plain `npm run build:app` checkouts working, and when no bundle
+# is found the packaged-resource gate is skipped **out loud**: the source .lproj
+# keeps the rest of the run meaningful, and the skip is written next to the
+# evidence so a green result never hides it.
+packaged_app="${BLINKCLIP_APP_PATH:-$replica_root/dist/BlinkClip.app}"
+strings_root="$packaged_app/Contents/Resources"
 if [[ ! -d "$strings_root/zh-Hans.lproj" ]]; then
+  if [[ -n "${BLINKCLIP_APP_PATH:-}" ]]; then
+    skip_reason="随包资源校验已跳过：BLINKCLIP_APP_PATH=$BLINKCLIP_APP_PATH 不是可用的 app bundle（缺 Contents/Resources/zh-Hans.lproj）"
+  else
+    skip_reason="随包资源校验已跳过：未设置 BLINKCLIP_APP_PATH，缺省路径 $packaged_app 不是可用的 app bundle（缺 Contents/Resources/zh-Hans.lproj）；改用源码 .lproj"
+  fi
+  printf '%s\n' "$skip_reason" >&2
+  printf '%s\n' "$skip_reason" > "$ARTIFACT_TASK_DIR/out/packaged-resources-skipped.txt"
   strings_root="$replica_root/Vendor/capcap/Resources"
+else
+  printf '%s\n' "随包资源来源：$packaged_app" >&2
 fi
 printf '%s\n' "$strings_root" > "$ARTIFACT_TASK_DIR/out/strings-root.txt"
 xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx14.0" \

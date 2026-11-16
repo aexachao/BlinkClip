@@ -44,10 +44,12 @@ TIMINGS_PATH = os.path.join(REPO_ROOT, ".local", "test-affected", "timings.json"
 ITEMS = {}
 
 
-def _item(key, cmd, group, covers, checks, requires=(), note="", manual="", prep=()):
+def _item(key, cmd, group, covers, checks, requires=(), note="", manual="", prep=(), env=None):
     # manual: 非自动化项的原因（缺环境变量时记为「手工」而不是「未执行」，见 run_selection）
     # prep : 运行前必须先在同一个隔离目录里跑完的前置命令（列表 of argv）
     # cmd  : 其中出现的 {artifact_task_dir} 会替换成该项自己的隔离目录
+    # env  : 只对这一项生效的环境变量（值里的 {artifact_task_dir} 同样替换），
+    #        用来把「读哪个构建产物」显式传给脚本，而不是让脚本猜 dist/ 里有没有包
     ITEMS[key] = {
         "id": key,
         "cmd": cmd,
@@ -58,6 +60,7 @@ def _item(key, cmd, group, covers, checks, requires=(), note="", manual="", prep
         "note": note,
         "manual": manual,
         "prep": [list(step) for step in prep],
+        "env": dict(env or {}),
     }
 
 
@@ -239,6 +242,15 @@ _SHELL_ITEMS = [
 for key, label, covers, checks, *rest in _SHELL_ITEMS:
     _item(key, ["bash", "replica/scripts/test-%s.sh" % key], "native", covers, checks,
           rest[0] if rest else ())
+
+# 两项「随包产物门」要读真实 app bundle：sound-effects 断言两份音效落在 Core bundle 里，
+# toolbar-upload-removal 用随包 .lproj 渲染工具栏。和 app-monitor 一样，先构建，再把
+# BLINKCLIP_APP_PATH 指向本次产物；不再读 replica/dist 里的旧包（那份包可能是上一版的，
+# 也可能只剩一个目录名）。
+for _key in ("sound-effects", "toolbar-upload-removal"):
+    ITEMS[_key]["prep"] = [["bash", "replica/scripts/build-app.sh", "release", "native"]]
+    ITEMS[_key]["env"]["BLINKCLIP_APP_PATH"] = "{artifact_task_dir}/out/BlinkClip.app"
+    ITEMS[_key]["note"] = "前置命令先构建 app；BLINKCLIP_APP_PATH 指向本次构建产物，不再读 replica/dist 里的旧包"
 
 # 真实 CloudKit 探针也必须显式声明「只写合成数据」，否则脚本按用法错误退出 2。
 ITEMS["cloudkit-live"]["cmd"] += ["--synthetic-only"]
@@ -1219,6 +1231,8 @@ def run_selection(selected, timings, keep_going, root=None, keep_artifacts=False
         os.makedirs(task_dir, exist_ok=True)
         env = os.environ.copy()
         env["ARTIFACT_TASK_DIR"] = task_dir
+        for name, value in meta["env"].items():
+            env[name] = expand([value], task_dir)[0]
         prepared = True
         for step in meta["prep"]:
             step_cmd = expand(step, task_dir)

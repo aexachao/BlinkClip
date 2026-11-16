@@ -25,6 +25,9 @@ print("stack-paste: AppMain declares .paste around its direct paste call")
 PY
 # The packaged product must carry both tones inside the Core bundle; a path outside the
 # bundle (or a stale build without them) fails here instead of at the first copy.
+# `BLINKCLIP_APP_PATH` names the build to inspect — `test-affected.py` builds the app
+# and points here so this gate never reads the stale package in dist/. Without the
+# variable the default still serves plain `npm run build:app` checkouts.
 app="${BLINKCLIP_APP_PATH:-$replica_root/dist/BlinkClip.app}"
 if [[ -d "$app" ]]; then
   for name in CopySound.mp3 PasteSound.mp3; do
@@ -38,5 +41,12 @@ if [[ -d "$app" ]]; then
     printf '%s\n' "packaged: $matches"
   done
 else
-  printf '%s\n' "skipped product check: $app is not built" >&2
+  # Skip out loud, next to the evidence: a green run must not hide the gap.
+  if [[ -n "${BLINKCLIP_APP_PATH:-}" ]]; then
+    skip_reason="随包音效校验已跳过：BLINKCLIP_APP_PATH=$BLINKCLIP_APP_PATH 不存在"
+  else
+    skip_reason="随包音效校验已跳过：未设置 BLINKCLIP_APP_PATH，缺省路径 $app 不存在"
+  fi
+  printf '%s\n' "$skip_reason" >&2
+  printf '%s\n' "$skip_reason" > "$ARTIFACT_TASK_DIR/out/packaged-sounds-skipped.txt"
 fi
