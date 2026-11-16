@@ -37,6 +37,25 @@ architecture_binary_root() {
   swift build --package-path "$replica_root" -c "$configuration" \
     --scratch-path "$scratch_root/architectures/$1" --arch "$1" --show-bin-path
 }
+# 源码内容指纹兜底：SwiftPM 只按 mtime 判断要不要重编，源文件时间不前进（cp -p、
+# git 还原旧时间、共享 scratch）时会静默复用过期 .o，产出「版本号新、代码旧」的包。
+# 指纹变了就作废架构缓存（保留 artifacts/checkouts，避免重新下载 Sparkle），
+# 让 release 通道不可能拿旧 .o 拼出新版本。
+source_digest="$(python3 "$replica_root/scripts/source-fingerprint.py" digest --quiet)"
+scratch_digest_file="$scratch_root/.blinkclip-source-digest"
+if [[ "${BLINKCLIP_FORCE_CLEAN_BUILD:-0}" != 1 && -f "$scratch_digest_file" \
+      && "$(cat "$scratch_digest_file")" == "$source_digest" ]]; then
+  printf '源码指纹未变（%s），复用现有构建缓存。\n' "${source_digest:0:12}" >&2
+else
+  if [[ -d "$scratch_root/architectures" || -f "$scratch_root/build.db" ]]; then
+    printf '源码指纹变化（%s%s），清理架构缓存后重建。\n' "${source_digest:0:12}" \
+      "$([[ "${BLINKCLIP_FORCE_CLEAN_BUILD:-0}" == 1 ]] && printf '，强制 clean')" >&2
+    rm -rf "$scratch_root/architectures"
+    rm -f "$scratch_root/build.db" "$scratch_root/build.db-shm" "$scratch_root/build.db-wal"
+  fi
+fi
+mkdir -p "$scratch_root"
+printf '%s\n' "$source_digest" > "$scratch_digest_file"
 if [[ "$architecture" == native ]]; then
   swift build --package-path "$replica_root" --scratch-path "$scratch_root" -c "$configuration" --jobs 2
   binary_root="$(swift build --package-path "$replica_root" --scratch-path "$scratch_root" -c "$configuration" --show-bin-path)"
@@ -330,5 +349,10 @@ if [[ -e "$output_root/BlinkClip.app" ]]; then
   mv "$output_root/BlinkClip.app" "$backup/BlinkClip.app"
 fi
 mv "$bundle" "$output_root/BlinkClip.app"
+# 落地即封存指纹：清单记录源码内容指纹、git 提交与各可执行文件 sha256，并断言
+# 可执行文件比所有源码新。发布脚本据此在打包前复核，代价只有几十毫秒。
+python3 "$replica_root/scripts/source-fingerprint.py" seal \
+  --app "$output_root/BlinkClip.app" \
+  --configuration "$configuration" --architecture "$architecture"
 printf '%s\n' "$output_root/BlinkClip.app"
 build_complete=1

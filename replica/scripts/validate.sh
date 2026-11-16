@@ -14,6 +14,10 @@ report_root="${1:-$repository_root/.local/replica-validation}"
 #      —— 旧的研究报告校验入口，清理时删除；现行静态检查由 scripts/tests 承担（下方 unittest）。
 mkdir -p "$report_root"
 bash "$replica_root/scripts/build-app.sh" > "$report_root/build.log" 2>&1
+# build-app.sh 末尾会把产物路径打印到 stdout（即日志最后一行）；这里复核产物
+# 确实由当前源码构建，避免验证跑在过期二进制上。
+app_path="$(tail -n 1 "$report_root/build.log")"
+python3 "$replica_root/scripts/source-fingerprint.py" verify --app "$app_path"
 # build-app.sh 默认以 universal 构建，二进制落在 .build/architectures/<arch>/release，
 # 而不是历史硬编码的 .build/release（那是 native 构建的布局）。这里按同一规则定位。
 build_root="${BLINKCLIP_BUILD_ROOT:-$replica_root/.build}"

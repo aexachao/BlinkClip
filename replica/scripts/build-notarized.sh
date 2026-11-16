@@ -26,7 +26,23 @@ subprocess.run(['xcrun', 'notarytool', 'history', '--keychain-profile',
                check=True, stdout=subprocess.DEVNULL)
 PY
 bash replica/scripts/build-app.sh release universal
+# 打包前最后一道：产物必须由当前源码构建。任一不符（指纹、可执行文件 sha256、
+# 时间顺序）都会在这里中止，而不是等用户看到「版本号是新的、界面是旧的」。
+python3 replica/scripts/source-fingerprint.py verify --app "$ARTIFACT_TASK_DIR/out/BlinkClip.app"
 python3 replica/scripts/notarize-distribution.py
+# 把这次发布的源码指纹写进签名清单：事后仅凭 DMG 与清单就能核对它由哪份源码构建，
+# 不必再猜「09:16 的包到底是不是 09:05 的源码」。
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+task = Path(os.environ['ARTIFACT_TASK_DIR'])
+provenance = json.loads((task / 'out/BlinkClip.build-manifest.json').read_text())
+signing = task / 'out/release/signing-manifest.json'
+data = json.loads(signing.read_text())
+data['source_digest'] = provenance['source_digest']
+data['source_commit'] = provenance['source_commit']
+signing.write_text(json.dumps(data, indent=2) + '\n')
+PY
 # These signatures cover the final stapled DMG, so they must be generated last.
 if [[ -n "${BLINKCLIP_UPDATE_PRIVATE_KEY:-}" ]]; then
   version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
