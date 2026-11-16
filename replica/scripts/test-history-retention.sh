@@ -29,7 +29,9 @@ PLIST
 core_sources=("$REPLICA_DIR/Sources/BlinkClipCore/SettingsStrings.swift")
 shim="$ARTIFACT_TASK_DIR/build/BundleModuleShim.swift"
 printf '%s\n' 'import Foundation' 'extension Bundle { static var module: Bundle { Bundle.main } }' > "$shim"
-SOURCES=("$REPLICA_DIR/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$REPLICA_DIR/Sources/BlinkClip/UI/HistoryRetentionCopy.swift" "$REPLICA_DIR/Sources/BlinkClip/UI/HistoryRetentionSaving.swift" "$REPLICA_DIR/Tests/Native/HistoryRetentionHarness.swift")
+# HistoryCapacityControl 的说明文字取 SettingsSurfaceStyle 的语义色，产品里那份盒子
+# 定义已移进 SettingsSurfaceStyle.swift，所以编译集必须带上它。
+SOURCES=("$REPLICA_DIR/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$REPLICA_DIR/Sources/BlinkClip/UI/HistoryRetentionCopy.swift" "$REPLICA_DIR/Sources/BlinkClip/UI/HistoryRetentionSaving.swift" "$REPLICA_DIR/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" "$REPLICA_DIR/Tests/Native/HistoryRetentionHarness.swift")
 shasum -a 256 "${SOURCES[@]}" "${core_sources[@]}" "$REPLICA_DIR/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$REPLICA_DIR/Assets/BlinkClipAppIcon.icns" "$0" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macosx14.0" -module-cache-path "$ARTIFACT_TASK_DIR/build/module-cache" \
   -emit-library -emit-module -module-name BlinkClipCore "${core_sources[@]}" "$shim" \

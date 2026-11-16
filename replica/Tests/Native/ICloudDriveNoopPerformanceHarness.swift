@@ -63,15 +63,17 @@ struct ICloudDriveNoopPerformanceHarness {
         let itemIndex = changed.records.firstIndex { $0.entity?.item != nil }!
         changed.records[itemIndex].entity!.item!.title = "Changed synthetic item"
         try await transport.write(changed, to: shippingFolder)
-        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed,
+        // The document holds archived content: an in-memory snapshot also carries read-time
+        // projections that Codable never writes, so compare the archived form.
+        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed.archivedContent,
                   "Changed outgoing snapshot was not written")
         try original.write(to: file, options: .atomic)
         try await transport.write(changed, to: shippingFolder)
-        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed,
+        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed.archivedContent,
                   "External valid document replacement was not repaired")
         try Data("{broken".utf8).write(to: file, options: .atomic)
         try await transport.write(changed, to: shippingFolder)
-        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed,
+        try check(try JSONDecoder().decode(ICloudSyncSnapshot.self, from: Data(contentsOf: file)) == changed.archivedContent,
                   "Corrupt existing document was not repaired")
         try check((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600,
                   "Cloud document permissions changed")

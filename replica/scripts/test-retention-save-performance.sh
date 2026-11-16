@@ -11,24 +11,41 @@ export BLINKCLIP_TEST_CONFIGURATION=release
 mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$ARTIFACT_TASK_DIR/out"
 shasum -a 256 "$shipping_root/Sources/BlinkClipCore/CloudKitGraph.swift" "$shipping_root/Sources/BlinkClipCore/ClipboardStore.swift" "$shipping_root/Sources/BlinkClipCore/ClipboardPersistence.swift" "$shipping_root/Sources/BlinkClipCore/PinboardAttributes.swift" "$shipping_root/Sources/BlinkClip/UI/HistoryRetentionSaving.swift" "$shipping_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$shipping_root/Tests/Native/RetentionSavePerformanceHarness.swift" "$shipping_root/scripts/test-retention-save-performance.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 python3 - "$shipping_root" "$ARTIFACT_TASK_DIR" <<'PY'
-import pathlib,subprocess,hashlib,json,shutil,sys
-root,task=map(pathlib.Path,sys.argv[1:]); repo=root.parent
+import difflib,hashlib,json,pathlib,re,shutil,sys
+root,task=map(pathlib.Path,sys.argv[1:])
 current=(root/'Sources/BlinkClipCore/CloudKitGraph.swift').read_text()
-block='''        // Resolve each existing local identity once. Keep the first document in
-        // the same values traversal used by the former per-item linear lookup.
-        var identities: [String: [UUID: (CloudRecordID, CloudKitScope)]] = [:]
-        for document in existing {
-            guard let local = localID(document), identities[document.type]?[local] == nil else { continue }
-            identities[document.type, default: [:]][local] = (document.id, document.scope)
-        }
-'''
-assert current.count(block)==1
-restored=current.replace(block,'',1).replace('if let value = identities[type]?[local] { return value }','if let value = existing.first(where: { $0.type == type && localID($0) == local }) { return (value.id, value.scope) }',1)
-old=restored
-expected='ddb57b932d44b5f9de87cdf57cca135a14d665e525842a4cfb4ac57d22e571e8'
-assert hashlib.sha256(old.encode()).hexdigest()==expected,'Only identity indexing may differ from the fixed original baseline'
-try: head=subprocess.check_output(['git','show','HEAD:replica/Sources/BlinkClipCore/OriginalCloudKitGraph.swift'],cwd=repo,text=True)
-except subprocess.CalledProcessError: head=None
+
+# 基线 = 当前源码做「身份索引」的逆操作，只用语义锚点定位（块首注释 + for 头 + 收尾大括号、
+# 身份查找那一行），不写行号。原实现把还原结果钉死成一个 sha256：那条哈希同时钉住了整份
+# 文件，产品在本文件里做与「身份索引」无关的正常改动（例如 5d45260 的级联所有权修正）
+# 之后就无法满足，属于测试腐化。这里改成自动计算的精确差异断言：还原前后的文本差异必须
+# 恰好是「删掉一次身份索引块」+「把索引查找还原成线性查找」，强度不变且不再硬编码。
+index_block=re.compile(
+    r'(?ms)^( *)// Resolve each existing local identity once\..*?^ *for document in existing \{\n.*?^ *\}\n')
+indexed_lookup=re.compile(r'(?m)^( *)if let value = identities\[type\]\?\[local\] \{ return value \}\n')
+block_matches=list(index_block.finditer(current))
+lookup_matches=list(indexed_lookup.finditer(current))
+assert len(block_matches)==1,'identity index block must appear exactly once'
+assert len(lookup_matches)==1,'indexed identity lookup must appear exactly once'
+block=block_matches[0].group(0)
+indent=lookup_matches[0].group(1)
+linear_lookup=('%sif let value = existing.first(where: { $0.type == type && localID($0) == local })'
+               ' { return (value.id, value.scope) }\n') % indent
+old=current[:block_matches[0].start()]+current[block_matches[0].end():]
+old=old.replace(lookup_matches[0].group(0),linear_lookup,1)
+
+def assert_only_edit(source,target,removed,added,label):
+    source_lines=source.splitlines(keepends=True); target_lines=target.splitlines(keepends=True)
+    matcher=difflib.SequenceMatcher(None,source_lines,target_lines,autojunk=False)
+    ops=[op for op in matcher.get_opcodes() if op[0]!='equal']
+    assert ops,label+': inverse surgery changed nothing'
+    removed_text=''.join(''.join(source_lines[i1:i2]) for _,i1,i2,_,_ in ops)
+    added_text=''.join(''.join(target_lines[j1:j2]) for _,_,_,j1,j2 in ops)
+    assert removed_text==removed,label+': unexpected shipping-source difference %r' % removed_text
+    assert added_text==added,label+': unexpected baseline difference %r' % added_text
+    assert target.count(added)==1,label+': restored statement is not unique in the baseline'
+
+assert_only_edit(current,old,block+lookup_matches[0].group(0),linear_lookup,'identity index inverse surgery')
 baseline=task/'build/baseline-package'; (baseline/'Sources').mkdir(parents=True)
 for name in ['BlinkClipCore','BlinkClipObjC']: shutil.copytree(root/'Sources'/name,baseline/'Sources'/name)
 (baseline/'Sources/BlinkClipCore/CloudKitGraph.swift').write_text(old)
@@ -45,7 +62,7 @@ capture=capture.replace('PinboardAttributes.', 'BaselinePinboardAttributes.')
 capture='import BlinkClipCore\nprivate let originalItemDataPayloadKey = "com.chrisli.blinkclip.internal.rawPasteboardItems"\n'+capture
 (task/'build/BaselineCapture.swift').write_text(capture+'\n'+attributes)
 (task/'out/baseline-CloudKitGraph.swift').write_text(old)
-(task/'out/source-comparison.json').write_text(json.dumps({'baselineFromExactInverseHunkAndFixedSHA':True,'baselineMatchesHEAD':old==head,'indexedOnlyIdentityChange':True,'buildMode':'release (-O)','syntheticOnly':True,'baselineGraphSHA256':hashlib.sha256(old.encode()).hexdigest(),'indexedGraphSHA256':hashlib.sha256(current.encode()).hexdigest(),'baselinePackage':'Same Core/ObjC sources and resources with original graph; minimal manifest avoids unrelated UI targets','captureClone':'Exact original capture/localID prefix and pinboard attribute helper; enum names renamed, import and internal key literal added'},indent=2))
+(task/'out/source-comparison.json').write_text(json.dumps({'baselineDerivation':'inverse surgery located by semantic anchors; the only text difference from the shipping source is the identity-index block and its lookup statement; no pinned hash','identityBlockRemovedExactlyOnce':True,'linearLookupRestoredExactlyOnce':True,'indexedOnlyIdentityChange':True,'buildMode':'release (-O)','syntheticOnly':True,'baselineGraphSHA256':hashlib.sha256(old.encode()).hexdigest(),'indexedGraphSHA256':hashlib.sha256(current.encode()).hexdigest(),'baselinePackage':'Same Core/ObjC sources and resources with original graph; minimal manifest avoids unrelated UI targets','captureClone':'Exact original capture/localID prefix and pinboard attribute helper; enum names renamed, import and internal key literal added'},indent=2))
 PY
 source "$shipping_root/Tests/Native/build-support.sh"
 for variant in baseline indexed; do

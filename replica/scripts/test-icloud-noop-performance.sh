@@ -24,35 +24,52 @@ if [[ "$run_store_regression" == 1 ]]; then
   "$test_harness" > "$ARTIFACT_TASK_DIR/out/sync-regression.json"
 fi
 python3 - "$replica_root/Sources/BlinkClipCore/ICloudDriveSync.swift" "$ARTIFACT_TASK_DIR/build/MeasuredICloudTransports.swift" "$ARTIFACT_TASK_DIR/out/actor-extraction.json" <<'PY'
-import hashlib, json, pathlib, subprocess, sys
+import difflib, hashlib, json, pathlib, re, sys
 source = pathlib.Path(sys.argv[1]).read_text()
 actor = source[source.index('public actor ICloudDriveSyncTransport {'):]
-encode = '''            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(snapshot)
-            try Task.checkCancellation()
-'''
-assert actor.count(encode) == 1
-baseline = actor.replace(encode, '', 1)
-anchor = '''        try Task.checkCancellation()
-        try coordinate(at: file, writing: true) { destination in'''
-eager = '''        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(snapshot)
-'''
-assert baseline.count(anchor) == 1
-baseline = baseline.replace(anchor, eager + anchor, 1)
-repo = pathlib.Path(sys.argv[1]).resolve().parents[3]
-head_source = subprocess.check_output(['git', 'show', 'HEAD:replica/Sources/BlinkClipCore/ICloudDriveSync.swift'], cwd=repo, text=True)
-head_actor = head_source[head_source.index('public actor ICloudDriveSyncTransport {'):]
-assert baseline == head_actor, 'Reconstructed eager actor differs from the original repository actor'
+# 基线 = 把 write() 里的延迟编码搬回 coordinate 之前（优化前的写法）。定位只用语义锚点
+# 的正则，不写行号；原实现额外断言「重建结果 == git HEAD 里的 actor」，这在优化被提交
+# 之后永远不成立（本仓库唯一提交 6c274da 已经含优化后的写法），属于过期基线，已删除。
+# 现在改成自动计算的精确差异断言：actor 与基线的文本差异必须恰好是「删掉延迟编码块」
+# + 「在 coordinate 入口前插入等价的提前编码」。
+deferred = re.compile(
+    r'(?ms)^( *)let encoder = JSONEncoder\(\)\n'
+    r' *encoder\.outputFormatting = \[\.sortedKeys\]\n'
+    r' *let data = try encoder\.encode\(snapshot\)\n'
+    r' *try Task\.checkCancellation\(\)\n')
+anchor_pattern = re.compile(
+    r'(?m)^( *)try Task\.checkCancellation\(\)\n(?P<coordinate> *try coordinate\(at: file, writing: true\) \{ destination in\n)')
+deferred_matches = list(deferred.finditer(actor))
+assert len(deferred_matches) == 1, 'deferred encoding block must appear exactly once in the actor'
+deferred_text = deferred_matches[0].group(0)
+baseline = actor[:deferred_matches[0].start()] + actor[deferred_matches[0].end():]
+anchor_matches = list(anchor_pattern.finditer(baseline))
+assert len(anchor_matches) == 1, 'write() coordinate anchor must appear exactly once in the actor'
+eager = ('        let encoder = JSONEncoder()\n'
+         '        encoder.outputFormatting = [.sortedKeys]\n'
+         '        let data = try encoder.encode(snapshot)\n')
+baseline = baseline[:anchor_matches[0].start()] + eager + baseline[anchor_matches[0].start():]
+
+def assert_only_edit(optimized, restored, removed, added, label):
+    optimized_lines = optimized.splitlines(keepends=True)
+    restored_lines = restored.splitlines(keepends=True)
+    matcher = difflib.SequenceMatcher(None, optimized_lines, restored_lines, autojunk=False)
+    ops = [op for op in matcher.get_opcodes() if op[0] != 'equal']
+    assert ops, label + ': baseline surgery changed nothing'
+    removed_text = ''.join(''.join(optimized_lines[i1:i2]) for _, i1, i2, _, _ in ops)
+    added_text = ''.join(''.join(restored_lines[j1:j2]) for _, _, _, j1, j2 in ops)
+    assert removed_text == removed, label + ': unexpected optimized-source difference %r' % removed_text
+    assert added_text == added, label + ': unexpected baseline difference %r' % added_text
+    assert restored.count(added) == 1, label + ': restored statement is not unique in the baseline'
+
+assert_only_edit(actor, baseline, deferred_text, eager, 'eager encoding inverse surgery')
 def instrument(text, name):
     text = text.replace('public actor ICloudDriveSyncTransport {', 'actor ' + name + ' {\n    private(set) var encodeCalls = 0', 1)
     assert text.count('let data = try encoder.encode(snapshot)') == 1
     return text.replace('let data = try encoder.encode(snapshot)', 'encodeCalls += 1\n' + ('            ' if name.startswith('Deferred') else '        ') + 'let data = try encoder.encode(snapshot)', 1)
 pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport BlinkClipCore\n' + instrument(actor, 'DeferredMeasuredICloudTransport') + '\n' + instrument(baseline, 'EagerMeasuredICloudTransport'))
 pathlib.Path(sys.argv[2]).with_name('LegacyICloudTransport.swift').write_text('import Foundation\nimport BlinkClipCore\n' + baseline.replace('public actor ICloudDriveSyncTransport {', 'actor LegacyICloudDriveSyncTransport {', 1))
-pathlib.Path(sys.argv[3]).write_text(json.dumps({'productionSourceSHA256': hashlib.sha256(source.encode()).hexdigest(), 'actorSHA256': hashlib.sha256(actor.encode()).hexdigest(), 'baselineActorSHA256': hashlib.sha256(baseline.encode()).hexdigest(), 'baselineActorMatchesHEAD': True, 'instrumentation': 'only actor rename and encodeCalls counter; baseline reverses encoding move; Legacy actor only renamed without counters', 'productionFile': sys.argv[1]}, indent=2))
+pathlib.Path(sys.argv[3]).write_text(json.dumps({'productionSourceSHA256': hashlib.sha256(source.encode()).hexdigest(), 'actorSHA256': hashlib.sha256(actor.encode()).hexdigest(), 'baselineActorSHA256': hashlib.sha256(baseline.encode()).hexdigest(), 'baselineDerivation': 'semantic anchors + exact text-difference assertion; no pinned hash and no git HEAD comparison', 'instrumentation': 'only actor rename and encodeCalls counter; baseline reverses encoding move; Legacy actor only renamed without counters', 'productionFile': sys.argv[1]}, indent=2))
 PY
 if [[ "$store_comparison" == 1 ]]; then
   compile_native_test_harness icloud-store-current "$replica_root/Tests/Native/ICloudDriveSyncHarness.swift" > "$ARTIFACT_TASK_DIR/out/current-store-compile.log" 2>&1

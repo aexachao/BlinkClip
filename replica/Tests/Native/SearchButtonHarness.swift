@@ -27,8 +27,15 @@ struct SearchButtonHarness {
         let board = NSPasteboard(name: .init("BlinkClipSearchHarness-\(UUID().uuidString)"))
         defer { board.releaseGlobally() }
         let store = try ClipboardStore(directoryURL: directory)
-        let matchingID = try store.add(ClipboardItem(plainText: "FIRST search fixture"))
-        _ = try store.add(ClipboardItem(plainText: "SECOND search fixture"))
+        // The capture pipeline always stores the pasteboard representations; the search
+        // record's kind and content are derived from them. A plainText-only item is
+        // classified as `.unknown` with no searchable text, so the fixture must carry
+        // the UTF-8 representation the real copy path writes.
+        func fixture(_ text: String) -> ClipboardItem {
+            ClipboardItem(plainText: text, payloads: [NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)])
+        }
+        let matchingID = try store.add(fixture("FIRST search fixture"))
+        _ = try store.add(fixture("SECOND search fixture"))
         let ui = ReplicaUIController(store: store)
         ui.pasteboard = board
         let panel = ui.panel
