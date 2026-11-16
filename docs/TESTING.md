@@ -49,9 +49,37 @@ python3 replica/scripts/test-affected.py --full --dry-run   # 确认 56 项都�
 python3 replica/scripts/test-affected.py --full             # 必跑，全绿才能发
 ```
 
-`--full` 忽略改动、选中全部测试项。发版前不允许用「改动不大」作为跳过理由；
-需要真机/自有签名的项（`cloudkit-live`、`blinkclip-legacy-migration` 等）缺环境变量时会报
-**未执行**并以退出码 2 结束——这时要么补齐环境跑，要么在发布记录里写明未覆盖的原因。
+`--full` 忽略改动、选中全部测试项。发版前不允许用「改动不大」作为跳过理由。
+
+### 每项一个隔离目录
+
+选择器给**每个测试项**分配自己的 `ARTIFACT_TASK_DIR`（`<产物根>/<测试项 id>`），并把
+`build/` 清掉、只留 `out/` 证据。原因：所有 `test-*.sh` 都把中间文件放在
+`$ARTIFACT_TASK_DIR/build` 下，共用同一个目录时 `build/harness` 这类路径会在不同测试之间
+既当文件又当目录（`capture-integration` 曾经因此假失败）。
+
+产物根按这个顺序取：
+
+| 场景 | 产物根 |
+| --- | --- |
+| 在 `storage-guard` 里跑（已有 `ARTIFACT_TASK_DIR`） | `$ARTIFACT_TASK_DIR/items/<id>` |
+| 设了 `BLINKCLIP_TEST_ARTIFACT_ROOT` | 该目录 |
+| 都没设 | 系统临时目录下的 `blinkclip-test-affected-*`（仓库外） |
+
+默认跑完删 `build/`，想留现场加 `--keep-artifacts`。汇总会打印本次产物根。
+
+### 手工项
+
+有些项要真实凭据或真实旧版数据，自动门禁里跑不了。它们在 `ITEMS` 里带 `manual` 说明：
+**缺环境变量时记为「手工项」，不计失败、也不计入退出码 2**；一旦补齐环境变量就照常执行。
+
+| 手工项 | 缺什么 | 怎么跑 |
+| --- | --- | --- |
+| `blinkclip-legacy-migration` | 审计过的真实旧版数据目录（`BLINKCLIP_LEGACY_FIXTURE`）。仓库不提交该夹具：夹具要真实旧版 CoreData 库、`manifest.json`（含实体/属性 schema 与 objectID）和原始 `original-items.nskeyedarchive`，自己造一份只能验证「我们的编码器读我们自己的产物」，证明不了迁移 | 把旧版数据目录设为 `BLINKCLIP_LEGACY_FIXTURE` 后跑 `bash replica/scripts/test-blinkclip-legacy-migration.sh`；脚本会先记录夹具哈希、`ditto` 只读复制、跑完断言夹具逐字节未变 |
+| `cloudkit-live` | `BLINKCLIP_CLOUDKIT_PROFILE` / `_CONTAINER` / `BLINKCLIP_SIGNING_IDENTITY` / `BLINKCLIP_CLOUDKIT_TEST_BUNDLE_ID`。脚本用自有描述文件重签一个测试 bundle 再连真实容器，配置见 [CLOUDKIT_SETUP.md](CLOUDKIT_SETUP.md) | 配齐变量后跑 `bash replica/scripts/test-cloudkit-live.sh --synthetic-only`（只写合成内容） |
+| `panel-permission-interaction` | 协调者（人或 CUA）真的点面板/权限页：QA 进程按设计不自己退出，它轮询 `finish` 文件，由协调者点完再收尾；CUA 证据单独记录 | 设 `BLINKCLIP_QA_COORDINATOR=1` 后跑 `bash replica/scripts/test-panel-permission-interaction.sh`；它会打印 `QA_READY <语言> <app 路径>`，交互完在 `out/qa/finish` 落盘收尾。不缺变量却没人交互时会一直等，所以默认不在自动门禁里 |
+
+发布记录里要写明本次哪些手工项没跑。其余项缺环境变量仍按**未执行**处理并以退出码 2 结束。
 
 ## 映射表维护规则
 
@@ -107,6 +135,7 @@ python3 replica/scripts/test-affected.py --full             # 必跑，全绿才
 | 日期（本地） | 提交 | 结果 | 备注 |
 | --- | --- | --- | --- |
 | 2026-11-16 | `3c613aa`（1.0.25 集成前） | 未执行 `--full` | 本工具落地（基线 `ba7591e`）后首轮集成只跑受影响测试（`test-affected.py --worktree` 选中项），全量待发版前补 |
+| 2026-11-16 | `12a2afd`（1.0.25 发版前） | `--full` 全绿：执行 53 项、失败 0、未执行 0，手工项 3 个（`blinkclip-legacy-migration`、`cloudkit-live`、`panel-permission-interaction`） | 修掉 5 项测试腐化 + 4 个编排缺陷；iCloud 空转写盘为产品缺陷（`syncApply` 事务作者缺失 + 快照比较带上读时投影） |
 
 ## 与既有入口的关系
 
