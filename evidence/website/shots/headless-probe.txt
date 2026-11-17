@@ -1,0 +1,10 @@
+Chrome 156 headless --window-size probe (innerWidth x innerHeight)
+1440,900 -> w=1440 h=813
+1024,768 -> w=1024 h=681
+390,844  -> w=500 h=757 (window width clamped to 500)
+
+The literal `--headless=new --screenshot --window-size=W,H` path on macOS gives a screenshot canvas of W x H
+but lays the page out in a shorter viewport (H - 87 window chrome) and clamps widths below 500.
+To verify the requested viewports exactly, the final shots use the same headless Chrome through the
+DevTools Protocol with Emulation.setDeviceMetricsOverride(width, height), which produces a true
+1440x900 / 1024x768 / 390x844 layout viewport. See evidence/website/tools/shots.cjs.

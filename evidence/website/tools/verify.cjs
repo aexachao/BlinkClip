@@ -33,7 +33,13 @@ async function connect() {
   });
   const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const id = ++nextId;
-    pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)); }
+    }, 45000);
+    pending.set(id, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (error) => { clearTimeout(timer); reject(error); }
+    });
     socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   const once = (method) => new Promise((resolve) => {
@@ -112,6 +118,7 @@ async function main() {
   await scrollThrough();
   const en = await snapshot();
   const stats = await evaluate(`[...document.querySelectorAll('.stat-value')].map((el) => el.textContent)`);
+  await evaluate('document.activeElement && document.activeElement.blur()');
   const enViewport = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   fs.writeFileSync(path.join(outDir, 'en-1440x900.png'), Buffer.from(enViewport.data, 'base64'));
   const layout = await send('Page.getLayoutMetrics', {}, sessionId);
@@ -158,6 +165,7 @@ async function main() {
   await sleep(700);
   const faq = await snapshot();
   const faqHeight = await evaluate(`document.querySelector('.faq-inner').getBoundingClientRect().height`);
+  await evaluate('document.activeElement && document.activeElement.blur()');
   await evaluate(`(() => {
     document.documentElement.style.scrollBehavior = 'auto';
     document.querySelector('#faq').scrollIntoView({ block: 'start' });
@@ -178,7 +186,29 @@ async function main() {
   })`);
   await send('Emulation.setEmulatedMedia', { features: [] }, sessionId);
 
-  const report = { zh, en, errors, motion, stats, reduced, mobileEn, system, faq, faqHeight };
+  await send('Network.enable', {}, sessionId);
+  await send('Network.setBlockedURLs', { urls: ['*cdnjs.cloudflare.com*'] }, sessionId);
+  const fallbackLoaded = once('Page.loadEventFired');
+  await send('Page.reload', {}, sessionId);
+  await fallbackLoaded;
+  await sleep(1200);
+  const cdnFallback = await evaluate(`(() => {
+    const title = document.querySelector('.hero-title');
+    const style = getComputedStyle(title);
+    return {
+      gsap: Boolean(window.gsap),
+      scrollTrigger: Boolean(window.ScrollTrigger),
+      titleText: title.textContent.replace(/\\s+/g, ' ').trim(),
+      titleHeight: Math.round(title.getBoundingClientRect().height),
+      opacity: style.opacity,
+      visibility: style.visibility,
+      inlineStyle: title.getAttribute('style'),
+      textLength: document.body.innerText.length
+    };
+  })()`);
+  await send('Network.setBlockedURLs', { urls: [] }, sessionId);
+
+  const report = { zh, en, errors, motion, stats, reduced, cdnFallback, mobileEn, system, faq, faqHeight };
   fs.writeFileSync(path.join(outDir, 'verify.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   await send('Target.closeTarget', { targetId });

@@ -948,7 +948,7 @@ main > section {
 .footer {
   position: relative;
   z-index: 1;
-  padding: 24px 0 calc(90px + env(safe-area-inset-bottom));
+  padding: 24px var(--gutter) calc(90px + env(safe-area-inset-bottom));
   background-color: var(--ink);
   color: rgba(250, 250, 248, 0.66);
 }
@@ -1039,8 +1039,31 @@ main > section {
   z-index: 1;
 }
 
+.retention {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 24px;
+}
+
+.retention span {
+  flex: 1;
+  min-width: 34px;
+  padding: 5px 4px;
+  border: 1px solid rgba(250, 250, 248, 0.42);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  text-align: center;
+  color: var(--bg);
+}
+
+.retention span:last-child {
+  border-color: rgba(255, 184, 159, 0.9);
+  color: var(--bg);
+}
+
 .bento-focus .type-chips {
-  margin-top: auto;
+  margin-top: 0;
 }
 
 .bento-tall {
@@ -1064,7 +1087,7 @@ main > section {
 }
 
 .bento-focus .bento-tag {
-  color: rgba(250, 250, 248, 0.76);
+  color: var(--bg);
 }
 
 .bento-card h3 {
@@ -1089,7 +1112,7 @@ main > section {
 }
 
 .bento-focus p {
-  color: rgba(250, 250, 248, 0.88);
+  color: var(--bg);
 }
 
 .bento-list {
@@ -1128,8 +1151,10 @@ main > section {
 .type-chips span {
   padding: 6px 12px;
   border-radius: 100px;
-  background: rgba(250, 250, 248, 0.16);
+  background: rgba(250, 250, 248, 0.94);
+  color: var(--ink);
   font-size: 0.78rem;
+  font-weight: 500;
 }
 
 .bento-shot {
@@ -1356,10 +1381,10 @@ main > section {
 .shortcut-card.is-focal .key-row kbd {
   min-width: 56px;
   height: 56px;
-  border-color: rgba(250, 250, 248, 0.26);
-  background: rgba(250, 250, 248, 0.16);
-  box-shadow: none;
-  color: var(--bg);
+  border-color: transparent;
+  background: rgba(250, 250, 248, 0.95);
+  box-shadow: 0 3px 0 rgba(25, 25, 23, 0.18);
+  color: var(--ink);
   font-size: 1.4rem;
 }
 
@@ -1382,7 +1407,7 @@ main > section {
 }
 
 .shortcut-card.is-focal p {
-  color: rgba(250, 250, 248, 0.85);
+  color: var(--bg);
 }
 
 .perm-grid {
@@ -1880,5 +1905,30 @@ main > section {
   .cta-github {
     width: 100%;
     justify-content: space-between;
+  }
+}
+
+html[lang="en"] .hero-inner {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+
+html[lang="en"] .hero-copy {
+  max-width: 720px;
+}
+
+html[lang="en"] .hero-title {
+  font-size: clamp(2.35rem, 4.4vw, 5rem);
+  letter-spacing: -0.03em;
+}
+
+@media (max-width: 980px) {
+  html[lang="en"] .hero-inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  html[lang="en"] .hero-title {
+    font-size: clamp(1.95rem, 8.8vw, 2.4rem);
   }
 }

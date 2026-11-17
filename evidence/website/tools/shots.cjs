@@ -39,7 +39,13 @@ async function connect() {
   });
   const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const id = ++nextId;
-    pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)); }
+    }, 45000);
+    pending.set(id, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (error) => { clearTimeout(timer); reject(error); }
+    });
     socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   const once = (method) => new Promise((resolve) => {

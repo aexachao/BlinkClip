@@ -1,0 +1,302 @@
+[
+  {
+    "size": "1440x900",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "scrollHeight": 8288,
+    "heroBottom": 900,
+    "heroTop": 0,
+    "images": [
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "width": 1088,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "width": 1500,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "width": 2240,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-capture.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      }
+    ],
+    "buttons": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "功能",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 103,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 80,
+        "h": 44
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 191,
+        "h": 56
+      },
+      {
+        "label": "看快捷键",
+        "w": 94,
+        "h": 45
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 206,
+        "h": 61
+      }
+    ],
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "lang": "zh-Hans",
+    "contentHeight": 8288
+  },
+  {
+    "size": "1024x768",
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "scrollHeight": 9037,
+    "heroBottom": 768,
+    "heroTop": 0,
+    "images": [
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "width": 1088,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "width": 1500,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "width": 2240,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-capture.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      }
+    ],
+    "buttons": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "功能",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 103,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 80,
+        "h": 44
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 191,
+        "h": 56
+      },
+      {
+        "label": "看快捷键",
+        "w": 94,
+        "h": 45
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 206,
+        "h": 61
+      }
+    ],
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "lang": "zh-Hans",
+    "contentHeight": 9037
+  },
+  {
+    "size": "390x844",
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "scrollHeight": 9046,
+    "heroBottom": 844,
+    "heroTop": 0,
+    "images": [
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "width": 1088,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "width": 1500,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "width": 2240,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/screenshot-settings-capture.png",
+        "width": 1080,
+        "complete": true
+      },
+      {
+        "src": "./assets/blinkclip-icon.png",
+        "width": 1024,
+        "complete": true
+      }
+    ],
+    "buttons": [
+      {
+        "label": "中文",
+        "w": 79,
+        "h": 44
+      },
+      {
+        "label": "功能",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 350,
+        "h": 52
+      },
+      {
+        "label": "看快捷键",
+        "w": 350,
+        "h": 45
+      },
+      {
+        "label": "下载 macOS 版",
+        "w": 350,
+        "h": 61
+      }
+    ],
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "lang": "zh-Hans",
+    "contentHeight": 9046
+  }
+]

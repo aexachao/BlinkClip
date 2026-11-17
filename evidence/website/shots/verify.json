@@ -1,0 +1,103 @@
+{
+  "zh": {
+    "htmlLang": "zh-Hans",
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "ogLocale": "zh_CN",
+    "stored": "zh-Hans",
+    "pressed": "zh-Hans",
+    "h1": "复制过的， 都找得回来。",
+    "download": "下载 macOS 版",
+    "imageAlt": "闪贴剪贴板面板：横向卡片浏览文本、图片与链接，卡片标明类型与来源应用",
+    "trigger": "切换语言：简体中文",
+    "overflow": false,
+    "faqOpen": "false",
+    "faqExpanded": "false"
+  },
+  "en": {
+    "htmlLang": "en",
+    "title": "BlinkClip — Everything you copy stays findable, every screenshot ready to annotate",
+    "ogLocale": "en_US",
+    "stored": "en",
+    "pressed": "en",
+    "h1": "Everything you copy stays findable.",
+    "download": "Download for macOS",
+    "imageAlt": "BlinkClip clipboard panel: horizontal cards for text, images and links, each labelled with type and source app",
+    "trigger": "Change language: English",
+    "overflow": false,
+    "faqOpen": "false",
+    "faqExpanded": "false"
+  },
+  "errors": [],
+  "motion": {
+    "gsap": true,
+    "scrollTrigger": true,
+    "heroInlineStyle": "translate: none; rotate: none; scale: none; opacity: 1; transform: translate(0px, 0px);",
+    "shotInlineStyle": "translate: none; rotate: none; scale: none; transform: rotate(-1.19986deg);",
+    "reduced": false
+  },
+  "stats": [
+    "0",
+    "1",
+    "5",
+    "14+"
+  ],
+  "reduced": {
+    "media": true,
+    "shotInlineStyle": null,
+    "gsap": true
+  },
+  "cdnFallback": {
+    "gsap": false,
+    "scrollTrigger": false,
+    "titleText": "复制过的， 都找得回来。",
+    "titleHeight": 89,
+    "opacity": "1",
+    "visibility": "visible",
+    "inlineStyle": null,
+    "textLength": 2937
+  },
+  "mobileEn": {
+    "overflow": false,
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "heroBottom": 844,
+    "wide": [
+      "hero-glow",
+      "cta-glow"
+    ],
+    "cta": {
+      "w": 350,
+      "h": 61
+    },
+    "smallTargets": []
+  },
+  "system": {
+    "htmlLang": "zh-Hans",
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "ogLocale": "zh_CN",
+    "stored": null,
+    "pressed": "system",
+    "h1": "复制过的， 都找得回来。",
+    "download": "下载 macOS 版",
+    "imageAlt": "闪贴剪贴板面板：横向卡片浏览文本、图片与链接，卡片标明类型与来源应用",
+    "trigger": "切换语言：简体中文",
+    "overflow": false,
+    "faqOpen": "false",
+    "faqExpanded": "false"
+  },
+  "faq": {
+    "htmlLang": "zh-Hans",
+    "title": "闪贴 BlinkClip — 复制过的都找得回来，截完图直接标注",
+    "ogLocale": "zh_CN",
+    "stored": "zh-Hans",
+    "pressed": "zh-Hans",
+    "h1": "复制过的， 都找得回来。",
+    "download": "下载 macOS 版",
+    "imageAlt": "闪贴剪贴板面板：横向卡片浏览文本、图片与链接，卡片标明类型与来源应用",
+    "trigger": "切换语言：简体中文",
+    "overflow": false,
+    "faqOpen": "true",
+    "faqExpanded": "true"
+  },
+  "faqHeight": 147.21875
+}
