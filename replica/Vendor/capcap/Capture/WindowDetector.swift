@@ -205,6 +205,13 @@ class WindowDetector {
         windows = detectedWindows
     }
 
+    /// The cached window list, front to back.
+    ///
+    /// Read-only: the drag snap scans this 8Hz cache for the nearest window
+    /// edge, exactly like the hover path uses `windowAt(cgPoint:)`. Nothing
+    /// here enumerates the WindowServer.
+    var cachedWindows: [DetectedWindow] { windows }
+
     /// High-layer system surfaces (menu bar, Dock, popups) are often only a
     /// translucent foreground when captured as independent windows. Capture
     /// their already-composited screen pixels instead.

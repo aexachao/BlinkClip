@@ -217,6 +217,238 @@ private final class HoverHighlightView: NSView {
     }
 }
 
+/// The selection's own chrome — dimming cut-out, 1pt accent frame, the eight
+/// handles, the size label and the scroll-capture red marker — in a layer of
+/// its own.
+///
+/// It used to be painted by `SelectionView.draw(_:)`, so every drag event
+/// invalidated the *whole* overlay and re-blitted the frozen desktop snapshot
+/// (tens of megabytes per pointer sample on a 2x display). Moving it next to
+/// the hover highlight fixes that: a drag writes this view's geometry only,
+/// and `SelectionView.draw(_:)` — which now draws nothing but the snapshot —
+/// is never called while the pointer is down.
+private final class SelectionChromeView: NSView {
+    /// The owning overlay, for the one shared chrome painter
+    /// (`SelectionView.drawSelectionChrome`) and the size-label geometry.
+    weak var selectionView: SelectionView?
+
+    private let dimmingAlpha: CGFloat
+    private let borderWidth: CGFloat
+
+    /// Last written state. Equal state means zero work, exactly like the snap
+    /// guide's `placedTarget`: a pointer move that does not change the box
+    /// writes nothing.
+    private var placedRect: NSRect = .null
+    private var placedHandles = false
+    private var placedScrollCapture = false
+    private var placedLabel: String?
+
+    init(selectionView: SelectionView, dimmingAlpha: CGFloat, borderWidth: CGFloat) {
+        self.selectionView = selectionView
+        self.dimmingAlpha = dimmingAlpha
+        self.borderWidth = borderWidth
+        super.init(frame: .zero)
+        wantsLayer = true
+        isHidden = true
+        layer?.isOpaque = false
+        layer?.masksToBounds = false
+        layer?.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull(),
+            "contents": NSNull()
+        ]
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+
+    /// Decoration only: it must never take the pointer away from the overlay.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Writes the chrome for `rect` (this view's coordinates) or hides it.
+    ///
+    /// - Parameters:
+    ///   - rect: nil, or a zero-area rect, hides the chrome (no dimming either,
+    ///     which is what an initial mouse-down with a 0×0 box looks like).
+    ///   - showsHandles: the eight resize handles — only for a committed box.
+    ///   - scrollCapture: red anti-bleed marker instead of the accent frame.
+    ///   - sizeLabel: pinned label text (scroll-capture zoom, editor hand-off).
+    /// - Returns: true when visibility, geometry or styling was actually written.
+    @discardableResult
+    func place(rect: NSRect?, showsHandles: Bool, scrollCapture: Bool, sizeLabel: String?) -> Bool {
+        let target = rect ?? .null
+        let drawable = !target.isNull && (target.width > 0 || target.height > 0)
+        var wrote = false
+        if isHidden != !drawable {
+            isHidden = !drawable
+            wrote = true
+        }
+        guard drawable else {
+            placedRect = .null
+            placedHandles = false
+            placedScrollCapture = false
+            placedLabel = nil
+            return wrote
+        }
+        guard target != placedRect
+            || showsHandles != placedHandles
+            || scrollCapture != placedScrollCapture
+            || sizeLabel != placedLabel else { return wrote }
+        placedRect = target
+        placedHandles = showsHandles
+        placedScrollCapture = scrollCapture
+        placedLabel = sizeLabel
+        // Paint now, inside the caller's disabled-actions transaction: the box
+        // follows the pointer in this event, it never trails it by a frame.
+        needsDisplay = true
+        displayIfNeeded()
+        return true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !placedRect.isNull,
+              placedRect.width > 0 || placedRect.height > 0,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let rect = placedRect
+
+        // Dark overlay with cutout (even-odd fill preserves the snapshot
+        // underneath, which the parent's `draw(_:)` painted).
+        // During scroll capture, enlarge the cutout by 0.5pt so anti-aliasing
+        // at the cutout edge falls outside the captured rect instead of
+        // darkening its first pixel — otherwise every frame's bottom edge
+        // leaves a gray line at each stitch seam.
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        let cutoutRect = placedScrollCapture ? rect.insetBy(dx: -0.5, dy: -0.5) : rect
+        path.addRect(cutoutRect)
+        context.setFillColor(NSColor.black.withAlphaComponent(dimmingAlpha).cgColor)
+        context.addPath(path)
+        context.fillPath(using: .evenOdd)
+
+        // Draw border — solid red during scroll capture, solid accent blue
+        // otherwise.
+        if placedScrollCapture {
+            // ScreenCaptureKit sees the overlay panel, so any stroke pixels
+            // inside `rect` bleed into every captured frame and produce thin
+            // red lines at the left/right edges and at each stitch seam.
+            // Inset enough that the stroke (and its anti-aliased fringe) sits
+            // entirely outside the captured rect.
+            let strokeWidth = borderWidth
+            let outerInset = -(strokeWidth / 2 + 1)
+            context.setStrokeColor(NSColor.systemRed.cgColor)
+            context.setLineWidth(strokeWidth)
+            context.setLineDash(phase: 0, lengths: [])
+            context.stroke(rect.insetBy(dx: outerInset, dy: outerInset))
+        } else {
+            // Frame + handles + size label come from the one shared painter.
+            // The editor's live-selection chrome calls the same function, so a
+            // committed capture selection and the editor's live selection are
+            // drawn by one geometry, never two (no dots, no dashes anywhere).
+            selectionView?.drawSelectionChrome(
+                in: context,
+                rect: rect,
+                showsHandles: placedHandles,
+                sizeLabel: placedLabel
+            )
+        }
+    }
+}
+
+/// The stronger line on a snapped drag edge: while a drag has glued a
+/// selection edge to a window edge, that one edge is redrawn as a 2pt, 100%
+/// `systemGray` solid line — same hue as the dashed window outline, just
+/// stronger — so the user sees *which* edge holds.
+///
+/// Own `CAShapeLayer`, own path, cleared on mouse-up: a snap writes one
+/// segment, it never repaints the overlay.
+private final class SnapHighlightView: NSView {
+    /// One drawn edge of the dragged box, in this view's coordinates.
+    struct Segment: Equatable {
+        let start: NSPoint
+        let end: NSPoint
+    }
+
+    /// Highlight weight, alpha and colour. Same family as `SnapGuideView`
+    /// (`systemGray`), stronger so a snapped edge reads at a glance.
+    static let lineWidth: CGFloat = 2
+    static let alpha: CGFloat = 1.0
+
+    private let lineLayer = CAShapeLayer()
+    private var placedSegments: [Segment] = []
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        isHidden = true
+        layer?.isOpaque = false
+        layer?.masksToBounds = false
+        layer?.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull()
+        ]
+        lineLayer.fillColor = nil
+        lineLayer.strokeColor = NSColor.systemGray
+            .withAlphaComponent(Self.alpha).cgColor
+        lineLayer.lineWidth = Self.lineWidth
+        lineLayer.lineDashPattern = nil
+        lineLayer.lineCap = .butt
+        lineLayer.isOpaque = false
+        lineLayer.masksToBounds = false
+        lineLayer.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "path": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull()
+        ]
+        layer?.addSublayer(lineLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+
+    /// Decoration only: it must never take the pointer away from the overlay.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// - Parameter segments: the edges to highlight; an empty list hides it.
+    /// - Returns: true when visibility or geometry was actually written.
+    @discardableResult
+    func place(_ segments: [Segment]) -> Bool {
+        var wrote = false
+        let visible = !segments.isEmpty
+        if isHidden != !visible {
+            isHidden = !visible
+            wrote = true
+        }
+        guard visible else {
+            placedSegments = []
+            return wrote
+        }
+        guard segments != placedSegments else { return wrote }
+        placedSegments = segments
+        let path = CGMutablePath()
+        for segment in segments {
+            path.move(to: segment.start)
+            path.addLine(to: segment.end)
+        }
+        lineLayer.frame = bounds
+        lineLayer.path = path
+        lineLayer.setNeedsDisplay()
+        lineLayer.displayIfNeeded()
+        return true
+    }
+}
+
 class SelectionView: NSView {
     weak var delegate: SelectionViewDelegate?
     var onFirstDrawCompleted: (() -> Void)?
@@ -255,6 +487,13 @@ class SelectionView: NSView {
                 if state != .idle {
                     hideHoverHighlight()
                 }
+                // A snapped edge is highlighted only while a drag is running;
+                // leaving `.drawing` clears it.
+                if state != .drawing {
+                    dragSnappedEdges = []
+                }
+                refreshSelectionChrome()
+                refreshDragSnapHighlight()
                 refreshSnapGuide()
             }
         }
@@ -292,6 +531,11 @@ class SelectionView: NSView {
     var scrollCaptureActive = false {
         didSet {
             if scrollCaptureActive != oldValue {
+                // The snapshot is skipped while scrolling, so this is the one
+                // state change that has to repaint this view (to clear or
+                // restore the frozen desktop); the chrome itself is a layer.
+                needsDisplay = true
+                refreshSelectionChrome()
                 refreshSnapGuide()
             }
         }
@@ -302,7 +546,7 @@ class SelectionView: NSView {
         didSet {
             if selectionInteractionEnabled != oldValue {
                 refreshCursorRects()
-                needsDisplay = true
+                refreshSelectionChrome()
                 refreshSnapGuide()
             }
         }
@@ -314,7 +558,7 @@ class SelectionView: NSView {
     var selectionAdjustmentBounds: NSRect?
     var aspectRatio: CGFloat? = nil
     var selectionSizeLabelOverride: String? {
-        didSet { needsDisplay = true }
+        didSet { refreshSelectionChrome() }
     }
 
     // MARK: - Pre-captured Snapshot
@@ -384,11 +628,50 @@ class SelectionView: NSView {
         }
     }
 
+    /// Snaps a dragged selection edge onto a window edge closer than
+    /// `dragSnapDistance`. On by default; this is the one switch (the
+    /// screenshot pane has no free height for another settings row, so it has
+    /// no UI yet — see `evidence/patches/snap2-report.md`).
+    var showsDragSnap = true
+
+    /// Same-axis distance under which a dragged edge jumps onto a window edge.
+    /// Strictly smaller than this: an edge 8pt away stays where the pointer
+    /// put it.
+    static let dragSnapDistance: CGFloat = 8
+
+    /// The four edges of the box being dragged.
+    private enum DragSnapEdge: CaseIterable {
+        case left, right, bottom, top
+    }
+
+    /// Window rects (view coordinates) a dragged edge may glue to. Sampled once
+    /// when the drag starts — the desktop is frozen while capturing, so the
+    /// edges cannot move underneath the drag.
+    private var dragSnapCandidates: [NSRect] = []
+    /// The edges currently glued to a window edge (drives the highlight).
+    private var dragSnappedEdges: Set<DragSnapEdge> = []
+
+    /// The selection's chrome in its own layer (see `SelectionChromeView`).
+    /// A drag writes this layer, so `draw(_:)` — and with it the frozen
+    /// snapshot — is never invalidated while the pointer is down.
+    private lazy var selectionChrome = SelectionChromeView(
+        selectionView: self,
+        dimmingAlpha: dimmingOverlayAlpha,
+        borderWidth: borderWidth
+    )
+
+    /// The stronger line on a snapped drag edge (see `SnapHighlightView`).
+    private let snapHighlight = SnapHighlightView()
+
     /// Evidence counters for the acceptance harness: how many times the hover
     /// target actually changed, and how many times the guide layer was written.
     /// Both are plain integers on the existing update path — no extra work.
     private(set) var hoverTargetChangeCount = 0
     private(set) var snapGuideWriteCount = 0
+    /// How many times the selection chrome layer and the snapped-edge highlight
+    /// were actually written. A drag writes the chrome; `draw(_:)` stays at 0.
+    private(set) var selectionChromeWriteCount = 0
+    private(set) var snapHighlightWriteCount = 0
 
     // MARK: - Constants
 
@@ -439,20 +722,37 @@ class SelectionView: NSView {
         installSnapGuide()
     }
 
-    /// Adds the guide layer above everything the snapshot drawing puts on
-    /// screen. It stays hidden until a window is hovered.
+    /// Adds the chrome/guide/highlight layers above the snapshot drawing.
+    ///
+    /// Stacking order, bottom to top: the selection chrome (dim + frame +
+    /// handles + label), the hover highlight (idle only), the window outline
+    /// and finally the snapped-edge highlight. Each stays hidden until its
+    /// state owns it.
     private func installSnapGuide() {
+        selectionChrome.frame = bounds
+        selectionChrome.autoresizingMask = [.width, .height]
+        addSubview(selectionChrome)
         snapGuide.isHidden = true
         hoverHighlight.frame = bounds
         hoverHighlight.autoresizingMask = [.width, .height]
         addSubview(hoverHighlight)
         addSubview(snapGuide)
+        snapHighlight.frame = bounds
+        snapHighlight.autoresizingMask = [.width, .height]
+        addSubview(snapHighlight)
     }
 
-    /// Keeps the highlight layer the same size as the overlay after a resize.
+    /// Keeps the full-overlay layers the same size as the overlay after a
+    /// resize.
     private func layoutHoverHighlight() {
         if hoverHighlight.frame != bounds {
             hoverHighlight.frame = bounds
+        }
+        if selectionChrome.frame != bounds {
+            selectionChrome.frame = bounds
+        }
+        if snapHighlight.frame != bounds {
+            snapHighlight.frame = bounds
         }
     }
 
@@ -469,11 +769,13 @@ class SelectionView: NSView {
         // re-states the guide against the new bounds.
         layoutHoverHighlight()
         refreshSnapGuide()
+        refreshSelectionChrome()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshSnapGuide()
+        refreshSelectionChrome()
     }
 
     var currentSelectionRect: NSRect? { selectionRect }
@@ -511,10 +813,185 @@ class SelectionView: NSView {
         }
     }
 
+    // MARK: - Selection chrome
+
+    /// Positions (or hides) the selection chrome for the current state.
+    ///
+    /// This is the only place the chrome layer is written — never `draw(_:)`.
+    /// It runs in a disabled-actions transaction and paints synchronously with
+    /// `displayIfNeeded()`, so the box follows the pointer in this event and
+    /// the frozen snapshot underneath is never invalidated by a drag.
+    private func refreshSelectionChrome() {
+        let rect: NSRect? = (state == .drawing || state == .selected) ? selectionRect : nil
+        let showsHandles = state == .selected && selectionInteractionEnabled
+        let label = showsHandles ? nil : (state == .selected ? selectionSizeLabelOverride : nil)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        if selectionChrome.place(
+            rect: rect,
+            showsHandles: showsHandles,
+            scrollCapture: scrollCaptureActive,
+            sizeLabel: label
+        ) {
+            selectionChromeWriteCount += 1
+        }
+    }
+
+    /// Writes the snapped-edge highlight: only the selection edges currently
+    /// glued to a window edge, and only while a drag is running.
+    private func refreshDragSnapHighlight() {
+        let segments: [SnapHighlightView.Segment]
+        if state == .drawing,
+           let rect = selectionRect,
+           !dragSnappedEdges.isEmpty,
+           rect.width > 0 || rect.height > 0 {
+            // Deterministic order, so an unchanged snap is zero writes.
+            segments = DragSnapEdge.allCases.compactMap { edge -> SnapHighlightView.Segment? in
+                guard dragSnappedEdges.contains(edge) else { return nil }
+                switch edge {
+                case .left:
+                    return SnapHighlightView.Segment(
+                        start: NSPoint(x: rect.minX, y: rect.minY),
+                        end: NSPoint(x: rect.minX, y: rect.maxY)
+                    )
+                case .right:
+                    return SnapHighlightView.Segment(
+                        start: NSPoint(x: rect.maxX, y: rect.minY),
+                        end: NSPoint(x: rect.maxX, y: rect.maxY)
+                    )
+                case .bottom:
+                    return SnapHighlightView.Segment(
+                        start: NSPoint(x: rect.minX, y: rect.minY),
+                        end: NSPoint(x: rect.maxX, y: rect.minY)
+                    )
+                case .top:
+                    return SnapHighlightView.Segment(
+                        start: NSPoint(x: rect.minX, y: rect.maxY),
+                        end: NSPoint(x: rect.maxX, y: rect.maxY)
+                    )
+                }
+            }
+        } else {
+            segments = []
+        }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        if snapHighlight.place(segments) {
+            snapHighlightWriteCount += 1
+        }
+    }
+
+    // MARK: - Drag snapping
+
+    /// Window rects (this view's coordinates) a dragged edge may snap to: the
+    /// 8Hz cached window list plus the window hovered when the drag started.
+    ///
+    /// Sampling once per drag keeps the scan out of the mouse path: the
+    /// desktop is frozen while capturing, so no window edge moves underneath
+    /// a drag.
+    private func dragSnapCandidatesForCurrentDrag() -> [NSRect] {
+        var rects: [NSRect] = []
+        if let hover = hoverWindowRect {
+            rects.append(hover)
+        }
+        guard let detector = windowDetector,
+              let displayFrame = window?.frame,
+              let primary = NSScreen.screens.first else { return rects }
+        let primaryHeight = primary.frame.height
+        for detected in detector.cachedWindows
+        where detected.isSelectableCaptureTarget && !detected.isProductChrome {
+            let viewRect = Self.viewRect(
+                forCGWindowFrame: detected.frame,
+                displayFrame: displayFrame,
+                primaryHeight: primaryHeight
+            )
+            let clamped = viewRect.intersection(bounds)
+            guard !clamped.isNull, clamped.width > 1, clamped.height > 1 else { continue }
+            rects.append(clamped)
+        }
+        return rects
+    }
+
+    /// Snaps every edge of `rect` that lies strictly closer than
+    /// `dragSnapDistance` to a window edge on the same axis.
+    ///
+    /// Snapping only moves geometry: the committed capture is cropped from the
+    /// pre-capture snapshot with the snapped rect, so the pixels follow the
+    /// edge. An aspect-ratio-locked drag is left alone — gluing one edge there
+    /// would silently break the ratio the user asked for.
+    private func snappedDragRect(_ rect: NSRect) -> (rect: NSRect, edges: Set<DragSnapEdge>) {
+        guard showsDragSnap, aspectRatio == nil, !dragSnapCandidates.isEmpty else {
+            return (rect, [])
+        }
+
+        func nearestEdge(to value: CGFloat, vertical: Bool) -> CGFloat? {
+            var best: CGFloat?
+            var bestDistance = Self.dragSnapDistance
+            for candidate in dragSnapCandidates {
+                let edges = vertical
+                    ? [candidate.minX, candidate.maxX]
+                    : [candidate.minY, candidate.maxY]
+                for edge in edges {
+                    let distance = abs(edge - value)
+                    if distance < bestDistance {
+                        bestDistance = distance
+                        best = edge
+                    }
+                }
+            }
+            return best
+        }
+
+        var minX = rect.minX
+        var maxX = rect.maxX
+        var minY = rect.minY
+        var maxY = rect.maxY
+        var snapped: Set<DragSnapEdge> = []
+        if let target = nearestEdge(to: minX, vertical: true) {
+            minX = target
+            snapped.insert(.left)
+        }
+        if let target = nearestEdge(to: maxX, vertical: true) {
+            maxX = target
+            snapped.insert(.right)
+        }
+        if let target = nearestEdge(to: minY, vertical: false) {
+            minY = target
+            snapped.insert(.bottom)
+        }
+        if let target = nearestEdge(to: maxY, vertical: false) {
+            maxY = target
+            snapped.insert(.top)
+        }
+        // A box thinner than two snap distances can have both of its edges
+        // pulled past each other; keep the raw axis in that case.
+        if minX > maxX {
+            minX = rect.minX
+            maxX = rect.maxX
+            snapped.remove(.left)
+            snapped.remove(.right)
+        }
+        if minY > maxY {
+            minY = rect.minY
+            maxY = rect.maxY
+            snapped.remove(.bottom)
+            snapped.remove(.top)
+        }
+        guard !snapped.isEmpty else { return (rect, []) }
+        return (
+            NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY),
+            snapped
+        )
+    }
+
     func updateSelectionRect(_ rect: NSRect) {
         selectionRect = rect
         state = .selected
-        needsDisplay = true
+        refreshSelectionChrome()
         refreshCursorRects()
     }
 
@@ -529,7 +1006,7 @@ class SelectionView: NSView {
         selectionRect = newRect
         state = .selected
         delegate?.selectionDidChange(rect: newRect, inView: self)
-        needsDisplay = true
+        refreshSelectionChrome()
     }
 
     /// Mirror of `mouseUp`'s `.move` finalize: notify the delegate that the
@@ -554,7 +1031,7 @@ class SelectionView: NSView {
         selectionRect = newRect
         state = .selected
         delegate?.selectionDidChange(rect: newRect, inView: self)
-        needsDisplay = true
+        refreshSelectionChrome()
     }
 
     /// Mirror of `mouseUp`'s `.resize` finalize.
@@ -646,6 +1123,10 @@ class SelectionView: NSView {
         // On a highlighted window: defer confirmation until mouseUp.
         // If the user drags past the threshold, fall through to free-form drawing.
         if state == .idle, let hoverRect = hoverWindowRect {
+            // The hovered window stays a snap candidate even though its
+            // highlight clears while the box is dragged.
+            dragSnapCandidates = dragSnapCandidatesForCurrentDrag()
+            dragSnappedEdges = []
             pendingWindowRect = hoverWindowFullRect ?? hoverRect
             pendingWindowID = hoverWindowID
             hoverWindowRect = nil
@@ -661,7 +1142,7 @@ class SelectionView: NSView {
             state = .drawing
             dragAction = .drawNew
             delegate?.selectionDidStart(reason: .newSelection)
-            needsDisplay = true
+            refreshSelectionChrome()
             return
         }
 
@@ -695,13 +1176,16 @@ class SelectionView: NSView {
             }
         }
 
-        // Start drawing new selection
+        // Start drawing new selection. The snap candidates are sampled once
+        // here: the 8Hz cached window list plus the window under the pointer.
+        dragSnapCandidates = dragSnapCandidatesForCurrentDrag()
+        dragSnappedEdges = []
         selectionOrigin = point
         selectionRect = NSRect(origin: point, size: .zero)
         state = .drawing
         dragAction = .drawNew
         delegate?.selectionDidStart(reason: .newSelection)
-        needsDisplay = true
+        refreshSelectionChrome()
     }
 
     private func shouldSuspendFromMaskDoubleClick(event: NSEvent, point: NSPoint) -> Bool {
@@ -741,13 +1225,20 @@ class SelectionView: NSView {
                 pendingWindowRect = nil
                 pendingWindowID = nil
             }
-            selectionRect = SelectionView.dragRect(
+            // Geometry only: the snapped edges are written into the box and
+            // highlighted on the guide layer. `draw(_:)` is not invalidated,
+            // so the frozen snapshot is not re-blitted while dragging.
+            let dragged = SelectionView.dragRect(
                 from: selectionOrigin,
                 to: point,
                 aspectRatio: aspectRatio,
                 bounds: bounds
             )
-            needsDisplay = true
+            let snapped = snappedDragRect(dragged)
+            selectionRect = snapped.rect
+            dragSnappedEdges = snapped.edges
+            refreshSelectionChrome()
+            refreshDragSnapHighlight()
 
         case .move:
             NSCursor.arrow.set()
@@ -758,7 +1249,7 @@ class SelectionView: NSView {
             newRect = clampedForMove(newRect)
             selectionRect = newRect
             delegate?.selectionDidChange(rect: newRect, inView: self)
-            needsDisplay = true
+            refreshSelectionChrome()
 
         case .resize(let handle):
             SelectionView.setCursorForHandle(handle)
@@ -771,7 +1262,7 @@ class SelectionView: NSView {
             )
             selectionRect = newRect
             delegate?.selectionDidChange(rect: newRect, inView: self)
-            needsDisplay = true
+            refreshSelectionChrome()
 
         case .none:
             break
@@ -796,11 +1287,20 @@ class SelectionView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard selectionInteractionEnabled else {
             dragAction = .none
+            // The editor hand-off can switch interaction off mid-gesture; the
+            // snap highlight still must not outlive this mouse-up.
+            dragSnappedEdges = []
+            dragSnapCandidates = []
+            refreshDragSnapHighlight()
             NSCursor.arrow.set()
             return
         }
         defer {
             dragAction = .none
+            // A snapped-edge highlight never outlives the drag that made it.
+            dragSnappedEdges = []
+            dragSnapCandidates = []
+            refreshDragSnapHighlight()
             refreshCursorRects()
             updateCursor(at: point)
         }
@@ -815,24 +1315,24 @@ class SelectionView: NSView {
                 selectionRect = windowRect
                 state = .selected
                 delegate?.selectionDidComplete(rect: windowRect, inView: self, isWindowSelection: true, windowID: windowID)
-                needsDisplay = true
+                refreshSelectionChrome()
                 return
             }
             guard let rect = selectionRect, rect.width >= 5, rect.height >= 5 else {
                 selectionRect = nil
                 state = .idle
-                needsDisplay = true
+                refreshSelectionChrome()
                 return
             }
             state = .selected
             delegate?.selectionDidComplete(rect: rect, inView: self, isWindowSelection: false, windowID: nil)
-            needsDisplay = true
+            refreshSelectionChrome()
 
         case .move, .resize:
             if let rect = selectionRect {
                 delegate?.selectionDidComplete(rect: rect, inView: self, isWindowSelection: false, windowID: nil)
             }
-            needsDisplay = true
+            refreshSelectionChrome()
 
         case .none:
             break
@@ -1006,7 +1506,10 @@ class SelectionView: NSView {
 
     private func clearHover() {
         guard hoverWindowRect != nil else {
-            // No target: make sure a guide left over from a state change is gone.
+            // Nothing hovered. The only work left is clearing a guide that a
+            // state change left visible; when there is none, return without
+            // opening a CATransaction on every pointer move over blank desktop.
+            guard !snapGuide.isHidden else { return }
             refreshSnapGuide()
             return
         }
@@ -1021,79 +1524,31 @@ class SelectionView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
         defer {
             reportFirstDrawIfNeeded()
             scheduleFirstFramePresentationIfNeeded()
         }
 
-        // Draw pre-captured screen snapshot as background so transient
-        // menus/popups remain visible even after they dismiss.
+        // The frozen desktop is the only thing this view draws now. The
+        // selection chrome (`SelectionChromeView`), the window-hover highlight
+        // (`HoverHighlightView`) and the snap guide/highlight are all layer
+        // subviews, so dragging the box, snapping an edge, crossing a window
+        // or moving inside one never re-blits this snapshot: every one of
+        // those updates is a geometry/path write on a layer.
+        //
         // Skip during scroll capture so live scrolling content shows through.
         if let snapshot = backgroundSnapshot, !scrollCaptureActive {
             snapshot.draw(in: bounds)
-        }
-
-        // The window-hover highlight (dimming cut-out, accent frame, size
-        // label) is not drawn here: it is a layer of its own
-        // (`HoverHighlightView`), so hovering another window never repaints
-        // this snapshot. Keeping it out of `draw(_:)` is what makes a window
-        // crossing cheap.
-
-        // In idle state with no selection, just show the snapshot (already drawn above).
-        // The pointer guides are not drawn here: they live in their own layers.
-        guard let rect = selectionRect, (state == .drawing || state == .selected),
-              rect.width > 0 || rect.height > 0 else {
-            return
-        }
-
-        // Dark overlay with cutout (even-odd fill preserves snapshot underneath).
-        // During scroll capture, enlarge the cutout by 0.5pt so anti-aliasing
-        // at the cutout edge falls outside the captured rect instead of
-        // darkening its first pixel — otherwise every frame's bottom edge
-        // leaves a gray line at each stitch seam.
-        let path = CGMutablePath()
-        path.addRect(bounds)
-        let cutoutRect = scrollCaptureActive ? rect.insetBy(dx: -0.5, dy: -0.5) : rect
-        path.addRect(cutoutRect)
-        context.setFillColor(NSColor.black.withAlphaComponent(dimmingOverlayAlpha).cgColor)
-        context.addPath(path)
-        context.fillPath(using: .evenOdd)
-
-        // Draw border — solid red during scroll capture, solid accent blue otherwise.
-        if scrollCaptureActive {
-            // ScreenCaptureKit sees the overlay panel, so any stroke pixels
-            // inside `rect` bleed into every captured frame and produce thin
-            // red lines at the left/right edges and at each stitch seam.
-            // Inset enough that the stroke (and its anti-aliased fringe) sits
-            // entirely outside the captured rect.
-            let strokeWidth = borderWidth
-            let outerInset = -(strokeWidth / 2 + 1)
-            context.setStrokeColor(NSColor.systemRed.cgColor)
-            context.setLineWidth(strokeWidth)
-            context.stroke(rect.insetBy(dx: outerInset, dy: outerInset))
-        } else {
-            // Frame + handles + size label come from the one shared painter.
-            // The editor's live-selection chrome calls the same function, so a
-            // committed capture selection and the editor's live selection are
-            // drawn by one geometry, never two (no dots, no dashes anywhere).
-            let showsHandles = state == .selected && selectionInteractionEnabled
-            drawSelectionChrome(
-                in: context,
-                rect: rect,
-                showsHandles: showsHandles,
-                sizeLabel: showsHandles ? nil : (state == .selected ? selectionSizeLabelOverride : nil)
-            )
         }
     }
 
     /// The one painter for the selection frame and its resize handles.
     ///
-    /// `draw(_:)` uses it for the capture overlay; the editor's
-    /// `SelectionChromeOverlay` (which sits above the editor canvas so the
-    /// handles stay visible even when beautify expands the frame) calls it too.
-    /// Both phases therefore paint the same chrome — a 1pt solid frame, 20×4pt
-    /// edge bars and 12×2pt corner brackets — instead of each keeping a
+    /// `SelectionChromeView` (the capture overlay's chrome layer) uses it; the
+    /// editor's `SelectionChromeOverlay` (which sits above the editor canvas so
+    /// the handles stay visible even when beautify expands the frame) calls it
+    /// too. Both phases therefore paint the same chrome — a 1pt solid frame,
+    /// 20×4pt edge bars and 12×2pt corner brackets — instead of each keeping a
     /// drawing of its own (the editor used to paint a 2pt dashed frame plus
     /// 8pt dots on top of this one).
     ///

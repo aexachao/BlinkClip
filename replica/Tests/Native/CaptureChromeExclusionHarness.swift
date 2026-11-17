@@ -30,6 +30,11 @@ private struct SnapGuideGeometry {
     /// one guide layer, no self-drawn pointer" property meaningful after the
     /// hover chrome moved out of `draw(_:)`.
     let hoverLayerCount: Int
+    /// The selection chrome (dim + frame + handles + label) and the
+    /// snapped-edge highlight, one layer each — so a drag writes layers
+    /// instead of repainting the snapshot.
+    let chromeLayerCount: Int
+    let highlightLayerCount: Int
 
     private static func typeName(_ view: NSView) -> String {
         String(describing: type(of: view))
@@ -39,6 +44,8 @@ private struct SnapGuideGeometry {
         let subviews = view.subviews
         subviewCount = subviews.count
         hoverLayerCount = subviews.filter { Self.typeName($0) == "HoverHighlightView" }.count
+        chromeLayerCount = subviews.filter { Self.typeName($0) == "SelectionChromeView" }.count
+        highlightLayerCount = subviews.filter { Self.typeName($0) == "SnapHighlightView" }.count
         let guides = subviews.filter { Self.typeName($0) == "SnapGuideView" }
         band = guides.count == 1 ? guides[0] : nil
         layer = band?.layer?.sublayers?.first as? CAShapeLayer
@@ -69,6 +76,50 @@ private final class CountingSelectionView: SelectionView {
         drawCount += 1
         super.draw(dirtyRect)
     }
+}
+
+/// Records the rect a drag commits, so the harness sees the exact geometry the
+/// capture path would crop.
+private final class DragSnapDelegate: NSObject, SelectionViewDelegate {
+    private(set) var completed: [(rect: NSRect, isWindowSelection: Bool)] = []
+    private(set) var changes: [NSRect] = []
+
+    func selectionDidStart(reason: SelectionStartReason) {}
+    func selectionDidHoverWindow(_ window: DetectedWindow?) {}
+    func selectionDidChange(rect: NSRect, inView view: NSView) { changes.append(rect) }
+    func selectionDidComplete(rect: NSRect, inView view: NSView, isWindowSelection: Bool, windowID: CGWindowID?) {
+        completed.append((rect, isWindowSelection))
+    }
+    func selectionMaskDidDoubleClick(inView view: NSView) {}
+    func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
+}
+
+/// Reads the snapped-edge highlight out of the live layer tree.
+private struct SnapHighlightGeometry {
+    let layer: CAShapeLayer?
+    let isHidden: Bool
+    let lineWidth: CGFloat
+    let strokeColor: CGColor?
+    let pathBounds: CGRect?
+    let segmentCount: Int
+
+    init(view: SelectionView) {
+        let highlight = view.subviews.first { String(describing: type(of: $0)) == "SnapHighlightView" }
+        let shape = highlight?.layer?.sublayers?.first as? CAShapeLayer
+        layer = shape
+        isHidden = highlight?.isHidden ?? true
+        lineWidth = shape?.lineWidth ?? 0
+        strokeColor = shape?.strokeColor
+        pathBounds = shape?.path?.boundingBox
+        var moves = 0
+        shape?.path?.applyWithBlock { element in
+            if element.pointee.type == .moveToPoint { moves += 1 }
+        }
+        segmentCount = moves
+    }
+
+    /// True when the shape layer really paints a line.
+    var isVisible: Bool { !isHidden && segmentCount > 0 }
 }
 
 private func rgbaComponents(_ color: CGColor?) -> [CGFloat]? {
@@ -139,6 +190,32 @@ private struct HoverFixture {
         )
     }
 
+    /// Drives the production mouse path with a real `NSEvent` — no test-only
+    /// hook: `mouseDown` / `mouseDragged` / `mouseUp` are the shipping code.
+    /// `point` is in this view's coordinates (the fixture's content view fills
+    /// the window, so window and view coordinates are the same).
+    @discardableResult
+    func mouse(_ type: NSEvent.EventType, at point: NSPoint) -> Bool {
+        guard let event = NSEvent.mouseEvent(
+            with: type,
+            location: point,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ) else { return false }
+        switch type {
+        case .leftMouseDown: view.mouseDown(with: event)
+        case .leftMouseDragged: view.mouseDragged(with: event)
+        case .leftMouseUp: view.mouseUp(with: event)
+        default: return false
+        }
+        return true
+    }
+
     /// Independent front-to-back scan (not the detector) for expected targets.
     func expectedTarget(_ cgPoint: CGPoint) -> CGWindowID? {
         windows.first { $0.1.contains(cgPoint) }?.0
@@ -179,6 +256,46 @@ private func solidBackground(size: NSSize, gray: CGFloat) -> NSImage? {
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     guard let image = context.makeImage() else { return nil }
     return NSImage(cgImage: image, size: size)
+}
+
+/// A synthetic full-display snapshot whose red channel encodes the pixel
+/// column, so a crop can be checked back to the coordinates it came from.
+private func gradientSnapshot(width: Int, height: Int) -> CGImage? {
+    guard width > 0, height > 0,
+          let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ),
+          let data = context.data else { return nil }
+    let bytes = data.assumingMemoryBound(to: UInt8.self)
+    for y in 0..<height {
+        for x in 0..<width {
+            let index = (y * width + x) * 4
+            bytes[index] = UInt8(x * 255 / max(width - 1, 1))
+            bytes[index + 1] = UInt8(y * 255 / max(height - 1, 1))
+            bytes[index + 2] = 0
+            bytes[index + 3] = 255
+        }
+    }
+    return context.makeImage()
+}
+
+/// The top-left pixel of a `CGImage` as (red, green).
+private func firstPixel(of image: CGImage) -> (Int, Int)? {
+    guard let topLeft = image.cropping(to: CGRect(x: 0, y: 0, width: 1, height: 1)) else { return nil }
+    var bytes = [UInt8](repeating: 0, count: 4)
+    let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(
+            data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        context.draw(topLeft, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return true
+    }
+    guard drawn else { return nil }
+    return (Int(bytes[0]), Int(bytes[1]))
 }
 
 /// Strict accent blue (`#007AFF` fill) and the label's white glyph pixels.
@@ -408,8 +525,12 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
         let snapView = primaryFixture.view
 
         let initialSnap = SnapGuideGeometry(view: snapView)
-        check(initialSnap.subviewCount == 2 && initialSnap.hoverLayerCount == 1,
-              "the overlay installs exactly one guide layer, one hover-highlight layer and no self-drawn pointer")
+        check(initialSnap.subviewCount == 4
+              && initialSnap.hoverLayerCount == 1
+              && initialSnap.chromeLayerCount == 1
+              && initialSnap.highlightLayerCount == 1,
+              "the overlay installs exactly one chrome layer, one guide layer, one hover-highlight layer, "
+              + "one snap-highlight layer and no self-drawn pointer")
         check(initialSnap.isHidden, "no guide before the pointer is over a window")
 
         // A point inside A resolves to A's four edges in this view's coordinates.
@@ -714,6 +835,203 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
         check(!SnapGuideGeometry(view: snapView).isHidden, "resuming the overlay shows the guide again")
         snapView.updateSelectionRect(NSRect(x: 100, y: 100, width: 200, height: 160))
         check(SnapGuideGeometry(view: snapView).isHidden, "an established selection shows no guide")
+
+
+        // --- SNAP2: dragging snaps a selection edge to a window edge --------
+        // A dragged edge glues to the nearest *same-axis* window edge closer
+        // than 8pt, the glued edge is highlighted while it holds, the
+        // highlight clears on mouse-up — and none of it repaints the frozen
+        // snapshot: a drag writes the chrome layer and the highlight path
+        // only, so `draw(_:)` stays at zero.
+        let dragWindowCG = CGRect(x: 100, y: 100, width: 400, height: 300)
+        let dragWindow = primaryFixture.localRect(cgFrame: dragWindowCG)
+
+        func dragFixture(_ id: CGWindowID) -> HoverFixture {
+            HoverFixture(displayFrame: primaryFrame, windows: [(id, dragWindowCG, false)])
+        }
+
+        let snappedFixture = dragFixture(7301)
+        let snappedView = snappedFixture.view
+        let snappedDelegate = DragSnapDelegate()
+        snappedView.delegate = snappedDelegate
+        let start = NSPoint(x: dragWindow.minX + 60, y: dragWindow.minY + 60)
+
+        // One real draw establishes the baseline; nothing below may extend it.
+        snappedView.display()
+        snappedView.needsDisplay = false
+        let drawsBeforeDrag = snappedView.drawCount
+        let chromeWritesBeforeDrag = snappedView.selectionChromeWriteCount
+        let highlightWritesBeforeDrag = snappedView.snapHighlightWriteCount
+
+        // 3pt from the window's right edge → that edge snaps onto it.
+        snappedFixture.mouse(.leftMouseDown, at: start)
+        snappedFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        let snappedRect = snappedView.currentSelectionRect
+        check(snappedRect?.maxX == dragWindow.maxX,
+              "a dragged edge 3pt from a window edge snaps exactly onto it "
+              + "(got \(String(describing: snappedRect?.maxX)), expected \(dragWindow.maxX))")
+        check(abs((snappedRect?.width ?? 0) - (dragWindow.maxX - start.x)) < 0.0001,
+              "only the dragged edge moves: the width ends exactly on the window edge")
+        let edgeHighlight = SnapHighlightGeometry(view: snappedView)
+        check(edgeHighlight.isVisible, "the snapped edge is highlighted while the drag holds it")
+        check(edgeHighlight.segmentCount == 1,
+              "the highlight draws exactly one edge (got \(edgeHighlight.segmentCount))")
+        check(abs(edgeHighlight.lineWidth - 2) < 0.001, "the highlight is 2pt")
+        if let highlightBounds = edgeHighlight.pathBounds {
+            check(abs(highlightBounds.minX - dragWindow.maxX) < 0.01
+                  && abs(highlightBounds.maxX - dragWindow.maxX) < 0.01,
+                  "the highlight sits on the snapped edge (got \(highlightBounds))")
+            check(abs(highlightBounds.minY - (start.y)) < 0.01
+                  && abs(highlightBounds.maxY - (start.y + 140)) < 0.01,
+                  "the highlight spans the snapped selection edge (got \(highlightBounds))")
+        } else {
+            check(false, "the snapped edge has a drawn highlight path")
+        }
+        check(edgeHighlight.strokeColor != nil, "the highlight has a stroke colour")
+
+        // Repeating the identical drag point is zero work (geometry unchanged).
+        let highlightWritesAfterSnap = snappedView.snapHighlightWriteCount
+        snappedFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        check(snappedView.snapHighlightWriteCount == highlightWritesAfterSnap,
+              "repeating the same snapped drag point writes the highlight 0 times")
+
+        // A full circle that keeps crossing the 8pt zone: layers only.
+        for step in 0..<120 {
+            let angle = Double(step) / 120.0 * 2.0 * Double.pi
+            snappedFixture.mouse(.leftMouseDragged, at: NSPoint(
+                x: dragWindow.maxX + 3 * cos(angle),
+                y: start.y + 140 + 2 * sin(angle)
+            ))
+        }
+        let drawsDuringDrag = snappedView.drawCount - drawsBeforeDrag
+        let chromeWritesDuringDrag = snappedView.selectionChromeWriteCount - chromeWritesBeforeDrag
+        let highlightWritesDuringDrag = snappedView.snapHighlightWriteCount - highlightWritesBeforeDrag
+        let repaintScheduled = snappedView.needsDisplay
+        check(drawsDuringDrag == 0,
+              "120 drag samples call draw(_:) 0 times (got \(drawsDuringDrag))")
+        check(!repaintScheduled, "120 drag samples schedule no snapshot repaint")
+        check(chromeWritesDuringDrag > 0,
+              "a drag writes the chrome layer instead of the snapshot")
+        check(highlightWritesDuringDrag > 0,
+              "a snapping drag writes the highlight path")
+
+        // Mouse-up clears the highlight and keeps the snapped geometry.
+        snappedFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        check(SnapHighlightGeometry(view: snappedView).isHidden,
+              "the snapped-edge highlight clears on mouse-up")
+        let committed = snappedDelegate.completed.last?.rect
+        check(committed?.maxX == dragWindow.maxX,
+              "the committed capture rect keeps the snapped edge "
+              + "(got \(String(describing: committed?.maxX)))")
+        check(committed.map { abs($0.width - (dragWindow.maxX - start.x)) < 0.0001 } == true,
+              "the committed width matches the snapped geometry")
+
+        // Threshold: 7.5pt snaps, 8pt (and 10pt) does not — strictly `< 8`.
+        let thresholds: [(index: CGWindowID, distance: CGFloat, snaps: Bool)] = [
+            (0, 7.5, true), (1, 8, false), (2, 10, false),
+        ]
+        var thresholdEdges: [String] = []
+        for (index, distance, expectedSnap) in thresholds {
+            let probeFixture = dragFixture(7400 + index)
+            let probeView = probeFixture.view
+            probeFixture.mouse(.leftMouseDown, at: start)
+            probeFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + distance, y: start.y + 140))
+            let rightEdge = probeView.currentSelectionRect?.maxX
+            let expected = expectedSnap ? dragWindow.maxX : dragWindow.maxX + distance
+            check(rightEdge == expected,
+                  "\(distance)pt from the window edge: "
+                  + (expectedSnap ? "snaps onto it" : "does not snap")
+                  + " (got \(String(describing: rightEdge)), expected \(expected))")
+            check(SnapHighlightGeometry(view: probeView).isHidden == !expectedSnap,
+                  "\(distance)pt from the window edge: highlight \(expectedSnap ? "shown" : "hidden")")
+            thresholdEdges.append("\(distance)pt.maxX=\(rightEdge.map(String.init(describing:)) ?? "nil")")
+            probeFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + distance, y: start.y + 140))
+        }
+
+        // The one switch: off keeps the raw pointer geometry, no highlight.
+        let offFixture = dragFixture(7601)
+        offFixture.view.showsDragSnap = false
+        offFixture.mouse(.leftMouseDown, at: start)
+        offFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        check(offFixture.view.currentSelectionRect?.maxX == dragWindow.maxX + 3,
+              "showsDragSnap = false keeps the raw pointer geometry")
+        check(SnapHighlightGeometry(view: offFixture.view).isHidden,
+              "showsDragSnap = false shows no highlight")
+        offFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+
+        // Same axis only: a horizontal window edge never grabs a vertical
+        // selection edge. The top edge of the box sits 3pt above the window's
+        // bottom edge's *x* — different axis, no snap.
+        let axisFixture = dragFixture(7501)
+        let axisView = axisFixture.view
+        axisFixture.mouse(.leftMouseDown, at: start)
+        axisFixture.mouse(.leftMouseDragged, at: NSPoint(
+            x: dragWindow.maxX + 40,          // 40pt away from any vertical edge
+            y: dragWindow.maxY + 3            // 3pt above the window's top edge
+        ))
+        let axisRect = axisView.currentSelectionRect
+        check(axisRect?.maxX == dragWindow.maxX + 40,
+              "a vertical selection edge does not snap to a horizontal window edge "
+              + "(got \(String(describing: axisRect?.maxX)))")
+        check(axisRect?.maxY == dragWindow.maxY,
+              "a horizontal selection edge 3pt from a window edge snaps onto it "
+              + "(got \(String(describing: axisRect?.maxY)), expected \(dragWindow.maxY))")
+        let axisHighlight = SnapHighlightGeometry(view: axisView)
+        check(axisHighlight.segmentCount == 1 && axisHighlight.isVisible,
+              "only the snapped horizontal edge is highlighted (got \(axisHighlight.segmentCount) segments)")
+        axisFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 40, y: dragWindow.maxY + 3))
+
+        // The snapped geometry is what gets cropped: run the committed rect
+        // through the production crop on a synthetic full-display snapshot and
+        // read the pixel back.
+        var cropEvidence = "crop=not-measured"
+        if let screen = NSScreen.main ?? NSScreen.screens.first,
+           let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+           let committed {
+            let displayBounds = CGDisplayBounds(displayID)
+            let pixelWidth = Int(displayBounds.width.rounded())
+            let pixelHeight = Int(displayBounds.height.rounded())
+            let captureRect = CGRect(
+                x: committed.minX + primaryFrame.minX,
+                y: primaryHeight - primaryFrame.minY - committed.maxY,
+                width: committed.width,
+                height: committed.height
+            )
+            if let snapshot = gradientSnapshot(width: pixelWidth, height: pixelHeight),
+               let cropped = ScreenCapturer.crop(from: snapshot, captureRect: captureRect, screen: screen) {
+                var proposed = NSRect(origin: .zero, size: cropped.size)
+                if let cg = cropped.cgImage(forProposedRect: &proposed, context: nil, hints: nil),
+                   let first = firstPixel(of: cg) {
+                    let scaleX = displayBounds.width > 0 ? CGFloat(pixelWidth) / displayBounds.width : 1
+                    let expectedX = Int(((captureRect.minX - displayBounds.minX) * scaleX).rounded())
+                    let expectedRed = expectedX * 255 / max(pixelWidth - 1, 1)
+                    check(abs(first.0 - expectedRed) <= 2,
+                          "the capture crop starts on the snapped edge "
+                          + "(red \(first.0), expected \(expectedRed) for x=\(expectedX))")
+                    check(abs(cropped.size.width - committed.width) < 0.01
+                          && abs(cropped.size.height - committed.height) < 0.01,
+                          "the capture crop is exactly the snapped selection size "
+                          + "(got \(cropped.size), expected \(committed.size))")
+                    cropEvidence = "cropSize=\(cropped.size) cropFirstRed=\(first.0) "
+                        + "expectedRed=\(expectedRed) cropX=\(expectedX)" 
+                } else {
+                    check(false, "the capture crop can be read back as pixels")
+                }
+            } else {
+                check(false, "the synthetic desktop snapshot can be cropped")
+            }
+        }
+
+        print("SNAP2-DRAG windowRight=\(dragWindow.maxX) startX=\(start.x) "
+              + "snappedMaxX=\(snappedRect?.maxX ?? .nan) "
+              + "committedMaxX=\(committed?.maxX ?? .nan) "
+              + "\(thresholdEdges.joined(separator: " ")) "
+              + "draws=\(drawsDuringDrag) repaintScheduled=\(repaintScheduled) "
+              + "chromeWrites=\(chromeWritesDuringDrag) highlightWrites=\(highlightWritesDuringDrag) "
+              + "highlightSegments=\(edgeHighlight.segmentCount) "
+              + "highlightWidth=\(edgeHighlight.lineWidth) "
+              + "axisMaxX=\(axisRect?.maxX ?? .nan) axisMaxY=\(axisRect?.maxY ?? .nan) "
+              + cropEvidence)
 
         reportSnapSweep(rows: csvRows, measuredRate: measuredRate,
                         primaryHeight: primaryHeight, displayFrame: primaryFrame)

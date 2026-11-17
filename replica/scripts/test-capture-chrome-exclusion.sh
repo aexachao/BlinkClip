@@ -135,9 +135,21 @@ selection_code = code(selection)
 overlay_code = code(overlay)
 detector_code = code(detector)
 band = body(selection_code, 'private final class SnapGuideView: NSView', 'class SelectionView: NSView')
-refresh = body(selection_code, 'private func refreshSnapGuide()', 'func updateSelectionRect')
+# 只取 refreshSnapGuide 本身：它后面紧跟的是选区 chrome / 拖拽吸附的刷新函数，
+# 那些函数本来就要写图层（`needsDisplay` 只在图层视图里）。
+refresh = body(selection_code, 'private func refreshSnapGuide()', 'private func refreshSelectionChrome()')
 update_hover = body(selection_code, 'func updateHover(screenPoint: NSPoint)', 'private func clearHover')
 cursor_rects = body(selection_code, 'override func resetCursorRects()', 'func refreshCursorRects')
+clear_hover = body(selection_code, 'private func clearHover()', 'override func draw(_ dirtyRect: NSRect) {')
+# `SelectionView.draw(_:)` 只画快照——选区外观在子图层里。
+selection_draw = body(selection_code,
+                      '    override func draw(_ dirtyRect: NSRect) {\n        defer {',
+                      '    func drawSelectionChrome(')
+drag_new = body(selection_code, '        case .drawNew:', '        case .move:')
+mouse_up = body(selection_code, 'override func mouseUp(with event: NSEvent)', 'override func mouseMoved(with event: NSEvent)')
+chrome_view = body(selection_code, 'private final class SelectionChromeView: NSView', 'private final class SnapHighlightView: NSView')
+highlight_view = body(selection_code, 'private final class SnapHighlightView: NSView', 'class SelectionView: NSView')
+snap_helpers = body(selection_code, 'private func dragSnapCandidatesForCurrentDrag()', 'func updateSelectionRect')
 
 # 全仓库的 Swift 源（生产代码 + 测试工具），不是只有覆盖层。
 swift_sources = {p: p.read_text() for p in root.rglob('*.swift')}
@@ -286,6 +298,105 @@ checks = {
         '0 次重绘',
         '跨屏不串位',
         '选框本体保持',
+    )),
+
+    # SNAP2-1：拖拽期吸附。四条边各自找最近的**同轴**窗口边，候选来自 8Hz
+    # 缓存列表 + 拖拽起点处的 hover 窗口；距离严格 < 8pt 才吸，吸完改几何。
+    'drag-snap-is-same-axis-nearest-edge': all(fragment in snap_helpers for fragment in (
+        'detector.cachedWindows',
+        'where detected.isSelectableCaptureTarget && !detected.isProductChrome',
+        'if let hover = hoverWindowRect',
+        'candidate.minX, candidate.maxX',
+        'candidate.minY, candidate.maxY',
+        'let distance = abs(edge - value)',
+        'if distance < bestDistance',
+        'minX = target',
+        'maxX = target',
+        'minY = target',
+        'maxY = target',
+    )) and 'static let dragSnapDistance: CGFloat = 8' in selection_code
+        and 'guard showsDragSnap, aspectRatio == nil, !dragSnapCandidates.isEmpty' in snap_helpers
+        and 'dragSnapCandidates = dragSnapCandidatesForCurrentDrag()' in selection_code,
+
+    # SNAP2-1：只改几何 + 写图层。拖拽分支里没有任何 needsDisplay；高亮是独立
+    # 图层（2pt / 100%），松手清空高亮。
+    'drag-snap-writes-layers-not-snapshot': all(fragment in drag_new for fragment in (
+        'let snapped = snappedDragRect(dragged)',
+        'selectionRect = snapped.rect',
+        'refreshSelectionChrome()',
+        'refreshDragSnapHighlight()',
+    )) and 'needsDisplay' not in drag_new
+        and 'drawSelectionChrome(' not in drag_new
+        and 'dragSnappedEdges = []' in mouse_up
+        and 'refreshDragSnapHighlight()' in mouse_up,
+
+    # SNAP2-1：高亮只有被吸附的那条边，样式常量只有一个来源。
+    'drag-snap-highlight-is-its-own-layer': all(fragment in highlight_view for fragment in (
+        'private let lineLayer = CAShapeLayer()',
+        'static let lineWidth: CGFloat = 2',
+        'static let alpha: CGFloat = 1.0',
+        'lineLayer.lineDashPattern = nil',
+        'func place(_ segments: [Segment]) -> Bool',
+        'guard segments != placedSegments else { return wrote }',
+        'lineLayer.setNeedsDisplay()',
+        'lineLayer.displayIfNeeded()',
+    )) and 'snapHighlight.place(segments)' in selection_code
+        and 'let segments: [SnapHighlightView.Segment]' in selection_code
+        and 'DragSnapEdge.allCases.compactMap' in selection_code,
+
+    # SNAP2-2：选区外观（暗化挖孔 + 1pt 框 + 手柄 + 标签 + 滚动红框）在子图层，
+    # `draw(_:)` 只画快照。这是「拖拽期 0 次重绘」的结构性保证。
+    'selection-chrome-is-a-layer': all(fragment in selection_code for fragment in (
+        'private final class SelectionChromeView: NSView',
+        'private lazy var selectionChrome = SelectionChromeView(',
+        'private func refreshSelectionChrome()',
+        'selectionView?.drawSelectionChrome(',
+        'selectionChrome.place(',
+    )) and 'private var placedRect: NSRect = .null' in chrome_view
+        and 'displayIfNeeded()' in chrome_view
+        and 'withAlphaComponent(dimmingOverlayAlpha)' not in selection_code
+        and 'drawSelectionChrome(' not in selection_draw
+        and 'NSColor.black' not in selection_draw
+        and 'snapshot.draw(in: bounds)' in selection_draw
+        and 'needsDisplay = true' not in selection_draw,
+
+    # SNAP2-3：`clearHover()` 在没有 hover 目标时先看 guide 是否可见，隐藏时不开事务。
+    'clear-hover-short-circuits': 'guard !snapGuide.isHidden else { return }' in clear_hover
+        and clear_hover.index('guard !snapGuide.isHidden') < clear_hover.index('refreshSnapGuide()'),
+
+    # SNAP2-4：覆盖层 `.stationary`，切 Space 时留在原位。
+    'overlay-stays-put-across-spaces': '[.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]' in overlay_code,
+
+    # SNAP2-5：开关默认开。设置页「框选辅助」卡片在出货 648×600 窗口里没有
+    # 空余高度（`SettingsArchitectureHarness` 要求每张卡都能在视口内从卡顶量到
+    # 卡底），故本次不加设置行；`showsDragSnap` 是唯一开关，默认 true。
+    'drag-snap-defaults-on': 'var showsDragSnap = true' in selection_code
+        and 'showsDragSnap' in snap_helpers,
+
+    # SNAP2-6：harness 实测——3pt 吸附、7.5/8/10pt 门限、同轴、高亮出现/松手清除、
+    # 拖拽期 0 次 `draw(_:)`、成图裁剪与吸附位置一致。
+    'harness-proves-drag-snap': all(fragment in harness for fragment in (
+        'a dragged edge 3pt from a window edge snaps exactly onto it',
+        'the snapped edge is highlighted while the drag holds it',
+        'the snapped-edge highlight clears on mouse-up',
+        '120 drag samples call draw(_:) 0 times',
+        'pt from the window edge: ',
+        '(expectedSnap ? "snaps onto it" : "does not snap")',
+        '(0, 7.5, true), (1, 8, false), (2, 10, false),',
+        'a vertical selection edge does not snap to a horizontal window edge',
+        'the capture crop starts on the snapped edge',
+        'NSEvent.mouseEvent(',
+    )),
+
+    # SNAP2-7：文档写明拖拽吸附口径，并写清为什么这次没有设置开关。
+    'design-doc-drag-snap': all(fragment in design for fragment in (
+        '拖拽吸附',
+        '同轴窗口边',
+        '< 8pt',
+        '松手（`mouseUp`）清除高亮',
+        '拖拽期不重绘快照',
+        '.stationary',
+        'showsDragSnap',
     )),
 }
 (out / 'cur-cursor-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')

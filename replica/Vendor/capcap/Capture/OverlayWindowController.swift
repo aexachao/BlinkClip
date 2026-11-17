@@ -784,7 +784,11 @@ class OverlayWindowController {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.ignoresMouseEvents = false
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            // `.stationary`: the overlay must stay pinned to its display while
+            // the user switches Spaces — otherwise the frozen snapshot slides
+            // with the Space transition and the crosshair lands on the wrong
+            // pixels.
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             window.sharingType = OverlayPanelPool.overlaySharingType
             window.acceptsMouseMovedEvents = true
             window.animationBehavior = .none
@@ -798,6 +802,10 @@ class OverlayWindowController {
             // Nothing is broadcast across screens, so a guide can never land on
             // the wrong monitor or inherit a neighbour's Y coordinate.
             selectionView.showsGuideCenterLines = BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled
+            // Drag snapping stays on by default: `SelectionView.showsDragSnap`
+            // is the one switch, and the screenshot pane has no free height in
+            // the shipping 648×600 window for another row, so it has no
+            // preferences UI yet (see `evidence/patches/snap2-report.md`).
             selectionView.aspectRatio = usesAspectRatioSelection ? Self.persistedSelectionAspectRatio : nil
             selectionView.onFirstDrawCompleted = { [weak self] in
                 self?.recordFirstDraw(generation: generation)
