@@ -1,5 +1,31 @@
 # 更新日志
 
+## 1.0.33 · 2026-11-17（GitHub Releases）
+
+新增**官方网站** <https://aexachao.github.io/BlinkClip/>：设置页侧栏的「帮助与指南」与「关于闪贴」的链接行不再指向仓库 README，改指官网；关于页链接行由三条变**四条**——**官方网站 → 更新日志 → AGPL-3.0 许可证 → 源代码**，顺序即此，三语（简中 / 繁中 / 英文）文案齐备，繁中不再回落英文。CloudKit、签名与更新通道均无变更。
+
+### 界面
+
+- **关于页链接行：三条 → 四条，顺序固定。** 新增 `aboutWebsiteURL = https://aexachao.github.io/BlinkClip/`，排第一；更新日志仍指 `releases`，许可证仍指 `blob/main/LICENSE`，末位「源代码」指仓库根（原「GitHub 项目」改名，Core 资源键 `updates.link-project` → `updates.link-source`，值「源代码 / Source Code」）。四条同一行、同一 midY，`website.maxX < releases.minX < license.minX < project.minX`，页脚仍与页面底部内缩对齐；AX 树新增 `about-website-link`。
+
+- **设置页侧栏「帮助与指南」改指官网。** 目标由仓库 README 锚点换成与关于页「官方网站」完全相同的 URL——帮助入口只有一处去向，不再从设置页直接跳仓库文档。
+
+- **三语齐备，繁中不回落英文。** 四条链接文案收进 `SettingsCopy` 三语表，繁中定点断言 4 条；本地化键 **91 → 95**（设置 52 → 56，即 56 设置 + 34 截图 + 5 toast）。
+
+### 官网
+
+- **官网已上线：<https://aexachao.github.io/BlinkClip/>（GitHub Pages）。** 支持**中英双语切换**，包含功能、快捷键、权限说明、隐私、FAQ 与下载；站点代码在仓库 `website/`。
+
+### 测试
+
+- **`test-settings-localization.sh`：95 键**，三语每语言 134 checks 全过 + Production wiring 7 + Copy-table structure 9 + Copy call sites 86 三语三元组；繁中设置 56 词条中 12 条简体写法全部缺席、截图 33/34 与简中不同、0 条简体残留。
+
+- **`test-settings-architecture.sh`：714（en）/ 715（zh-Hans）/ 787（zh-Hant）断言 + 63 条源码契约。** 比 1.0.31 的 713 / 714 / 786 各多 **1** 条，来源是 About 页面 AX 树新增的 `about-website-link`（逐语言一项）；页脚断言同时由「三链接同排」改为「四链接同排 + 官网第一 + 源代码最后」。
+
+- **`test-app-updates.sh --offline --render`**：`passed: true`（版本比较、appcast 解析、限流重试、并发检查、关于页与关于页布局全过），10 张关于页渲染；`--offline` 显式跳过线上探针并打印 skipped。
+
+- **回归**：`python3 -m unittest discover -s scripts/tests` → 16 tests OK；`blinkclip-core-tests` **29 / 0 / 0**。
+
 ## 1.0.32 · 2026-11-17（GitHub Releases）
 
 截图编辑器下方的浮动工具栏按 **macOS 标准工具栏尺寸**收紧：图标 **18pt → 16pt**、按钮行高 **40pt → 36pt**、工具条 **52pt → 46pt**，圆角与下拉菜单行高同步调整，按钮命中区仍是 **36×36pt**。只改几何：工具集合、顺序、图标字形、快捷键与全部行为一律不变；CloudKit、签名与更新通道均无变更。
