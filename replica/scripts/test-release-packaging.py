@@ -37,6 +37,11 @@ class UniversalReleaseTests(unittest.TestCase):
         isolated = patch.dict(os.environ, environment, clear=True)
         isolated.start()
         self.addCleanup(isolated.stop)
+        # 这里的 fixture 是从未签名的目录树，没有描述文件也没有 CloudKit 授权；发布路径的
+        # CloudKit 闸门由 scripts/tests/test_cloudkit_signing.py 单独覆盖。
+        cloudkit = patch.object(release, "verify_cloudkit")
+        cloudkit.start()
+        self.addCleanup(cloudkit.stop)
 
     def test_canonical_environment_wins_with_legacy_fallback(self):
         with tempfile.TemporaryDirectory() as directory:

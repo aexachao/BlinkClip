@@ -1,5 +1,50 @@
 #!/bin/bash
 set -euo pipefail
+# 正式发布路径 fail-closed：没有 CloudKit 三变量的构建会在编译前就退出，
+# 不允许再出现「漏设变量 → 无 iCloud 授权的包一路走到 DMG」这种事。
+cloudkit_missing=""
+for required in BLINKCLIP_CLOUDKIT_PROFILE BLINKCLIP_CLOUDKIT_CONTAINER BLINKCLIP_CLOUDKIT_ENVIRONMENT; do
+  if [[ -z "${!required:-}" ]]; then
+    cloudkit_missing="${cloudkit_missing:+$cloudkit_missing }$required"
+  fi
+done
+if [[ -n "$cloudkit_missing" ]]; then
+  printf 'CloudKit 发布配置缺失：%s\n\n' "$cloudkit_missing" >&2
+  cat >&2 <<'MESSAGE'
+正式发布必须携带 CloudKit 授权，缺少上面这些变量时不进入编译。三个变量都要设置：
+
+  BLINKCLIP_CLOUDKIT_PROFILE        BlinkClip 自有 Developer ID 描述文件路径（.provisionprofile）
+  BLINKCLIP_CLOUDKIT_CONTAINER      iCloud 容器标识，正式值为 iCloud.com.chrisli.blinkclip
+  BLINKCLIP_CLOUDKIT_ENVIRONMENT    CloudKit 环境，只能取 Development 或 Production
+
+示例（正式发布用 Production，描述文件路径换成自己本机的）：
+
+  BLINKCLIP_CLOUDKIT_PROFILE="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/<UUID>.provisionprofile" \
+  BLINKCLIP_CLOUDKIT_CONTAINER='iCloud.com.chrisli.blinkclip' \
+  BLINKCLIP_CLOUDKIT_ENVIRONMENT='Production' \
+  BLINKCLIP_SIGNING_IDENTITY='Developer ID Application: <名字> (<团队 ID>)' \
+  BLINKCLIP_NOTARY_PROFILE='BlinkClip-notary' \
+  ~/dev-artifacts/bin/storage-guard run --repo BlinkClip --task notarized-release \
+    --kind release --release-id com.chrisli.blinkclip@<版本>+<构建号> -- \
+    bash replica/scripts/build-notarized.sh
+
+变量来源与描述文件申请见 docs/CLOUDKIT_SETUP.md。
+MESSAGE
+  exit 2
+fi
+if [[ ! -f "$BLINKCLIP_CLOUDKIT_PROFILE" || ! -r "$BLINKCLIP_CLOUDKIT_PROFILE" ]]; then
+  printf 'BLINKCLIP_CLOUDKIT_PROFILE 指向的描述文件不存在或不可读：%s\n' \
+    "$BLINKCLIP_CLOUDKIT_PROFILE" >&2
+  exit 2
+fi
+case "$BLINKCLIP_CLOUDKIT_ENVIRONMENT" in
+  Development|Production) ;;
+  *)
+    printf 'BLINKCLIP_CLOUDKIT_ENVIRONMENT 只能是 Development 或 Production，实际：%s\n' \
+      "$BLINKCLIP_CLOUDKIT_ENVIRONMENT" >&2
+    exit 2
+    ;;
+esac
 : "${ARTIFACT_TASK_DIR:?请通过 storage-guard run --kind release 启动}"
 : "${BLINKCLIP_SIGNING_IDENTITY:?需要 Developer ID Application 签名身份}"
 : "${BLINKCLIP_NOTARY_PROFILE:?需要 notarytool 钥匙串 profile 名称}"
@@ -29,6 +74,12 @@ bash replica/scripts/build-app.sh release universal
 # 打包前最后一道：产物必须由当前源码构建。任一不符（指纹、可执行文件 sha256、
 # 时间顺序）都会在这里中止，而不是等用户看到「版本号是新的、界面是旧的」。
 python3 replica/scripts/source-fingerprint.py verify --app "$ARTIFACT_TASK_DIR/out/BlinkClip.app"
+# 公证前再确认一次 CloudKit 授权真的进了产物（描述文件 + 三个 CloudKit 键 + 无调试授权）。
+# 编译成功但授权缺失的包在这里中止，不会被公证成「看起来可发布」的成品。
+python3 replica/scripts/release-ci.py verify-cloudkit \
+  --app "$ARTIFACT_TASK_DIR/out/BlinkClip.app" \
+  --container "$BLINKCLIP_CLOUDKIT_CONTAINER" \
+  --environment "$BLINKCLIP_CLOUDKIT_ENVIRONMENT"
 python3 replica/scripts/notarize-distribution.py
 # 把这次发布的源码指纹写进签名清单：事后仅凭 DMG 与清单就能核对它由哪份源码构建，
 # 不必再猜「09:16 的包到底是不是 09:05 的源码」。

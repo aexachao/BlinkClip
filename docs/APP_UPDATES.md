@@ -32,15 +32,22 @@ xcrun notarytool store-credentials BlinkClip-notary \
   --apple-id '<Apple 开发者账号>' --team-id 4NJM425J3B
 ```
 
-按提示输入 Apple 账号的 App 专用密码。已配置其他 profile 时，直接使用其名称。正式构建通过 storage-guard 启动：
+按提示输入 Apple 账号的 App 专用密码。已配置其他 profile 时，直接使用其名称。正式构建通过 storage-guard 启动，**必须同时给出 CloudKit 三变量**：
 
 ```bash
 BLINKCLIP_SIGNING_IDENTITY='Developer ID Application: Chao Li (4NJM425J3B)' \
 BLINKCLIP_NOTARY_PROFILE='BlinkClip-notary' \
+BLINKCLIP_CLOUDKIT_PROFILE="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/<UUID>.provisionprofile" \
+BLINKCLIP_CLOUDKIT_CONTAINER='iCloud.com.chrisli.blinkclip' \
+BLINKCLIP_CLOUDKIT_ENVIRONMENT='Production' \
 ~/dev-artifacts/bin/storage-guard run --repo BlinkClip --task notarized-release \
   --kind release --release-id com.chrisli.blinkclip@1.0.10+1.0.10 -- \
   bash replica/scripts/build-notarized.sh
 ```
+
+**发布必须设置 CloudKit 三变量**（`BLINKCLIP_CLOUDKIT_PROFILE` / `_CONTAINER` / `_ENVIRONMENT`），缺失会在编译前失败：脚本第一步就检查这三个变量，缺任意一个即打印缺失项与示例命令并 `exit 2`，不进入编译、不产生任何产物；描述文件不存在或不可读、环境不是 `Development`/`Production` 同样立即退出（`exit 2`）。这样不会再出现「漏设变量 → 无 CloudKit 授权的包一路走到 DMG」的情况。
+
+**公证前会校验 profile 与 entitlements**：`build-app.sh` 成功后、提交公证前，脚本运行 `python3 replica/scripts/release-ci.py verify-cloudkit --app <产物> --container <容器> --environment <环境>`，断言 `Contents/embedded.provisionprofile` 存在且非空、`codesign -d --entitlements -` 中的 `com.apple.developer.icloud-services` 含 `CloudKit`、`com.apple.developer.icloud-container-identifiers` 含 `iCloud.com.chrisli.blinkclip`（或 `BLINKCLIP_CLOUDKIT_CONTAINER` 指定的容器）、`com.apple.developer.icloud-container-environment` 等于期望值（默认 `Production`）、且不含 `get-task-allow`；任一不符即中止发布并指出缺哪个键或哪个文件。同一套断言也内建在 `release-ci.py` 的 `package` / `publish` / `verify-intel` 校验（`verify_app()`）里，覆盖 DMG 内解包后的应用。普通开发与 CI 的 `build-app.sh` 构建不走这两道闸门，行为不变。
 
 脚本先验证证书与公证 profile，再构建 Universal 应用。从嵌套 Mach-O、Sparkle 辅助程序及 XPC 服务到主应用依次签名，开启 Hardened Runtime 和可信时间戳，保留现有必要 entitlements 并移除调试授权。随后提交应用 ZIP、装订应用票据，创建并签署 DMG，再提交 DMG 公证并装订票据。每步以 Apple 的 `Accepted`、`stapler validate`、Gatekeeper 与镜像内容核验为准；不会启动应用或发布到 GitHub。
 

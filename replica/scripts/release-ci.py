@@ -17,6 +17,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE_ARCHITECTURES = ["arm64", "x86_64"]
+# 正式包必须携带自有 iCloud 容器的 CloudKit 授权；这两项与包内容绑定，不随环境漂移。
+REQUIRED_ICLOUD_CONTAINER = "iCloud.com.chrisli.blinkclip"
+CLOUDKIT_ENVIRONMENTS = ("Development", "Production")
 
 
 def app_output_directory():
@@ -142,6 +145,70 @@ def check_existing(repo, version, tag, commit):
     return ref, release
 
 
+def app_entitlements(app):
+    """Return the entitlements actually sealed into the app's code signature."""
+    result = subprocess.run(["codesign", "-d", "--entitlements", ":-", str(app)],
+                            cwd=ROOT, capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError("无法读取签名授权：" + str(app) + "（codesign 退出码 "
+                         + str(result.returncode) + "，" + result.stderr.strip() + "）")
+    if not result.stdout.strip():
+        raise ValueError("应用签名不含任何 entitlements：" + str(app))
+    return plistlib.loads(result.stdout.encode())
+
+
+def _string_list(value):
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def cloudkit_entitlement_problems(entitlements, container=None, environment=None):
+    """List every reason the signed entitlements cannot carry CloudKit in a release."""
+    container = container or os.environ.get("BLINKCLIP_CLOUDKIT_CONTAINER") or REQUIRED_ICLOUD_CONTAINER
+    environment = environment or os.environ.get("BLINKCLIP_CLOUDKIT_ENVIRONMENT") or "Production"
+    if environment not in CLOUDKIT_ENVIRONMENTS:
+        raise ValueError("BLINKCLIP_CLOUDKIT_ENVIRONMENT 必须是 Development 或 Production，实际："
+                         + str(environment))
+    problems = []
+    services = _string_list(entitlements.get("com.apple.developer.icloud-services"))
+    if "CloudKit" not in services:
+        problems.append("com.apple.developer.icloud-services 必须包含 CloudKit，实际："
+                        + json.dumps(services, ensure_ascii=False))
+    containers = _string_list(entitlements.get("com.apple.developer.icloud-container-identifiers"))
+    if container not in containers:
+        problems.append("com.apple.developer.icloud-container-identifiers 必须包含 " + container
+                        + "，实际：" + json.dumps(containers, ensure_ascii=False))
+    actual_environment = entitlements.get("com.apple.developer.icloud-container-environment")
+    if actual_environment != environment:
+        problems.append("com.apple.developer.icloud-container-environment 必须是 " + environment
+                        + "，实际：" + json.dumps(actual_environment, ensure_ascii=False))
+    for key in ("com.apple.security.get-task-allow", "get-task-allow"):
+        if key in entitlements:
+            problems.append("分发版不应包含调试授权 " + key)
+    return problems
+
+
+def verify_cloudkit(app, container=None, environment=None):
+    """Fail the release when the bundle has no provisioning profile or no CloudKit grant.
+
+    一次漏设 BLINKCLIP_CLOUDKIT_* 就能产出「签名有效、功能静默降级」的包，所以这里
+    不做任何降级：描述文件、三个 CloudKit 键、无调试授权，缺一项就中止发布。
+    """
+    app = Path(app)
+    profile = app / "Contents/embedded.provisionprofile"
+    if not profile.is_file():
+        raise ValueError("发布包缺少描述文件 " + str(profile)
+                         + "：构建时未设置 BLINKCLIP_CLOUDKIT_PROFILE，产物没有 CloudKit 授权")
+    if profile.stat().st_size <= 0:
+        raise ValueError("发布包的描述文件为空：" + str(profile))
+    entitlements = app_entitlements(app)
+    problems = cloudkit_entitlement_problems(entitlements, container=container, environment=environment)
+    if problems:
+        raise ValueError("应用签名不满足 CloudKit 发布要求：" + str(app) + "\n- " + "\n- ".join(problems))
+    return entitlements
+
+
 def verify_app(app, version, architectures):
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     short_version, expected_build = bundle_version(version)
@@ -158,6 +225,8 @@ def verify_app(app, version, architectures):
     if any(info.get(key) != value for key, value in update_config.items()):
         raise ValueError("Invalid signed in-app update configuration")
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
+    # 签名有效不等于有 iCloud 授权：正式发布缺 CloudKit 就停在这里，不做降级。
+    verify_cloudkit(app)
     framework = app / "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
     framework_architectures = run(["lipo", "-archs", str(framework)], capture_output=True, text=True).stdout.split()
     if not set(architectures).issubset(framework_architectures):
@@ -282,11 +351,19 @@ def publish(repo, version, tag, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["check", "verify-intel", "package", "publish"])
+    parser.add_argument("mode", choices=["check", "verify-cloudkit", "verify-intel", "package", "publish"])
     parser.add_argument("--version")
     parser.add_argument("--tag")
     parser.add_argument("--commit")
+    parser.add_argument("--app", type=Path, help="verify-cloudkit 校验的应用包，默认取构建输出目录")
+    parser.add_argument("--container", help="verify-cloudkit 期望的 iCloud 容器标识")
+    parser.add_argument("--environment", help="verify-cloudkit 期望的 CloudKit 环境")
     args = parser.parse_args()
+    if args.mode == "verify-cloudkit":
+        app = (args.app or app_output_directory() / "BlinkClip.app").expanduser().resolve()
+        verify_cloudkit(app, container=args.container, environment=args.environment)
+        print("CloudKit 校验通过：" + str(app))
+        return
     if args.mode == "package":
         args.version = args.version or json.loads((ROOT / "package.json").read_text())["version"]
         args.tag = args.tag or "v" + args.version

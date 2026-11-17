@@ -42,6 +42,8 @@ BLINKCLIP_CLOUDKIT_ENVIRONMENT=Production \
 
 开发构建将身份换为 `Apple Development: Chao Li (7Q4W57L7ZM)`、描述文件换为 Development、环境换为 Development，并在 storage-guard 内执行 `bash replica/scripts/build-app.sh debug native`。
 
+`build-notarized.sh` 是 fail-closed 的：上面三个 `BLINKCLIP_CLOUDKIT_*` 变量缺任意一个、描述文件不存在或不可读、环境不是 `Development`/`Production`，都会在**编译前**以 `exit 2` 中止（不产生任何产物）。构建完成后、提交公证前还会执行 `python3 replica/scripts/release-ci.py verify-cloudkit --app <产物>`，断言 `Contents/embedded.provisionprofile` 存在且非空、签名含 `com.apple.developer.icloud-services = ["CloudKit"]`、容器 `iCloud.com.chrisli.blinkclip` 与期望环境，且不含 `get-task-allow`；不符即中止发布。`release-ci.py verify_app()` 对 `package`/`publish`/`verify-intel` 的产物（含 DMG 内解包后的应用）执行同一套断言，发布路径不再接受无 CloudKit 授权的包。普通开发构建（`build-app.sh`）不受影响，仍可产出无 CloudKit 授权的开发包，运行时回退 iCloud Drive。
+
 `configure-cloudkit-signing.py` 校验有效期、团队、显式 App ID、容器、服务、环境和证书允许列表，随后嵌入描述文件及容器配置。Apple 实际允许 `icloud-services = "*"`，应用签名收窄为 `["CloudKit"]`；KV 的 `4NJM425J3B.*` 展开成具体 App ID，已有具体 KV 标识保留。签名不能携带字面通配符。参见 [Apple TN2415](https://developer.apple.com/library/archive/technotes/tn2415/)。
 
 CloudKit 授权与基础 Apple Events 授权合并，重复键失败；不加入 App Sandbox，不保留 `get-task-allow`。`sign-app.py` 由内向外签名，开启 Hardened Runtime 和时间戳。最终票据和 Gatekeeper 结果以 `out/release/signing-manifest.json` 为准。
