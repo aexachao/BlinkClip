@@ -1,5 +1,23 @@
 # 更新日志
 
+## 1.0.30 · 2026-11-17（GitHub Releases）
+
+框选辅助线回到用户要的形态：**贯穿全屏、跟着指针走的横竖两条实线**。1.0.26–1.0.29 那套「吸附窗口边缘 + 拖拽吸边 + 显示中线」整体撤销——窗口四边描线、8pt 拖拽吸附、「框选辅助 → 显示中线」设置项与它的三语文案全部删除，设置页截图页回到两张卡。辅线仍是独立图层、同步刷新，指针移动期间不重绘冻结快照，240 帧 120Hz 扫掠实测跟随偏差 **≤0.3pt**。与吸附无关的成果一条没丢：放大镜 20Hz + 静态缓存、事件路径零内容请求、覆盖层 `.stationary`、尺寸标签屏幕边界钳制、hover 高亮独立图层、窗口枚举 2Hz。CloudKit、签名与更新通道均无变更。
+
+### 截图
+
+- **辅助线恢复为贯穿全屏、跟随指针的横竖两条实线。** 水平线跨满整屏宽、竖线跨满整屏高，交点就是指针位置；样式 **1.5pt、`systemGray` 50%、实线**（`lineDashPattern = nil`）。位置只来自指针（`mouseMoved` / `mouseDragged` / `mouseEntered` → 控制器广播 → 各屏 `updateCrosshair(globalPoint:)`），每条轴一个独立 `CrosshairBandView`（各自一个 `CAShapeLayer`），写 frame 与 line path 在同一个 `CATransaction.setDisableActions(true)` 事务内完成并 `displayIfNeeded()` 同步显示——位置属于本次鼠标事件，不等下一轮 runloop。**指针移动期间整窗 `draw(_:)` 重绘 0 次**：冻结快照不参与辅线刷新。240 帧 120Hz 扫掠逐帧断言（≤1pt）0 失败，逐帧数据落盘后独立复算 **`max|dx| = 0.3pt`、`max|dy| = 0.3pt`**（设备像素对齐取整，单帧 ≤0.5pt）。多屏：控制器把同一个屏幕坐标广播给各屏，每屏只写需要的那一轴——水平线跨屏连续，竖线只在指针所在屏。可见性：`.idle` / `.drawing` 显示，`.selected` / 滚动截图 / 编辑器接管隐藏。
+
+- **窗口吸附式辅助线、拖拽吸边与「显示中线」设置项整体移除。** 删除 `SnapGuideView`（窗口四边描线 + 可选中线）、`SnapHighlightView`（吸附边 2pt 高亮），以及拖拽吸附整条链路：`showsDragSnap`、`dragSnapDistance = 8`、`DragSnapEdge`、`dragSnapCandidates`、`dragSnappedEdges`、`refreshDragSnapHighlight()`、`snappedDragRect(_:)`、`dragSnapCandidatesForCurrentDrag()` 与三个鼠标回调里的吸附调用——拖着选框画框时，边就是指针所在位置，不再粘到窗口边。设置侧删除「框选辅助 → 显示中线」整组（`@State`、section、行、binding）与 `BlinkClipScreenshotSettings.snapGuidesCenterLinesKey/Enabled`、`ScreenshotSettingsCopy` 的 `guidesSectionTitle` / `centerLinesTitle` / `centerLinesSubtitle` 三个三语键；设置页截图页由三张卡回到**两张卡**（截图后行为 / 翻译），三语键数 **92 → 89**、截图表 **35 → 32**。`WindowDetector.cachedWindows` 只为拖拽吸附候选而存在，一并删除（仓库内已无引用）。
+
+- **与吸附无关的成果全部保留。** 放大镜内容刷新 **20Hz + 静态部分缓存位图**（每帧只重绘放大区与数值行）；**事件路径零内容请求**（无 `lens-request`，面板由自己的 20Hz 定时器驱动，`NSApp.activate` 每会话一次）；覆盖层 `collectionBehavior` 含 **`.stationary`**（切 Space 不跟着滑走）；**尺寸标签屏幕边界钳制**；**hover 高亮独立图层**（`HoverHighlightView`，点击选窗口那一套）；**窗口枚举 2Hz**（静止 2s 暂停、hover 命中→未命中补采、浮层 bundle-id 按 pid 缓存）；选区外观仍在 `SelectionChromeView` 子图层、`SelectionView.draw(_:)` 只画冻结快照；MEAS signpost 保留（gate 默认关），`snap-guide` 埋点改名 `crosshair-guide`。选框本体（蓝 1pt 实线 + 横条/L 角标 + 蓝底白字尺寸标签）、系统十字光标、轻提示、编辑器 chrome 均未改。
+
+### 测试
+
+- **`test-capture-chrome-exclusion.sh`：345 checks + SEL 9 + REV 19。** `CaptureChromeExclusionHarness` 由吸附语义改写为辅线语义：240 帧 120Hz 扫掠（`sweepMismatches=0`、`sweepDraws=0`）、200 次移动 0 次 `draw(_:)`、两图层 1.5pt/实线/`systemGray` 50%、`.selected` 后隐藏、跨屏广播（水平线同 y 连续、竖线只在指针屏）、离窗口右边 3pt 拖动不吸附（`selectionRect.maxX == 指针 x`）、`selectionLocked` 与编辑器接管隐藏。源码门由 14 条吸附门换成 19 条 REV 门。
+
+- **回归**：`test-capture-integration.sh`、`test-editor-chrome-parity.sh`（51 checks，5592/5592 像素一致、差集 0）、`test-ui-interaction.sh`、`test-overlay-opt.sh`（16 checks + 9 gates）、`test-toolbar-upload-removal.sh`（315 checks / 34 renders）、`test-settings-architecture.sh`（63 条布局契约）、`test-settings-localization.sh`（89 键）、`python3 -m unittest discover -s scripts/tests`、`blinkclip-core-tests`（29/0/0）全部通过；`build-app.sh release universal` EXIT=0（x86_64 + arm64），`codesign --verify --deep --strict` exit 0。
+
 ## 1.0.29 · 2026-11-17（GitHub Releases）
 
 框选覆盖层自身开销再降一档：120Hz 合成指针流实测，三项改动合起来把「我们代码」的合计从 **5.95–6.40 点降到 2.50–3.29 点**（−45%～−61%）。窗口枚举从 8Hz 降到 2Hz，并加了两条「该省就省」的规矩——指针静止 2 秒后暂停枚举、hover 由命中转为未命中时补采一次；放大镜内容刷新 30Hz → 20Hz，静态部分离线渲染成位图后复用，每帧只重绘放大区与数值行；鼠标事件路径上不再请求放大镜内容，改由 20Hz 定时器统一驱动。吸附辅助线、拖拽吸附、窗口中线、放大镜的坐标与色值全部保留，功能未变。CloudKit、签名与更新通道均无变更。
