@@ -1,5 +1,31 @@
 # 更新日志
 
+## 1.0.28 · 2026-11-17（GitHub Releases）
+
+框选拖拽期也能吸附窗口边缘：选区四条边各自吸附同轴最近的窗口边（严格 <8pt），只高亮被吸附的那一条，松开即清除；拖拽全程不再重绘冻结快照——选区外观搬进独立 `SelectionChromeView` 子图层，`SelectionView.draw(_:)` 只画快照（120 次拖拽采样实测 0 次调用）。覆盖层窗口加入 `.stationary`，切换 Space 时不再跟随滑动；空白桌面的 hover 清理短路，不再每次指针移动都开一个空事务。选框本体与编辑器 chrome 仍逐像素一致（5592/5592，差集 0）。本次没有新增设置行：截图设置页在 648×600 出货窗口里已无剩余高度。CloudKit、签名与更新通道均无变更。
+
+### 框选
+
+- **拖拽期吸附窗口边缘（同轴、严格 <8pt）。** 拖着选框画框时，四条边**各自**找与它**同轴**的最近窗口边（竖边对候选窗口的 `minX`/`maxX`，横边对 `minY`/`maxY`），距离**严格小于 8pt（`dragSnapDistance`）**才吸附；8pt 整不吸，10pt 也不吸。候选来自开场枚举的 8Hz 窗口缓存加上按下时指针下的窗口，按 `isSelectableCaptureTarget` 与 `isProductChrome` 过滤，所以放大镜、拖拽提示芯片这类本产品浮层不会把自己描进去。吸附只改几何：提交时仍用吸附后的 rect 从**拍摄前**的冻结快照里裁剪，成图像素跟着边缘走。
+
+- **只高亮被吸附的那条边。** 新增 `SnapHighlightView`（独立 `CAShapeLayer`）：**2pt、100% `systemGray` 实线**，与 1.5pt / 50% 虚线的窗口辅线同一色系但更重，一眼能看出是**哪一条**边被粘住；没被吸附的边不画。几何与线段集合都没变时 `place()` 提前返回，0 次图层写入；`mouseUp` 清除，也包括 `selectionInteractionEnabled` 中途转 false 的提前返回分支——松手后不会残留高亮。
+
+- **拖拽期 0 次重绘冻结快照。** 选区外观（暗化挖孔、1pt 实线边框、8 个手柄、蓝底白字尺寸标签、滚动截图红框）原来在 `SelectionView.draw(_:)` 里画，于是每个指针事件都要重绘整屏冻结快照（2x 屏上是几十 MB）。现在它整体搬进 `SelectionChromeView` 子图层：一次拖拽事件只做 `CATransaction.setDisableActions(true)` 事务内的几何/path 写入 + `displayIfNeeded()`，`SelectionView.draw(_:)` 只剩「画冻结快照」一件事。harness 实测 120 次拖拽采样 `draws=0`、`repaintScheduled=false`，`chromeWrites` / `highlightWrites` 各 120 次；两个视图都不吃指针（`hitTest` 返回 nil），绘制仍走同一个 `drawSelectionChrome`，编辑器 chrome 与覆盖层仍逐像素一致（5592/5592，差集 0）。
+
+- **覆盖层加 `.stationary`。** `collectionBehavior` 变成 `[.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`：切 Space 时覆盖层留在自己的屏幕上，冻结快照不会跟着 Space 动画滑走、十字光标也就不会落到错的像素上。
+
+- **空白桌面 hover 清理短路。** `clearHover()` 在「没有 hover 目标、辅线也已隐藏」时直接返回，不再每次指针从空白桌面划过都 `CATransaction.begin/commit` 一次；只有真的留着一条要清的辅线时才去刷新。
+
+- **锁定纵横比时不吸附，边被拉反时整轴回滚。** 比例锁的拖拽本来就必须保住用户要的比例，粘住一条边会静默改比例，所以 `aspectRatio != nil` 时整段跳过吸附；比两条吸附距离还薄的框可能把左右（或上下）两条边拉过彼此，此时该轴回滚到原始 rect 并撤掉这两条边的高亮，不会出现负宽度。
+
+- **本次不加设置开关。** 拖拽吸附默认开（`SelectionView.showsDragSnap = true`），因为截图设置页在 648×600 的出货窗口里已经没有空余高度——再加一行会让「框选辅助」卡底部越过视口 53pt，直接破坏 `SettingsArchitectureHarness` 的逐卡口径。取舍写进了 `DESIGN.md`。
+
+### 测试
+
+- **吸附几何与「拖拽期不重绘」都是实测出来的。** `CaptureChromeExclusionHarness` 用真实 `NSEvent` 走 `mouseDown` / `mouseDragged` / `mouseUp`：3pt 处吸附后几何差 **0**；阈值边界 7.5pt 吸附、8.0pt 不吸（`maxX` 508）、10.0pt 不吸（510）；只吸附同轴边；高亮出现且只有 1 段、2pt；松手后清除；120 次采样 `draw(_:)` **0** 次、无重绘调度；再用生产 `ScreenCapturer.crop` 成图验证裁剪位置与吸附后的 rect 一致。断言总数 **356 条**，SEL 标签源码门 9 条、SG 辅线源码门 **23 条**（只加严没放宽：新增 9 条覆盖拖拽吸附、`SelectionChromeView` 与 `clearHover` 短路）。
+
+- **回归**：`test-capture-chrome-exclusion.sh`（356 条断言 + SEL 9 + SG 23）、`test-capture-integration.sh`、`test-editor-chrome-parity.sh`（51 条，5592/5592 像素一致）、`test-ui-interaction.sh`、`test-settings-architecture.sh`（布局契约 63 条）、`test-settings-localization.sh`、`test-toolbar-upload-removal.sh`、`python3 -m unittest discover -s scripts/tests`、`blinkclip-core-tests`（29/0/0）全部通过；`build-app.sh release universal` EXIT=0（x86_64 + arm64），`codesign --verify --deep --strict` exit 0。
+
 ## 1.0.27 · 2026-11-17（GitHub Releases）
 
 框选覆盖层的移动开销减半：同窗移动与跨窗切换在 120Hz 指针流下由 23.1% / 22.4% 降到 12.2%（−47% / −46%）。做法是把空闲态每次指针事件都要做的重活改成限频或一次性：放大镜内容刷新合并到 30Hz 单调度器、像素采样改为快照解码缓存、hover 高亮改为独立图层、激活调用每会话一次、光标提示 60Hz。功能零削减——放大镜、吸附辅助线（含可选中线）、hover 挖洞 + 蓝框 + 尺寸标签、拖拽框选全部保留。CloudKit、签名与更新通道均无变更。
