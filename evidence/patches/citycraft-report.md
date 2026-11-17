@@ -150,3 +150,131 @@ python3 -m unittest discover -s scripts/tests -p 'test_sync_release_downloads.py
 5. **语言默认**：截图进程的 Chrome profile 里残留了上一次的 `zh-Hans` 存值，所以截图是中文；默认协商逻辑由 Node 测试（6 种语言）覆盖，而非截图进程。
 6. **工作区基线**：任务描述为“工作区干净”，实际开始时已有 7 个 Swift/Strings 文件修改（`branding/…`、`replica/…`）；会话期间并行工作以 `c15c41c` 提交了这些改动（未触及 `website/`）。本任务只提交 `website/`、`scripts/` 中指定的两个校验脚本与 `evidence/`，未改 Swift、版本或 CHANGELOG。
 7. **版本号**：页面源码不含版本号；两个下载按钮指向 `releases/latest`，`data-release-version=""` 仅为兼容既有 Pages 发布同步脚本而保留。
+
+## 修复轮（2026-11-17）
+
+- 基线：`8cc1579`，开工时 `git status --short` 为空（工作区干净）。
+- 范围：`website/style.css`、`scripts/tests/test_sync_release_downloads.py`、`evidence/website/**`。未改 Swift / 版本 / CHANGELOG，未 push，未启用 Pages。
+- 本轮修掉 §10 第 1 条（CI 测试报错）。
+
+### 1) 去掉薰衣草色
+
+| 位置 | 改前 | 改后 | 为什么 |
+| --- | --- | --- | --- |
+| `website/style.css:636` `.hero-visual-panel` | `linear-gradient(145deg, rgba(61,92,255,.13), rgba(255,107,53,.07) 60%, rgba(250,250,248,.4))` | 单色钴蓝洗色 `rgba(61,92,255,.10) → .03(40%) → 0(64%)` 叠暖中性 `rgba(250,250,248,.34) → rgba(242,240,235,.62)` | 13% 钴蓝 + 7% 橙在暖底上合成 ≈(221,213,225)，HSV 色相 ≈282°（薰衣草）；单色钴蓝后同一区域实测 (225,229,246)，色相 228.6°（蓝）。橙块仍在面板外侧，不再与钴蓝叠色 |
+| `website/style.css:890` `--accent-bright` | `#9aabff`（色相 229.9°，饱和度 0.396） | `#8ba3ff`（色相 227.6°，饱和度 0.455） | 旧值同色相但饱和度过低，在 `#191917` 深底上读作灰紫/薰衣草；新值是明确的浅钴蓝。深底对比度 8.08 → **7.36**，仍 ≥4.5 |
+| `website/style.css:95` `.texture-seoul` | 钴蓝 0.07 + **橙 0.055** + 钴蓝 0.03 三道径向 | 钴蓝 0.06 + 钴蓝 0.04 两道 | 首屏右上角同时有蓝色 `hero-glow` 与橙色径向（同 85% 15% 角），实测该处 (235,231,240)、色相 266.7°，即淡紫块；去掉橙色后只剩钴蓝 |
+
+全表色值审计（`style.css` 全部 hex + rgba 逐个转 HSV）：改后**没有任何色值落在 260–285° 紫带**；蓝色族只剩 `#3d5cff`（230.4°）、`#2b46d6`（230.5°）、`#8ba3ff`（227.6°），其余为暖中性（`#fafaf8` / `#f2f0eb` / `#191917`）与橙（`#ff6b35` / `#8b4513` / `#f5ede0`）。
+
+### 2) 修既有 CI 测试
+
+`scripts/tests/test_sync_release_downloads.py:113-115`：
+
+- 语言键 `zh-CN` → `zh-Hans`（新站字典键）。
+- 提取正则 `r"const messages = (\{[\s\S]*?\n\});"` → `r"const messages = (\{[\s\S]*?\n[ \t]*\});"`：允许闭括号缩进，仍要求 `};` 收尾（顶格写法也兼容）；非贪婪匹配仍停在 messages 对象的收尾行，不会截到内层 `}`。
+- 其它断言（版本前缀、`.dmg` 不写死、`1.0.8` 不残留）与 9 个测试项一个没删、没放宽。
+
+回归灵敏度实测（把修好的测试临时改回错误写法跑一遍，证明断言仍然生效）：
+
+```
+old_language_key (zh-CN)            → detected=True  | FAILED (errors=1)
+dmg_assertion_flipped               → detected=True  | FAILED (failures=1)
+hero_release_must_not_pin_version   → detected=True  | FAILED (failures=1)
+```
+
+### 3) 移动端首屏观感
+
+根因不是"折叠切屏"：390×844 下首屏 `heroBottom = 844`，卡片并没有被视口切掉。真正的原因是 `@media (max-width:620px)` 里 `.hero-shot img { max-height:120px; object-fit:cover; object-position:left center }` 把 2:1 的产品截图压成 332×120 的**中段横切**（上下都被裁），看起来就是"露半张卡片"。
+
+采用「在 390 下让截图在首屏内完整」方案：
+
+- `.hero-shot img`：`max-height: none; object-fit: contain; object-position: center`（按自然 2:1 渲染）。
+- `.hero-shot`：`max-width: min(100%, 460px)`，让 390–620 之间宽度也不会把首屏撑出视口。
+
+实测 390 卡片：截图 332×166（改前 332×120 被裁）、卡片底 721px，在斜切裁线（右缘 743px）之上；首屏仍自成一屏。
+
+未采用"底部渐变遮罩出血"的原因：hero 自身有 `clip-path: polygon(0 0,100% 0,100% 88%,0 100%)` 斜切边，遮罩必须与对角线对齐才不会出现"二次硬切"，改动面比缩图方案大且更难验证。
+
+### 4) 紫像素比例（改前 / 改后）
+
+扫描器：`evidence/website/tools/purple-scan.py`。**strict** = HSV 色相 260–285° 且饱和度 >0.08；**relaxed** = 255–295° 且 >0.03（用来抓低饱和的淡紫洗色——390 改前 strict 就是 0，只有 relaxed 能量化）。
+
+| 截图 | strict 改前 | strict 改后 | relaxed 改前 | relaxed 改后 |
+| --- | --- | --- | --- | --- |
+| `1440x900.png` | 0.2779% | **0.0%** | 4.1037% | **0.0005%** |
+| `1024x768.png` | 0.1699% | **0.0%** | 3.4721% | **0.0003%** |
+| `390x844.png` | 0.0% | **0.0%** | 0.161% | **0.0%** |
+| `en-1440x900.png` | 0.2487% | **0.0%** | 3.4115% | **0.0%** |
+| `en-390x844.png` | 0.0% | **0.0%** | 0.2063% | **0.0%** |
+| `1440x900-full.png` | 0.0297% | **0.0005%** | 0.449% | **0.0009%** |
+| `1024x768-full.png` | 0.015% | **0.0009%** | 0.2971% | **0.0016%** |
+| `390x844-full.png` | 0.0002% | **0.0007%** | 0.0173% | **0.0008%** |
+
+改前热点集中在首屏面板右上（1440 的 x≈1200–1320 / y≈200–280），与实拍一致。改后残留只有 54px（1440 全页）/ 24px（390 全页），全部落在本托钴蓝焦点卡的胶囊描边抗锯齿上（坐标 y≈1600 / y≈1480），不是色块。
+
+### 5) 对比度复测（`--accent-bright` 的 6 处深底用法）
+
+`node evidence/website/tools/contrast-check.cjs … → evidence/website/shots/contrast.json`
+
+| 用法 | 前景 | 背景 | 对比度 |
+| --- | --- | --- | --- |
+| `.stats .eyebrow` | `rgb(139,163,255)` | `rgb(25,25,23)` | **7.36** |
+| `.stat-row.is-focal .stat-value` | 同上 | 同上 | **7.36** |
+| `.cta .eyebrow` | 同上 | 同上 | **7.36** |
+| `.cta-title .accent` | 同上 | 同上 | **7.36** |
+| `.footer-link` | `rgb(250,250,248)` | 同上 | 16.85 |
+| `.cta-github` | `rgba(250,250,248,.82)` | 同上 | 11.57 |
+
+（改前 `#9aabff` 为 8.08，改后 7.36，均 ≥4.5。）
+
+### 6) 首屏自成一屏 + 截图完整度
+
+`node evidence/website/tools/hero-metrics.cjs … → evidence/website/shots/hero-metrics.json`
+
+| 视口 | 语言 | 视口高 | heroBottom | 卡片底 | 斜切右缘 | 截图是否被裁 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1440×900 | zh-Hans | 900 | 900 | 576 | 792 | 否（2:1） |
+| 1440×900 | en | 900 | 900 | 547 | 792 | 否（2:1） |
+| 1024×768 | zh-Hans | 768 | 768 | 478 | 676 | 否（2:1） |
+| 1024×768 | en | 768 | 768 | 457 | 676 | 否（2.01:1） |
+| 390×844 | zh-Hans | 844 | 844 | 721 | 743 | 否（2:1） |
+| 390×844 | en | 844 | 844 | 733 | 743 | 否（2:1） |
+
+### 7) 校验命令与结果
+
+```
+node scripts/test-website-i18n.cjs
+  {"passed":true,"checks":22,"translation_keys":135}
+
+python3 scripts/check-website.py
+  {"passed": true, "checked_links": 50, "translation_keys": 135, "reviewed_images": 6, "universal_download": ""}
+
+python3 -m unittest discover -s scripts/tests
+  Ran 16 tests in 0.016s — OK
+```
+
+浏览器侧（`evidence/website/shots/verify.json`）：`errors: []`；`zh-Hans` / `en` 切换、`system` 回退、FAQ 手风琴、reduced-motion、CDN 降级均与上一轮一致；390 英文 `heroBottom = 844`、无横向溢出、`smallTargets: []`。
+
+> 本轮截图用的是全新 Chrome profile（`--lang=zh-CN`），所以中文快照是 `stored: null` / `pressed: "system"`（系统协商到 `zh-Hans`），比上一轮「profile 里残留 zh-Hans 存值」更干净；`verify.json` 里这两行因此与 P5 版本不同，属预期变化。
+
+### 8) 三档新截图（已覆盖 `evidence/website/shots/`）
+
+- `evidence/website/shots/1440x900.png`（+ `-full`）
+- `evidence/website/shots/1024x768.png`（+ `-full`）
+- `evidence/website/shots/390x844.png`（+ `-full`）
+- 英文：`evidence/website/shots/en-1440x900.png`（+ `en-1440-full`）、`en-390x844.png`
+- 深底对比证据：`stats-1440x900.png`、`cta-1440x900.png`
+- 新增工具：`evidence/website/tools/purple-scan.py`、`contrast-check.cjs`、`hero-metrics.cjs`；产物 `contrast.json`、`hero-metrics.json`
+
+截图仍用同一 headless Chrome 156 经 CDP `Emulation.setDeviceMetricsOverride` 取得精确视口（理由见 §10 第 2 条）。
+
+### 9) 未通过 / 假设 / 风险
+
+1. **报告路径**：任务单写 `/Users/chrisli/dev/闪贴/evidence/patches/citycraft-report.md`，但该文件实际在仓库内 `BlinkClip/evidence/patches/citycraft-report.md`（仓库外的 `evidence/patches/` 没有此文件）。本节追加到仓库内这份报告。
+2. **紫像素阈值是自定的**：strict（260–285°，sat>0.08）对 390 改前的低饱和薰衣草不触发，所以同时给了 relaxed（255–295°，sat>0.03）口径；两种口径都列在表里，不单挑对自己有利的那个。
+3. **`--accent-bright` 对比度从 8.08 降到 7.36**：满足 ≥4.5，但比旧值低；若产品侧希望更亮，可换 `#9bb0ff`（会更接近旧的灰紫观感，需重新扫紫像素）。
+4. **768×1024 档（不在验收档）**：首屏内容本来就高于视口（`heroBottom` 1082 vs 1024），属 P5 遗留，本轮未改，也未把它算作通过。
+5. **621–980px 区间**：`≤620` 的缩图规则不生效，此区间仍按自然比例渲染（P5 起即如此）；本轮只改了 ≤620 的横切问题与 ≤620 的宽度上限。
+6. **橙块保留**：`.hero-visual::before` 的橙色强调块仍在，只是不再与钴蓝洗色重叠；若后续把橙色叠回钴蓝区域，薰衣草会重新出现。
+7. 本轮未跑 Swift/原生构建与打包（任务范围外，且 AGENTS.md 要求本机构建走 storage-guard），`npm run test:core` 等未验证。

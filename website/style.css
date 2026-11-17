@@ -93,10 +93,11 @@ button {
 }
 
 .texture-seoul {
+  /* Single-hue cobalt wash only: cobalt over the warm neutral base stays blue,
+     while cobalt stacked on the orange accent reads as lavender/purple. */
   background-image:
-    radial-gradient(ellipse at 15% 85%, rgba(61, 92, 255, 0.07) 0%, transparent 55%),
-    radial-gradient(ellipse at 85% 15%, rgba(255, 107, 53, 0.055) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(61, 92, 255, 0.03) 0%, transparent 70%);
+    radial-gradient(ellipse at 15% 85%, rgba(61, 92, 255, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 15%, rgba(61, 92, 255, 0.04) 0%, transparent 50%);
 }
 
 .texture-noise-overlay::after {
@@ -633,7 +634,12 @@ button {
   inset: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  background: linear-gradient(145deg, rgba(61, 92, 255, 0.13), rgba(255, 107, 53, 0.07) 60%, rgba(250, 250, 248, 0.4));
+  /* Cobalt-only wash (top-left, fading out by 64%) over a warm neutral base.
+     The orange accent square stays outside the wash so no blue/orange stack
+     can mix into lavender. */
+  background:
+    linear-gradient(145deg, rgba(61, 92, 255, 0.1) 0%, rgba(61, 92, 255, 0.03) 40%, rgba(61, 92, 255, 0) 64%),
+    linear-gradient(160deg, rgba(250, 250, 248, 0.34), rgba(242, 240, 235, 0.62));
   clip-path: polygon(11% 0, 100% 0, 100% 100%, 0 100%);
   z-index: 0;
 }
@@ -816,15 +822,17 @@ button {
   }
 
   .hero-shot {
-    max-width: 100%;
+    /* Capped width so the 2:1 product shot renders complete above the fold
+       instead of being sliced by a fixed max-height crop. */
+    max-width: min(100%, 460px);
     margin-left: 0;
     padding: 8px;
   }
 
   .hero-shot img {
-    max-height: 120px;
-    object-fit: cover;
-    object-position: left center;
+    max-height: none;
+    object-fit: contain;
+    object-position: center;
     border-radius: 14px;
   }
 
@@ -879,7 +887,7 @@ button {
 }
 
 :root {
-  --accent-bright: #9aabff;
+  --accent-bright: #8ba3ff;
 }
 
 main > section {

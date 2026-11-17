@@ -1,0 +1,62 @@
+{
+  "probes": [
+    {
+      "label": "stats eyebrow",
+      "selector": ".stats .eyebrow",
+      "color": "rgb(139, 163, 255)",
+      "fontSize": "12.16px",
+      "fontWeight": "600",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 7.36
+    },
+    {
+      "label": "focal stat value",
+      "selector": ".stat-row.is-focal .stat-value",
+      "color": "rgb(139, 163, 255)",
+      "fontSize": "122.4px",
+      "fontWeight": "300",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 7.36
+    },
+    {
+      "label": "cta eyebrow",
+      "selector": ".cta .eyebrow",
+      "color": "rgb(139, 163, 255)",
+      "fontSize": "12.16px",
+      "fontWeight": "600",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 7.36
+    },
+    {
+      "label": "cta title accent",
+      "selector": ".cta-title .accent",
+      "color": "rgb(139, 163, 255)",
+      "fontSize": "77.76px",
+      "fontWeight": "800",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 7.36
+    },
+    {
+      "label": "footer link",
+      "selector": ".footer-link",
+      "color": "rgb(250, 250, 248)",
+      "fontSize": "12.48px",
+      "fontWeight": "400",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 16.85
+    },
+    {
+      "label": "cta github link",
+      "selector": ".cta-github",
+      "color": "rgba(250, 250, 248, 0.82)",
+      "fontSize": "14.4px",
+      "fontWeight": "400",
+      "backdrop": "rgb(25, 25, 23)",
+      "ratio": 11.57
+    }
+  ],
+  "shots": {
+    "stats-1440x900": "evidence/website/shots/stats-1440x900.png",
+    "cta-1440x900": "evidence/website/shots/cta-1440x900.png"
+  }
+}

@@ -1,0 +1,218 @@
+[
+  {
+    "size": "1440x900",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "heroBottom": 900,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 792,
+    "shot": {
+      "top": 285,
+      "bottom": 576,
+      "width": 544,
+      "height": 292
+    },
+    "image": {
+      "top": 296,
+      "bottom": 565,
+      "width": 522,
+      "height": 269
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 517,
+      "height": 258
+    },
+    "imageRenderedAspect": 2,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  },
+  {
+    "size": "1440x900",
+    "lang": "en",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "heroBottom": 900,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 792,
+    "shot": {
+      "top": 307,
+      "bottom": 547,
+      "width": 444,
+      "height": 240
+    },
+    "image": {
+      "top": 319,
+      "bottom": 536,
+      "width": 422,
+      "height": 218
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 418,
+      "height": 209
+    },
+    "imageRenderedAspect": 2,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  },
+  {
+    "size": "1024x768",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 1024,
+      "height": 768
+    },
+    "heroBottom": 768,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 676,
+    "shot": {
+      "top": 265,
+      "bottom": 478,
+      "width": 392,
+      "height": 213
+    },
+    "image": {
+      "top": 276,
+      "bottom": 467,
+      "width": 370,
+      "height": 191
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 366,
+      "height": 183
+    },
+    "imageRenderedAspect": 2,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  },
+  {
+    "size": "1024x768",
+    "lang": "en",
+    "viewport": {
+      "width": 1024,
+      "height": 768
+    },
+    "heroBottom": 768,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 676,
+    "shot": {
+      "top": 281,
+      "bottom": 457,
+      "width": 320,
+      "height": 176
+    },
+    "image": {
+      "top": 292,
+      "bottom": 446,
+      "width": 298,
+      "height": 154
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 295,
+      "height": 147
+    },
+    "imageRenderedAspect": 2.01,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  },
+  {
+    "size": "390x844",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "heroBottom": 844,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 743,
+    "shot": {
+      "top": 530,
+      "bottom": 721,
+      "width": 354,
+      "height": 191
+    },
+    "image": {
+      "top": 539,
+      "bottom": 712,
+      "width": 335,
+      "height": 173
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 332,
+      "height": 166
+    },
+    "imageRenderedAspect": 2,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  },
+  {
+    "size": "390x844",
+    "lang": "en",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "heroBottom": 844,
+    "heroFillsFirstScreen": true,
+    "heroClipPath": "polygon(0px 0px, 100% 0px, 100% 88%, 0px 100%)",
+    "clipBottomAtRightEdge": 743,
+    "shot": {
+      "top": 541,
+      "bottom": 733,
+      "width": 354,
+      "height": 191
+    },
+    "image": {
+      "top": 551,
+      "bottom": 723,
+      "width": 335,
+      "height": 173
+    },
+    "imageNatural": {
+      "width": 1088,
+      "height": 544
+    },
+    "imageLayout": {
+      "width": 332,
+      "height": 166
+    },
+    "imageRenderedAspect": 2,
+    "imageNaturalAspect": 2,
+    "imageCropped": false,
+    "shotInsideDiagonalClip": true
+  }
+]

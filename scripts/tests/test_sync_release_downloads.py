@@ -110,8 +110,9 @@ class SyncReleaseDownloadsTests(unittest.TestCase):
         import re
         version = re.search(r'data-release-version="([^"]*)"', html)[1]
         catalog = (ROOT / "website/i18n.js").read_text()
-        messages = json.loads(re.search(r"const messages = (\{[\s\S]*?\n\});", catalog)[1])
-        for language in ("zh-CN", "en"):
+        # The catalog is indented inside the IIFE, so the closing brace is indented too.
+        messages = json.loads(re.search(r"const messages = (\{[\s\S]*?\n[ \t]*\});", catalog)[1])
+        for language in ("zh-Hans", "en"):
             if version:
                 self.assertIn(version, messages[language]["hero.release"])
                 self.assertTrue(messages[language]["download.meta"].startswith("v" + version + " ·"))
