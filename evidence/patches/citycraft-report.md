@@ -278,3 +278,102 @@ python3 -m unittest discover -s scripts/tests
 5. **621–980px 区间**：`≤620` 的缩图规则不生效，此区间仍按自然比例渲染（P5 起即如此）；本轮只改了 ≤620 的横切问题与 ≤620 的宽度上限。
 6. **橙块保留**：`.hero-visual::before` 的橙色强调块仍在，只是不再与钴蓝洗色重叠；若后续把橙色叠回钴蓝区域，薰衣草会重新出现。
 7. 本轮未跑 Swift/原生构建与打包（任务范围外，且 AGENTS.md 要求本机构建走 storage-guard），`npm run test:core` 等未验证。
+
+## CI 修复（GitHub Pages 部署在同步后必挂）
+
+### 1) 根因
+
+`.github/workflows/pages.yml` 的顺序是「先 `sync-release-downloads.py` 同步最新正式版，再跑 `node scripts/test-website-i18n.cjs`」。同步脚本会把两处 `class="button"` 的 href 从 `…/releases/latest` 改写成**固定版本 DMG**（`…/releases/download/v1.0.32/BlinkClip-1.0.32-macos-universal.dmg`），而旧断言要求两个按钮**必须**等于 `…/releases/latest`、且整份 HTML 里**不许**出现 DMG 文件名 —— 两者互斥，CI 必挂（run 44090516621）。
+
+本地复现（同步后跑测试，基线 `7977a3e`）：
+
+```
+$ python3 scripts/sync-release-downloads.py --release-json /tmp/rel.json
+{"release": "v1.0.32", "changed": ["website/index.html", "website/i18n.js"]}
+$ node scripts/test-website-i18n.cjs
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ 'https://github.com/aexachao/BlinkClip/releases/download/v1.0.32/BlinkClip-1.0.32-macos-universal.dmg'
+- 'https://github.com/aexachao/BlinkClip/releases/latest'
+    at scripts/test-website-i18n.cjs:308:36
+```
+
+### 2) 改法（保持意图，不放宽）
+
+**`website/index.html`（+4 行，只有注释）**：`hero-actions` 与 `cta-actions` 里给两个下载按钮各套一对「机器同步区」标记 `<!-- blinkclip-download:start/end -->`。任务单假设 HTML 里已有该标记块，实际只有 `README.md` / `README.en.md` 有；这里是按任务单允许的「最小改动加稳定包裹」补上。同步脚本一个字节没改（它只替换两个按钮 href，与标记共存）。
+
+**`scripts/test-website-i18n.cjs`（1 → 3 项检查，22 → 24）**：
+
+1. `versioned DMG links are pinned only inside the synchronized download markers`
+   - Start/End 标记各恰好 2 对；
+   - 把两个标记区间从 HTML **切掉**后，剩余的人手写内容里**不许**出现 `BlinkClip-\d+\.\d+\.\d+-macos-universal\.dmg`，也不许出现 `releases/download/`。
+2. `hero and CTA download links target the latest release or its synchronized DMG`
+   - 仍然要求恰好 2 个 `.button`；
+   - 每个 href 必须**要么**是 `https://github.com/aexachao/BlinkClip/releases/latest`，**要么**是标记块里那条 DMG，其它 URL 一律失败；
+   - 未发布状态（标记块里没有 DMG）额外要求 `data-release-version` 为空，且按钮只能是 `…/releases/latest` 或 `…/releases`（`--unreleased` 的产物）。
+3. `synchronized markers hold exactly one DMG link each, identical and matching the release version`
+   - 每个标记块**恰好一条** DMG 链接（防同步产生重复）；
+   - 两块必须是**同一个** URL（防版本漂移）；
+   - 链接里 `releases/download/vX.Y.Z` 与文件名 `BlinkClip-X.Y.Z` 一致，且等于 `data-release-version`。
+
+没有删除任何既有检查项，也没有任何断言被写成恒真：未发布分支同样要求「版本号为空」，写死版本就会失败。
+
+**与任务单的偏差（已按最接近意图的方式落地）**：任务单设想的是**一个**标记块里恰好一条 DMG 链接；实际同步会同时改写 hero 和 CTA 两个按钮（`scripts/tests/test_sync_release_downloads.py` 也断言了 2 处），所以落地为**两个**标记块、「每块恰好一条 + 两块必须完全相同」。重复/漂移都仍然会失败。
+
+### 3) 验证一：按 CI 顺序模拟（真实 Release v1.0.32）
+
+仓库副本里完整走一遍 workflow 的步骤：
+
+```
+$ node scripts/test-website-i18n.cjs                      # 同步前（仓库已提交状态）
+{"passed":true,"checks":24,"translation_keys":135}
+
+$ python3 scripts/sync-release-downloads.py --release-json /tmp/rel.json
+{"release": "v1.0.32", "changed": ["website/index.html", "website/i18n.js"]}
+
+$ python3 -m unittest discover -s scripts/tests -p 'test_sync_release_downloads.py'
+Ran 9 tests in 0.013s — OK
+
+$ python3 scripts/check-website.py
+{"passed": true, "checked_links": 50, "translation_keys": 135, "reviewed_images": 6, "universal_download": "1.0.32"}
+
+$ node --check website/i18n.js && node --check website/site.js
+ok
+
+$ node scripts/test-website-i18n.cjs                      # 同步后（新断言生效）
+{"passed":true,"checks":24,"translation_keys":135}
+
+$ python3 -m unittest discover -s scripts/tests           # 16 tests
+Ran 16 tests in 0.016s — OK
+
+$ python3 scripts/sync-release-downloads.py --release-json /tmp/rel.json   # 幂等
+{"release": "v1.0.32", "changed": []}
+```
+
+补充覆盖：
+
+- 未来版本（用 `test_sync_release_downloads.py` 的 `v9.8.7` 夹具渲染）→ `checks:24 passed`、`check-website.py` 报 `universal_download: "9.8.7"`，说明断言不依赖当前具体版本号。
+- `--unreleased` 状态（按钮 → `…/releases`、`data-release-version=""`）→ `checks:24 passed`。
+
+### 4) 验证二：反向灵敏度（改了就必须挂）
+
+在同步后的副本上逐项注入错误，每次只改一处：
+
+| 注入 | 结果 | 触发的断言 |
+| --- | --- | --- |
+| 标记块里的版本改成 `v9.9.9` | FAILED | `data-release-version must match the synchronized DMG` |
+| 人手写区域插一条固定版本 DMG 链接 | FAILED | `hand-written markup must not pin an installer version` |
+| 按钮 href 改成 `https://example.com/BlinkClip.dmg` | FAILED | 按钮断言打印该 URL |
+| 同一个标记块里塞第二条 DMG 链接 | FAILED | `each synchronized region carries exactly one DMG link` |
+| 两块各写一个不同版本（v1.0.32 / v1.0.31） | FAILED | 版本一致性 |
+| 删掉 `blinkclip-download` 标记 | FAILED | `0 !== 2`（标记对数） |
+| URL 前缀 `v1.0.32` 但文件名写 `BlinkClip-1.0.31-` | FAILED | `'1.0.32' !== '1.0.31'` |
+| `data-release-version=""` 但标记块里仍有 DMG | FAILED | `data-release-version must match the synchronized DMG` |
+
+结论：8 项注入全部失败，断言不恒真。
+
+### 5) 未验证 / 假设 / 风险
+
+1. **未在真 CI 上验证**：按任务单禁止 push，本机用 `gh api` 取的真实 Release JSON（`v1.0.32`）在仓库副本里复刻 workflow 顺序；`ubuntu-latest` 的行为、`gh api` 认证、Pages 部署本身未验证。
+2. **两个标记块的形状**：如果以后有人把同步标记块挪位置/只留一块，测试会报「标记各 2 对」失败——这是有意的回归网，不是漏配。
+3. **未发布分支允许 `…/releases`**：`sync-release-downloads.py --unreleased` 会把按钮写成 `…/releases`（不是 `…/latest`），测试为此显式放行该 URL，但只在「标记块里一条 DMG 都没有且 `data-release-version` 为空」时放行；任何一条不满足都会失败。
+4. 未改 Swift、版本号、CHANGELOG、workflows；未 push。

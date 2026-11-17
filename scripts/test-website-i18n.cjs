@@ -302,10 +302,54 @@ check('counts and measure words are expressed naturally in each language', () =>
   const zh = runtime(['zh-CN']);
   assert.equal(zh.api.t('language.trigger', { language: '简体中文' }), '切换语言：简体中文');
 });
-check('hero and CTA download links target the latest release without a pinned version', () => {
+// scripts/sync-release-downloads.py rewrites the marker blocks with the latest stable DMG before
+// this test runs in CI, so a pinned installer is expected there and only there.
+const RELEASE_BASE = 'https://github.com/aexachao/BlinkClip';
+const LATEST_RELEASE = `${RELEASE_BASE}/releases/latest`;
+const DMG_LINK = /https:\/\/github\.com\/aexachao\/BlinkClip\/releases\/download\/v(\d+\.\d+\.\d+)\/BlinkClip-(\d+\.\d+\.\d+)-macos-universal\.dmg/g;
+const syncedRegions = [...html.matchAll(/<!-- blinkclip-download:start -->([\s\S]*?)<!-- blinkclip-download:end -->/g)].map((match) => match[1]);
+const htmlWithoutSynced = html.replace(/<!-- blinkclip-download:start -->[\s\S]*?<!-- blinkclip-download:end -->/g, '');
+const releaseVersion = () => {
+  const match = /data-release-version="([^"]*)"/.exec(html);
+  assert.ok(match, 'the document must declare data-release-version');
+  return match[1];
+};
+const regionLinks = () => syncedRegions.map((region) => [...region.matchAll(DMG_LINK)].map((match) => {
+  assert.equal(match[1], match[2], `release tag and installer version disagree: ${match[0]}`);
+  return match[0];
+}));
+const syncedLinks = () => regionLinks().flat();
+
+check('versioned DMG links are pinned only inside the synchronized download markers', () => {
+  assert.equal(html.split('<!-- blinkclip-download:start -->').length - 1, 2, 'hero and CTA markers');
+  assert.equal(html.split('<!-- blinkclip-download:end -->').length - 1, 2, 'hero and CTA markers');
+  assert.equal(syncedRegions.length, 2);
+  assert.ok(!/BlinkClip-\d+\.\d+\.\d+-macos-universal\.dmg/.test(htmlWithoutSynced),
+    'hand-written markup must not pin an installer version');
+  assert.ok(!/releases\/download\//.test(htmlWithoutSynced), 'hand-written markup must not pin a download URL');
+});
+
+check('hero and CTA download links target the latest release or its synchronized DMG', () => {
   const links = [...html.matchAll(/class="button" href="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(links.length, 2);
-  for (const link of links) assert.equal(link, 'https://github.com/aexachao/BlinkClip/releases/latest');
-  assert.ok(!/BlinkClip-\d+\.\d+\.\d+-macos-universal\.dmg/.test(html));
+  const pinned = syncedLinks();
+  if (pinned.length === 0) {
+    assert.equal(releaseVersion(), '', 'a site without a published installer must not claim a release version');
+    for (const link of links) assert.ok([LATEST_RELEASE, `${RELEASE_BASE}/releases`].includes(link), link);
+    return;
+  }
+  for (const link of links) assert.ok(link === LATEST_RELEASE || link === pinned[0], link);
+});
+
+check('synchronized markers hold exactly one DMG link each, identical and matching the release version', () => {
+  const links = syncedLinks();
+  if (links.length === 0) {
+    assert.equal(releaseVersion(), '', 'no installer is only allowed together with an empty release version');
+    return;
+  }
+  for (const urls of regionLinks()) assert.equal(urls.length, 1, 'each synchronized region carries exactly one DMG link');
+  assert.equal(new Set(links).size, 1, `both synchronized regions must share one DMG link: ${links.join(', ')}`);
+  assert.equal(`v${releaseVersion()}`, /download\/(v\d+\.\d+\.\d+)\//.exec(links[0])[1],
+    'data-release-version must match the synchronized DMG');
 });
 console.log(JSON.stringify({ passed: true, checks, translation_keys: Object.keys(messages.en).length }));
