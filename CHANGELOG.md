@@ -1,5 +1,31 @@
 # 更新日志
 
+## 1.0.31 · 2026-11-17（GitHub Releases）
+
+两处用户反馈的收尾：框选的十字辅助线**可以关掉**了——设置 →「截图」→「框选覆盖层」→「显示十字辅助线」，**默认开**，关掉只让那两条贯穿全屏的横竖辅线消失，框选本身的其它一切（选框、尺寸标签、暗化、放大镜、窗口高亮、系统十字光标）都不动；退出二次确认弹窗的「退出」按钮从「浅底红字」改成**强调色实心 + 白字**，白字对比度浅色 **5.18:1**、深色 **4.97:1**，结构、文案、按钮顺序与尺寸一律不变。CloudKit、签名与更新通道均无变更。
+
+### 截图
+
+- **新增开关：设置 →「截图」→「框选覆盖层」→「显示十字辅助线」（三语，默认开）。** 键 `blinkclip.screenshot.showCrosshairGuides`，读写集中在 `BlinkClipScreenshotSettings`；**缺键 = 开**（`bool(forKey:)` 对缺键返回 false，会把默认值读反，所以先 `object(forKey:)` 判存在），外部用 `defaults write … -string NO` 写坏的非布尔值也按「没存过」处理，不把随手写坏的字符串解释成关。覆盖层只有一个读点（`SelectionView.crosshairGuidesEnabled`，初值取同一个偏好），`updateCrosshairLayers` 的 `guard` 多一个条件——**关闭后只是不画这两条贯穿辅线**：选框本体（蓝 1pt 实线 + 横条/L 角标）、尺寸标签、暗化、窗口 hover 高亮、放大镜与系统十字光标全部照旧，指针移动也不会把线带回来，重新打开立即恢复。
+
+- **设置页截图分区两张卡变三张，仍一屏装得下。** 新组「框选覆盖层」带一条单行开关行，行留白用 `SettingsRowMetrics.singleLine`，与「通用」页单行开关同一套；三语文案进 `ScreenshotSettingsCopy`（**89 键 → 91 键** = 52 设置 + **34 截图** + 5 toast），截图页实测 en **532pt** / zh **506pt** ≤ 548pt 视口，不用滚动。
+
+### 界面
+
+- **退出二次确认弹窗：「退出」= 强调色实心 + 纯白文字。** 1.0.30 那个 `.warning` 的 destructive 按钮被 AppKit 画成「浅色底 + 红字」，实测文字与背景浅色 **3.55:1**、深色 **1.23:1**，既不像系统按钮也读不清。现在清掉 `hasDestructiveAction`、给 `bezelColor` 上强调色、`attributedTitle` 上白字——圆角/内边距/尺寸仍由 AppKit 用同一套 rounded bezel 画，和「取消」只差颜色，字号沿用按钮原有字体。**顺序有讲究**：`hasDestructiveAction` 必须在 `bezelColor` 之前清掉，否则按钮 cell 被重新配置，浅色外观会退回白底黑字。系统强调色本身（浅色 `#007AFF`）与白字只有 **4.02:1**、AppKit 渲染的渐变按钮约 4.4:1，都低于 4.5:1，所以填充色按「白字 ≥4.5:1」（目标 4.8:1）从强调色逐步压深，色相仍是用户选的强调色；压深后实测 **5.18:1（浅）/ 4.97:1（深）**，两种外观都达标。弹窗结构、标题、说明文案、按钮顺序与尺寸不变，Return / Esc 仍落在「取消」上。
+
+### 测试
+
+- **`test-settings-architecture.sh`：713 断言（en）/ 714（zh-Hans）/ 786（zh-Hant）全过 + 63 条源码契约。** 截图分区卡片数 2 → 3 写进 `cardCentringCoverage`（`(.screenshot, 3)`），逐卡/逐行对齐把新卡与新开关行一起点名；行恢复/冲突/回滚 182 条独立断言与真实截图槽通知复核通过。
+
+- **`test-settings-localization.sh`：91 键（52 + 34 + 5）三语同键集。** 每语言 130 条检查全过；繁中截图 34 键里 **33/34** 与简中不同、0 条残留简体写法；`Copy-table structure` 9 条、`Copy call sites` 86 条三语三元组通过。
+
+- **`test-capture-chrome-exclusion.sh`：357 checks + SEL 9 + REV 24。** `CaptureChromeExclusionHarness` 实测「关 → 两条辅线不可见且 chrome/hover/两个 band 全在、指针移动也不回来、开 → 复现」，并核对偏好读写；240 帧 120Hz 扫掠 `sweepMismatches=0`、`sweepDraws=0`、拖拽期 `dragDraws=0` 等既有不变量不变。
+
+- **`test-panel-menu.sh`：235 checks。** 源码门改盯「两个按钮都不是 destructive」+「`bezelColor = accessibleAccentFill`」+「白字」，`PanelShortcutMenuHarness` 逐项校验非 destructive、标题不变、取消不染色、填充为蓝且对比度 ≥4.5（浅/深两种外观各算一次）。
+
+- **回归**：`python3 -m unittest discover -s scripts/tests`（16 tests OK）、`blinkclip-core-tests`（**29 / 0 / 0**）全部通过。
+
 ## 1.0.30 · 2026-11-17（GitHub Releases）
 
 框选辅助线回到用户要的形态：**贯穿全屏、跟着指针走的横竖两条实线**。1.0.26–1.0.29 那套「吸附窗口边缘 + 拖拽吸边 + 显示中线」整体撤销——窗口四边描线、8pt 拖拽吸附、「框选辅助 → 显示中线」设置项与它的三语文案全部删除，设置页截图页回到两张卡。辅线仍是独立图层、同步刷新，指针移动期间不重绘冻结快照，240 帧 120Hz 扫掠实测跟随偏差 **≤0.3pt**。与吸附无关的成果一条没丢：放大镜 20Hz + 静态缓存、事件路径零内容请求、覆盖层 `.stationary`、尺寸标签屏幕边界钳制、hover 高亮独立图层、窗口枚举 2Hz。CloudKit、签名与更新通道均无变更。
