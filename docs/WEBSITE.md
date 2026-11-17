@@ -31,35 +31,56 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory website
 
 部署工作流为 `.github/workflows/pages.yml`，只上传 `website/`。首次启用时，在仓库 **Settings → Pages → Build and deployment → Source** 中选择 **GitHub Actions**。
 
-当前仓库尚未启用 Pages，不将预期域名称为已上线官网。先在 Settings 配置 Pages，再设置仓库变量 `BLINKCLIP_PAGES_ENABLED=true`；之后 main 网站变更或手动 Deploy BlinkClip website 才会部署。预期地址为 https://aexachao.github.io/BlinkClip/，以真实部署结果为准。安装包仅在显式手动 publish=true 时发布。
+Pages 已启用（仓库变量 `BLINKCLIP_PAGES_ENABLED=true`，Source 为 GitHub Actions），main 上 `website/**` 变更或手动 Deploy BlinkClip website 都会部署到 https://aexachao.github.io/BlinkClip/。安装包仅在显式手动 publish=true 时发布。
 
-下载版本由已成功发布的正式 Release 驱动。本仓库尚无 Release，当前使用 --unreleased 显示源码构建与发布状态，不链接别人的安装包。未来验证本仓库实际发布附件后才更新下载；缺少 Release 的 404 可进入未发布状态，其他 API 错误仍失败。复制到官网的真实演示截图来自 `docs/images/`，图标来自 `replica/Assets/`；替换素材前确保不含用户历史或其他隐私。
+下载版本由已成功发布的正式 Release 驱动。部署时工作流用 `scripts/sync-release-downloads.py` 把 `website/index.html` 的两处下载按钮、`data-release-version`、页脚正式安装包链接与 `hero.release` / `download.meta` / `download.mac` 三个字典项对齐最新正式版（当前 1.0.33）；真正的 Release 404 进入 `--unreleased` 未发布状态，其他 API 错误仍失败。官网配图只允许使用 `scripts/check-website.py` 白名单里的 `website/assets/` 素材；替换素材前确保不含用户历史或其他隐私。
+
+## 页面结构（2026-11-18 精简版）
+
+首屏加六段正文，再落到一个下载段；1440×900 下总高约 5611px（≈6.2 屏），目标上限 6500px。可见文案约 1398 字符（其中 924 个汉字），中文用途上限 1400 字符。
+
+1. **首屏**：一行大标题 + 一句副标题（≤40 汉字 / ≤90 字符英文）+ 一行元信息（`macOS 14+ · Universal · 本地优先 · 无需账号`）+ 主按钮「免费下载 Mac 版」与次按钮「查看功能」+ 整幅产品图。
+2. `#capture` **截图与标注**：真实框选覆盖层 + 标注工具栏，配 3 条要点。
+3. `#history` **剪贴板历史**：3 条要点 + 通栏面板截图。
+4. `#integrations` **AI 与同步**：两栏图标加短说明，不用大图。
+5. `#shortcuts` **快捷键**：一行四个键位，不做表格、不做卡片。
+6. `#permissions` **权限与隐私**：两栏（需要哪些权限 / 数据在哪）+ 权限设置截图。
+7. `#faq` **常见问题**：4 条手风琴，编辑排版。
+8. `#cta` **下载**：一句标题 + 一个按钮 + 一行小字（Universal / Developer ID 与公证 / 版本）。
+9. **页脚**：品牌、许可、正式安装包链接、第三方致谢、GitHub。版本行只出现在页脚，不再占据首屏。
+
+已删除：倾斜与旋转的截图、各段 `clip-path` 分段边缘、暖色（粉/紫/薰衣草）大面积 wash、填充式数字段（0 / 1 / 5 / 14+）、独立的隐私段与权限段（合并为一段两栏）。
+
+## 视觉规范（2026-11-18）
+
+- 配色：暖近白 `#fafaf8` 页底、`#f2f0eb` 次级面、墨色 `#191917` 正文与下载段、钴蓝 `#3d5cff` 强调；不使用纯白 `#ffffff`，不使用靛紫 `#6366f1`，不再保留橙色强调。
+- 字体：`Plus Jakarta Sans`（标题）+ `Outfit`（正文），均带系统中文字体回退。
+- 首屏单列居中：标题 `clamp(2.6rem, 5.2vw, 4.6rem)` 且不超过 2 行；副标题、元信息、按钮依次居中；产品图在下方整幅展开，宽 `min(1180px, 100%)`。
+- 产品图统一外框：`1px` 描边 `rgba(25,25,23,.10)`、`border-radius: 14px`、投影 `0 24px 60px rgba(25,25,23,.10)`，全部不旋转、不加 caption。2x 素材按 1:1 显式展示（覆盖层 ≤750px、工具栏 ≤1120px、设置页 ≤540px），首屏面板按设计稿 1180px 宽。
+- 节奏：段落纵向留白 `clamp(64px, 7.5vw, 112px)`，每段只有一个视觉重点；`main` 内不再使用负 margin 互锁或斜切过渡。
+- 动效：只保留首屏入场（GSAP，标题逐行 + 其余元素淡入）；`prefers-reduced-motion: reduce` 下脚本直接返回、CSS 关闭过渡，内容全部可见；GSAP 加载失败时页面静态可读。
+- 响应式：1440 / 1024 / 768 / 390 / 320 无横向滚动，首屏高度等于视口高度（`heroBottom == innerHeight`），390 下按钮 ≥44pt，窄屏导航只保留四个图标入口。
 
 ## 官网语言
 
 - 支持简体中文和 English，文案位于 `website/i18n.js`，不依赖翻译服务或额外框架。
 - 首次访问按浏览器提供的系统首选语言列表选择：`zh-*` 使用简体中文，`en-*` 使用英文；列表中没有支持的语言时回退到英文。
-- 右上角下载按钮后的语言图标提供“跟随系统 / 简体中文 / English”。手动选择保存在本站 `localStorage` 的 `blinkclip.website.language`；恢复“跟随系统”时清除此覆盖。浏览器禁用存储时，当前访问仍可切换。
-- 切换会更新正文、FAQ、演示、数量单复数、页面标题和描述、图片替代文字、无障碍标签及 `html.lang`，保留当前搜索、筛选和 FAQ 展开状态。搜索支持中英文关键词。
+- 右上角语言图标提供“跟随系统 / 简体中文 / English”。手动选择保存在本站 `localStorage` 的 `blinkclip.website.language`；恢复“跟随系统”时清除此覆盖。浏览器禁用存储时，当前访问仍可切换。
+- 切换会更新正文、FAQ、页面标题和描述、图片替代文字、无障碍标签及 `html.lang`，并保留当前 FAQ 展开状态。
 - 真实软件截图仍为中文界面的合成数据截图，英文图片替代文字明确标注，不伪造应用的英文界面。
-- 无 JavaScript 时保留静态中文内容。新增语言时同步补充字典、菜单选项和语言匹配规则；19 项脚本检查验证首选语言、存储失败、切换恢复、字典完整性及搜索行为。
+- 无 JavaScript 时保留静态中文内容。新增语言时同步补充字典、菜单选项和语言匹配规则；24 项脚本检查验证首选语言、存储失败、切换恢复、字典完整性、FAQ 数量与文案长度预算。
 - GitHub Pages 工作流在部署前运行脚本语法、静态资源和 i18n 检查；这些检查不触发应用构建或安装包发布。
 
 ## 设计技能
 
-使用本机 `design-taste-frontend` 与 `impeccable` 的简化、配色和收尾规范。此次属于现有官网的视觉调整，保留品牌、导航、下载地址、功能文案和搜索演示。技能来源：[Taste Skill](https://github.com/Leonxlnx/taste-skill)、[Impeccable](https://github.com/pbakaus/impeccable)。GitHub Pages 工作流参考 [GitHub 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)。
-
-
-## 当前视觉规范（2026-10-29）
-
-- 官网面板截图使用当前 BlinkClip 真实视图和独立合成记录生成，包含 BlinkClip、微信、Chrome、备忘录、VS Code 和图书的来源图标及实际颜色；不对截图手工改色，不读取用户剪贴板。图片尺寸保持 3024 × 664，文档与官网共用同一份素材。
-- 按用户要求保留官网原版布局：发布提示、标题比例、笔记本示意与漂浮标签、三列功能说明、本地内容轨道、对比表、迁移卡片和下载区的位置、间距及圆角均沿用原版。
-- 保留灰白页面和深色下载按钮，以 BlinkClip 青色 `#0b6d78` 点缀标题、链接和重点；功能图标、演示卡片采用浅绿、浅蓝和暖橙，模拟桌面使用低饱和蓝绿与暖色背景。原有形状、间距与位置不变，真实图标和软件截图不改色。
-- 深色跟随系统，只改变颜色。中英文语言菜单保留在右上角；窄屏收起部分导航项与顶部下载按钮，正文下载入口保留。
-- 语言入口参考 [Vue 官网](https://vuejs.org/) 的导航工具图标方式：位于下载按钮右侧，以分隔线区分；入口不显示系统偏好文案，展开后提供语言与“跟随系统”。使用原生 `details/summary`，支持键盘操作、Escape、点击外部关闭和选择后恢复焦点。
-- 新增翻译的文字使用无布局样式的内联包装；避免嵌套文字包装继承标签容器的内边距。
-- 本轮以改版前的 HTML/CSS 作为基准，在 320、390、768、1280、1440px 下对照主要区块的坐标与尺寸；中文布局差异为零，英文无页面横向溢出。验证材料保存在 Git 忽略的 `.local/website-layout-restore/`。
+使用本机 `design-taste-frontend` 与 `impeccable` 的简化、配色和收尾规范。本轮属于现有官网的结构精简，保留品牌、导航、下载地址与真实功能文案。技能来源：[Taste Skill](https://github.com/Leonxlnx/taste-skill)、[Impeccable](https://github.com/pbakaus/impeccable)。GitHub Pages 工作流参考 [GitHub 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)。
 
 ## 2026-11-11 品牌接入
 
-页面主品牌为闪贴 / BlinkClip，favicon、OG 与页面图标统一引用 `assets/blinkclip-icon.png`；SVG源证据见 `branding/BlinkClipAssets/ExistingBrandSource/BlinkClipIcon.origin.svg`。页面保留 Paste 迁移、研究来源与许可边界。既有产品截图尚未按本轮最终品牌包重新生成，不把截图文件名或旧图等同于最新运行验收。GitHub / Pages / Release 地址及 `blinkclip.website.language` 保持兼容。商店分发不属于当前 Pages 发布结果。
+页面主品牌为闪贴 / BlinkClip，favicon、OG 与页面图标统一引用 `assets/blinkclip-icon.png`；SVG源证据见 `branding/BlinkClipAssets/ExistingBrandSource/BlinkClipIcon.origin.svg`。GitHub / Pages / Release 地址及 `blinkclip.website.language` 保持兼容。
+
+## 部署与验证
+
+Pages 已启用（仓库变量 `BLINKCLIP_PAGES_ENABLED=true`），main 上 `website/**` 变更会触发 `Deploy BlinkClip website`：先跑 `scripts/sync-release-downloads.py` 把下载按钮与版本对齐最新的正式 Release，再跑静态检查与 i18n 测试，最后上传 `website/` 并部署到 https://aexachao.github.io/BlinkClip/。
+
+回归证据保存在 `evidence/website/shots/`：`after-*.png` 为改版后三档视口截图，`compare-before-after-*.png` 为改版前后上下拼接对比图，`after-audit.json` / `before-audit.json` 记录首屏高度、页面总高、横向溢出与可见字数。测量脚本为 `evidence/website/tools/audit.cjs` 与 `evidence/website/tools/checks.cjs`（需要 `--remote-debugging-port=9222` 的 Chrome）。
