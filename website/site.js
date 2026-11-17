@@ -1,41 +1,42 @@
-const search = document.querySelector('#demo-search');
-const filters = [...document.querySelectorAll('[data-filter]')];
-const cards = [...document.querySelectorAll('.demo-card')];
-const result = document.querySelector('.demo-result');
-const empty = document.querySelector('.demo-empty');
-let selectedType = 'all';
+const sections = [...document.querySelectorAll('main section[id]')];
+const links = [...document.querySelectorAll('.pill-link')];
 
-function updateDemo() {
-  const language = window.BlinkClipI18n.language;
-  const query = search.value.trim().toLocaleLowerCase(language);
-  let count = 0;
-  for (const card of cards) {
-    const matchesType = selectedType === 'all' || card.dataset.type === selectedType;
-    const matchesQuery = card.dataset.search.toLocaleLowerCase(language).includes(query);
-    card.hidden = !(matchesType && matchesQuery);
-    if (!card.hidden) count += 1;
+function setActive(id) {
+  for (const link of links) {
+    const active = link.getAttribute('href') === `#${id}`;
+    link.classList.toggle('is-active', active);
+    if (active) link.setAttribute('aria-current', 'true');
+    else link.removeAttribute('aria-current');
   }
-  for (const filter of filters) {
-    filter.setAttribute('aria-pressed', String(filter.dataset.filter === selectedType));
-  }
-  empty.hidden = count !== 0;
-  result.textContent = window.BlinkClipI18n.t(count === 1 ? 'demo.result.one' : 'demo.result.other', {
-    count: new Intl.NumberFormat(language).format(count)
+}
+
+if (sections.length && links.length && 'IntersectionObserver' in window) {
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries
+      .filter((entry) => entry.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.2, 0.6] });
+  for (const section of sections) observer.observe(section);
+}
+
+for (const item of document.querySelectorAll('.faq-item')) {
+  const trigger = item.querySelector('.faq-trigger');
+  if (!trigger) continue;
+  trigger.addEventListener('click', () => {
+    const open = item.dataset.open === 'true';
+    for (const other of document.querySelectorAll('.faq-item[data-open="true"]')) {
+      if (other !== item) {
+        other.dataset.open = 'false';
+        other.querySelector('.faq-trigger')?.setAttribute('aria-expanded', 'false');
+      }
+    }
+    item.dataset.open = String(!open);
+    trigger.setAttribute('aria-expanded', String(!open));
   });
 }
 
-search.addEventListener('input', updateDemo);
-for (const filter of filters) {
-  filter.addEventListener('click', () => {
-    selectedType = filter.dataset.filter;
-    updateDemo();
-  });
-}
-document.querySelector('.demo-reset').addEventListener('click', () => {
-  selectedType = 'all';
-  search.value = '';
-  updateDemo();
-  search.focus();
+const switcher = document.querySelector('.language-switch');
+document.addEventListener('click', (event) => {
+  if (switcher?.open && !switcher.contains(event.target)) switcher.open = false;
 });
-document.addEventListener('blinkclip:languagechange', updateDemo);
-updateDemo();
