@@ -495,9 +495,36 @@ import AppKit
                                          isARepeat: false, keyCode: 53) {
             check(alert.window.performKeyEquivalent(with: escape), "alert 必须接住 Esc（落到取消上）")
         }
-        // 红色 destructive 只修饰「退出」。
-        check(alert.buttons[1].hasDestructiveAction, "「退出」应是 destructive")
-        check(!alert.buttons[0].hasDestructiveAction, "「取消」不能是 destructive")
+        // 「退出」是强调色实心按钮 + 纯白文字；「取消」保持系统默认灰白样式。
+        // 两个按钮都不能是 destructive：.warning 样式会把它画成「浅色底 + 红字」，
+        // 实测浅色 3.55:1、深色 1.53:1，既不像系统按钮也读不清。
+        check(!alert.buttons[0].hasDestructiveAction && !alert.buttons[1].hasDestructiveAction,
+              "两个按钮都不能是 destructive（否则是浅底红字）")
+        check(alert.buttons[1].title == copy.confirmTitle, "改样式不能改按钮标题")
+        check(alert.buttons[0].attributedTitle.string == copy.cancelTitle, "「取消」标题不变")
+        check(alert.buttons[0].bezelColor == nil, "「取消」保持系统默认样式，不要染色")
+        check(alert.buttons[1].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil)
+                as? NSColor == NSColor.white,
+              "「退出」的文字必须是白色")
+        // 填充色是压深到「白字 ≥4.5:1」的系统强调色：蓝、够深，不是灰也不是红。
+        guard let confirmFill = alert.buttons[1].bezelColor else {
+            check(false, "「退出」必须有实心填充色")
+            return
+        }
+        let fill = confirmFill.usingColorSpace(.sRGB) ?? confirmFill
+        let fillContrast = PanelShortcutMenuQuitConfirmation.contrastRatio(fill, .white)
+        check(fillContrast >= 4.5,
+              "「退出」白字与填充的对比度必须 ≥4.5:1，实际 \(fillContrast)")
+        check(fill.blueComponent > 0.6 && fill.redComponent < 0.25,
+              "「退出」填充仍是系统强调色的蓝：rgb \(fill.redComponent),\(fill.greenComponent),\(fill.blueComponent)")
+        // 两种外观都达标：强调色是按外观解析的动态色，浅色与深色各算一次。
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            guard let appearance = NSAppearance(named: appearanceName) else { continue }
+            let themedFill = PanelShortcutMenuQuitConfirmation.accessibleAccentFill(for: appearance)
+            let themedContrast = PanelShortcutMenuQuitConfirmation.contrastRatio(themedFill, .white)
+            check(themedContrast >= 4.5,
+                  "\(appearanceName.rawValue) 外观下「退出」白字对比度 \(themedContrast) 低于 4.5:1")
+        }
 
         // 响应映射
         check(!PanelShortcutMenuQuitConfirmation.shouldTerminate(.alertFirstButtonReturn),

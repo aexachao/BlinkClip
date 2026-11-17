@@ -44,6 +44,7 @@
 - 快捷键页页尾唯一“恢复全部快捷键…”（链接样式，与内容区右上角解耦）管理四项应用、两项截图组合及两类粘贴修饰键；取消零写，保存失败保留原值并就地报错，成功统一刷新六个录制器。（用户确认 / Agent 推断；2026-11-14 管理动作从页首移到页尾并降权）
 - 截图只隐藏历史 NSPanel，设置（含其中的关于页）、普通编辑器与附属确认框保持显示。（用户反馈 / Agent 推断；关于不再是独立窗口，2026-11-15 补）
 - 系统警告确认框使用普通系统按钮文字颜色，移除 destructive 标记以改善灰底红字可读性；Return、数字 Enter、Esc 安全取消，仅明确确认按钮执行。不宣称完整 HIG 合规。（用户反馈 / Agent 推断）
+- 退出二次确认弹窗（快捷菜单「退出 闪贴」）不动结构、只改按钮配色：**「退出」= 系统强调色实心填充 + 纯白文字**，圆角/尺寸/按钮顺序仍是系统那一套（`bezelColor` 只换填充）；「取消」保持系统默认灰白样式。不再用 `hasDestructiveAction`——`.warning` 会把它画成「浅色底 + 红字」，实测浅色 3.55:1、深色 1.23:1。强调色本身（浅色 `#007AFF`）与白字只有 4.02:1、AppKit 渲染的渐变按钮约 4.4:1，所以填充色按「白字 ≥4.5:1」从强调色逐步压深（目标 4.8:1），色相仍是用户选的强调色；压深后实测 **5.18:1（浅）/ 4.97:1（深）**。Return/Esc 仍落在「取消」上。（用户反馈 / 实机截屏验证，见 `evidence/patches/two-fixes-report.md`）
 - 历史保留时间使用直接选项块，只提供 1、3、7、15、30、60 天和永久；不提供自定义输入、锁或会员选项。（用户确认）
 - 保留期限选中态不显示对勾；使用强调边框、底色、字重及辅助功能选中状态。（用户确认，替代此前勾选标记）
 - 说明文字按实际行高布局；正常状态不为隐藏错误预留空白，说明与分隔线间距约 15pt。（用户确认）
@@ -148,3 +149,4 @@ A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立�
 - 2026-11-17 OPT：覆盖层三项成本下调（120Hz 指针流实测）。①窗口枚举 **8Hz → 2Hz**，指针静止 2 秒后**暂停**枚举（下一次指针事件立即恢复），hover 由命中转为未命中时**未命中补采**一次（0.25s 下限，同一空区域不重复补采），浮动层窗口的 bundle-id 查询**按 pid 缓存**；②放大镜面板 **30Hz → 20Hz**，静态部分（圆角背景 + 三条提示行）离线渲染成位图后复用，每帧只重绘放大区与数值行（坐标 / 色值）；③删除每事件的 `lens-request`：面板由控制器 20Hz 定时器按固定频率读指针，**事件路径零请求**。MEAS 埋点保留（`BLINKCLIP_OVERLAY_PERF=1` 才输出），前后对照见 `evidence/patches/opt-report.md`。
 - 2026-11-16 CL：尺寸标签加**屏幕边界钳制**。改前标签固定画在选区左上外侧（上方 8pt），选区贴屏幕顶部时胶囊会被屏幕边缘裁掉。现在 `SelectionView.sizeLabelRect(for:in:text:)` 先取该视图所在屏幕的 `visibleFrame`（`window?.screen`，回退 `NSScreen.main`），默认仍是上方 8pt / 左边对齐；上方放不下就翻到选区下方外侧 8pt；左右越界平移回屏内（各留 4pt）；上下都放不下时才允许压进选区内部，但始终完整落在 `visibleFrame` 内。尺寸/字号/圆角/颜色/文案（含 `×`）不变，覆盖层与编辑器共用同一函数，因此编辑器 live 选框的标签同样不会被裁。`CaptureChromeExclusionHarness` 用与 `visibleFrame` 等大的离屏视图实测贴顶/贴底/贴左/贴右四边（全部边在屏内、与选区重叠面积 0）与全高选区兜底（可重叠但仍完整在屏内），并逐像素证明编辑器与覆盖层的强调色像素集合完全相同；证据见 `evidence/patches/cl-label-clamp-report.md`、`evidence/patches/cl-label-clamp-renders/`。
 - 2026-11-17 TFA：截图分区新增「框选覆盖层」组与「显示十字辅助线」开关（`blinkclip.screenshot.showCrosshairGuides`，缺键 = 开，三语键进 `ScreenshotSettingsCopy`，设置页多一张单行卡，截图分区两张卡变三张——`SettingsArchitectureHarness.cardCentringCoverage` 与逐行对齐点名同步 +1，`CaptureChromeExclusionHarness` 实测「关 → 两条辅线不可见且 chrome/hover/band 全在、开 → 复现」；截图页仍一屏装得下：en 532pt / zh 506pt ≤ 548pt 视口）。证据见 `evidence/patches/two-fixes-report.md` 与同目录的截屏。
+- 2026-11-17 TFB：退出二次确认弹窗「退出」改为强调色实心 + 白字（压深到白字 ≥4.5:1），取消不变，`PanelShortcutMenuHarness` 断言填充色/白字/非 destructive；浅深外观实机截屏量得 5.18:1 / 4.97:1。证据见 `evidence/patches/two-fixes-report.md` 与同目录的截屏。

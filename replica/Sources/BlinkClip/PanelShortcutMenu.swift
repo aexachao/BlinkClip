@@ -382,12 +382,18 @@ enum PanelShortcutMenuQuitConfirmation {
     static var copy: Copy { .standard }
 
     /// 取消按钮在前：`NSAlert` 的**第一个按钮就是默认按钮**（蓝底、Return 落在它上面），
-    /// 所以默认动作是取消，红色 destructive 只染「退出」。
+    /// 所以默认动作是取消。
     ///
     /// Esc 再显式挂到取消上：一个 `NSButton` 的 `keyEquivalent` 只能存一个键，
     /// 而 Return 由 `NSAlert` 的默认按钮机制负责，两者互不抢占。
     /// （`defaultButtonCell` 不要再手动改：赋值会把该按钮的 keyEquivalent 重置回
     /// `\r`，Esc 就丢了。）
+    ///
+    /// 「退出」按钮的样式：**系统强调色（压深到白字达标）实心填充 + 白字**，
+    /// 圆角/尺寸/按钮顺序都还是系统那一套（`bezelColor` 只给现有圆角按钮换填充，
+    /// 形状由 AppKit 画）。不要改回 `hasDestructiveAction`：警告样式会把它画成
+    /// 「浅色底 + 红字」，1.0.30 实测浅色 3.55:1、深色 1.23:1，既不像系统按钮也读不清。
+    /// 现在白字与填充实测 5.18:1（浅）/ 4.97:1（深），两种外观都清晰。
     static func makeAlert() -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -395,9 +401,73 @@ enum PanelShortcutMenuQuitConfirmation {
         alert.informativeText = copy.message
         let cancel = alert.addButton(withTitle: copy.cancelTitle)   // .alertFirstButtonReturn
         let confirm = alert.addButton(withTitle: copy.confirmTitle) // .alertSecondButtonReturn
-        confirm.hasDestructiveAction = true
+        styleConfirmButton(confirm)
         cancel.keyEquivalent = "\u{1b}"
         return alert
+    }
+
+    /// 把「退出」按钮画成强调色实心按钮，文字纯白。
+    ///
+    /// 只换颜色，不换控件：`bezelColor` 让 AppKit 用同一套圆角/内边距/尺寸重绘填充，
+    /// 所以它和「取消」只差颜色。字号沿用按钮原来的字体（`attributedTitle` 里那一个，
+    /// 取不到才退回系统字号），两个按钮的文字大小因此一致。
+    ///
+    /// 顺序有讲究：`hasDestructiveAction` 必须在 `bezelColor` **之前**清掉。
+    /// 先上色再改这个标志会让 AppKit 把按钮的 cell 重新配一遍，填充色被丢掉
+    /// （浅色外观尤其明显：按钮退回白底黑字）。
+    static func styleConfirmButton(_ button: NSButton) {
+        let title = button.title
+        var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.white]
+        if let font = button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont {
+            attributes[.font] = font
+        } else {
+            attributes[.font] = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        }
+        button.hasDestructiveAction = false
+        button.bezelColor = accessibleAccentFill(for: button.window?.effectiveAppearance)
+        button.attributedTitle = NSAttributedString(string: title, attributes: attributes)
+    }
+
+    /// 白字在按钮填充上要够清楚：系统强调色本身（浅色 `#007AFF`）与白字只有
+    /// **4.02:1**，AppKit 渲染出的渐变按钮实测约 4.4:1，两者都低于 4.5:1 的
+    /// 无障碍下限。这里从强调色出发逐步压深，到达标为止（目标 4.8:1，给按钮顶部
+    /// 那一点浅色渐变留余量），色相仍是用户选的系统强调色。
+    static let confirmFillContrastTarget: CGFloat = 4.8
+
+    /// 按目标外观把系统强调色解析成具体颜色，再按 2% 一档压深到目标值；浅色与深色
+    /// 各走同一段逻辑（强调色本身两种外观不同，达标所需的压深比例也不同）。
+    static func accessibleAccentFill(for appearance: NSAppearance? = nil) -> NSColor {
+        var accent = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? NSColor.controlAccentColor
+        if let appearance {
+            // 强调色是按外观解析的动态色：在目标外观里取一次，压深结果才对。
+            appearance.performAsCurrentDrawingAppearance {
+                accent = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? NSColor.controlAccentColor
+            }
+        }
+        var fraction: CGFloat = 0
+        while fraction <= 0.8 {
+            let candidate = accent.blended(withFraction: fraction, of: .black) ?? accent
+            if contrastRatio(candidate, .white) >= confirmFillContrastTarget { return candidate }
+            fraction += 0.02
+        }
+        return .black
+    }
+
+    /// WCAG 2.1 相对亮度与对比度（只用来挑一个「白字够清楚」的填充色）。
+    static func relativeLuminance(_ color: NSColor) -> CGFloat {
+        let srgb = color.usingColorSpace(.sRGB) ?? color
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(srgb.redComponent)
+            + 0.7152 * linear(srgb.greenComponent)
+            + 0.0722 * linear(srgb.blueComponent)
+    }
+
+    static func contrastRatio(_ first: NSColor, _ second: NSColor) -> CGFloat {
+        let a = relativeLuminance(first)
+        let b = relativeLuminance(second)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
     }
 
     /// 只有「退出」按钮（`.alertSecondButtonReturn`）才放行；
