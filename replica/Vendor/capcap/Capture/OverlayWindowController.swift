@@ -1,4 +1,5 @@
 import AppKit
+import os
 import QuartzCore
 
 typealias WindowSnapshotLoader = @Sendable (CGFloat) -> Result<[DetectedWindow], WindowDetectionError>
@@ -618,9 +619,15 @@ class OverlayWindowController {
         let snapshotLoader = windowSnapshotLoader
         let context = triggerContext
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // The 8Hz full window-list enumeration: measured on its own queue so
+            // the interval never crosses threads (both ends are emitted here).
+            let perfScan = OverlayPerfSignpost.begin("window-scan")
             let result = snapshotLoader(primaryScreenArea)
+            OverlayPerfSignpost.end("window-scan", perfScan)
             context?.mark(.windowEnumerationReady)
             MainRunLoopScheduler.perform {
+                let perfApply = OverlayPerfSignpost.begin("window-apply")
+                defer { OverlayPerfSignpost.end("window-apply", perfApply) }
                 guard let self else { return }
                 self.windowEnumerationInFlight = false
                 guard generation == self.presentationGeneration,
@@ -1527,6 +1534,8 @@ class OverlayWindowController {
     }
 
     private func refreshMagnifierLensPanelContent() {
+        let perfRequest = OverlayPerfSignpost.begin("lens-request")
+        defer { OverlayPerfSignpost.end("lens-request", perfRequest) }
         guard let lens = magnifierLensPanel else { return }
         let mouseLocation = NSEvent.mouseLocation
         // CGRect.contains uses a half-open [min, max) interval so a cursor

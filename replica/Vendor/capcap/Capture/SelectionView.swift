@@ -1,5 +1,46 @@
 import AppKit
+import os
 import QuartzCore
+
+// MARK: - Overlay perf signposts (MEAS)
+//
+// Measurement-only scaffolding: the overlay's per-event hot path is broken into
+// `os_signpost` intervals so the in-app cost of a pointer move can be read from
+// the trace instead of guessed from `top`.
+//
+// Off by default and zero-cost when off: every call site is a `guard` on a
+// `static let` read once at launch, so nothing is emitted (and nothing is
+// allocated for an interval id) unless the process was started with
+//
+//     BLINKCLIP_OVERLAY_PERF=1
+//
+// `OSSignposter` itself is the cheap path (`OS_LOG_CATEGORY_POINTS_OF_INTEREST`
+// signposts are disabled at the source when no tooling is attached), so even the
+// instrumented build keeps its product behaviour and its resting cost.
+enum OverlayPerfSignpost {
+    /// Set once at launch from the environment; not a user-facing setting.
+    static let isEnabled = ProcessInfo.processInfo
+        .environment["BLINKCLIP_OVERLAY_PERF"] == "1"
+
+    static let signposter = OSSignposter(
+        subsystem: "com.chrisli.blinkclip",
+        category: "overlay-perf"
+    )
+
+    /// Opens an interval; returns `nil` (and emits nothing) when the gate is off.
+    @inline(__always)
+    static func begin(_ name: StaticString) -> OSSignpostIntervalState? {
+        guard isEnabled else { return nil }
+        return signposter.beginInterval(name, id: signposter.makeSignpostID())
+    }
+
+    /// Closes the interval opened by `begin`, if any.
+    @inline(__always)
+    static func end(_ name: StaticString, _ state: OSSignpostIntervalState?) {
+        guard let state else { return }
+        signposter.endInterval(name, state)
+    }
+}
 
 enum SelectionStartReason: Equatable {
     case newSelection
@@ -194,6 +235,8 @@ private final class HoverHighlightView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfHighlight = OverlayPerfSignpost.begin("hover-highlight")
+        defer { OverlayPerfSignpost.end("hover-highlight", perfHighlight) }
         guard !hoverRect.isNull, hoverRect.width > 0, hoverRect.height > 0,
               let context = NSGraphicsContext.current?.cgContext else { return }
 
@@ -798,6 +841,8 @@ class SelectionView: NSView {
     /// the target rect is unchanged, so hovering one window is zero work for the
     /// guide even if the pointer moves across it at 1000Hz.
     private func refreshSnapGuide() {
+        let perfGuide = OverlayPerfSignpost.begin("snap-guide")
+        defer { OverlayPerfSignpost.end("snap-guide", perfGuide) }
         let showsGuide = state == .idle
             && selectionInteractionEnabled
             && !scrollCaptureActive
@@ -1208,6 +1253,8 @@ class SelectionView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        let perfEvent = OverlayPerfSignpost.begin("event-dragged")
+        defer { OverlayPerfSignpost.end("event-dragged", perfEvent) }
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1340,6 +1387,8 @@ class SelectionView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        let perfEvent = OverlayPerfSignpost.begin("event-moved")
+        defer { OverlayPerfSignpost.end("event-moved", perfEvent) }
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1420,6 +1469,8 @@ class SelectionView: NSView {
     /// coordinates, against the primary display's height (the origin of both
     /// coordinate systems), so a window centre on any display lands correctly.
     func updateHover(screenPoint: NSPoint) {
+        let perfHover = OverlayPerfSignpost.begin("hover-update")
+        defer { OverlayPerfSignpost.end("hover-update", perfHover) }
         guard state == .idle, !selectionLocked, selectionInteractionEnabled else {
             clearHover()
             return
@@ -1524,6 +1575,8 @@ class SelectionView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfDraw = OverlayPerfSignpost.begin("snapshot-draw")
+        defer { OverlayPerfSignpost.end("snapshot-draw", perfDraw) }
         defer {
             reportFirstDrawIfNeeded()
             scheduleFirstFramePresentationIfNeeded()

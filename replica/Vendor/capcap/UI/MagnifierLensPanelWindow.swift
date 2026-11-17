@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import os
 import QuartzCore
 
 private enum MagnifierLensPanelLayout {
@@ -177,6 +178,8 @@ final class MagnifierLensPanelWindow: NSPanel {
     }
 
     private func applyPendingUpdate() {
+        let perfRefresh = OverlayPerfSignpost.begin("lens-refresh")
+        defer { OverlayPerfSignpost.end("lens-refresh", perfRefresh) }
         guard let pending = pendingUpdate else { return }
         pendingUpdate = nil
         lastAppliedTime = CACurrentMediaTime()
@@ -506,6 +509,8 @@ final class MagnifierLensPanelView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfDraw = OverlayPerfSignpost.begin("lens-draw")
+        defer { OverlayPerfSignpost.end("lens-draw", perfDraw) }
         let panelWidth = bounds.width
         let panelHeight = bounds.height
         let magnifiedRect = NSRect(
