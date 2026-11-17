@@ -1346,6 +1346,7 @@ import BlinkClipCapture
         let description = try frame("about-description")
         let status = try frame("about-update-status")
         let button = try frame("about-check-updates")
+        let website = try frame("about-website-link")
         let project = try frame("about-project-link")
         let releases = try frame("about-release-notes-link")
         let copyright = try frame("about-copyright")
@@ -1357,12 +1358,14 @@ import BlinkClipCapture
         try check(card.contains(status) && card.contains(button) && status.maxX < button.minX
                   && status.maxY > button.minY && status.minY < button.maxY,
                   "the update status and Check for Updates must share a row")
-        try check(abs(project.midY - license.midY) <= 1 && abs(project.midY - releases.midY) <= 1
-                  && project.maxX < license.minX && license.maxX < releases.minX
-                  && copyright.minY >= max(project.maxY, license.maxY, releases.maxY),
-                  "the three footer links must appear in order on one row below the copyright")
+        try check(abs(website.midY - project.midY) <= 1 && abs(project.midY - releases.midY) <= 1
+                  && abs(project.midY - license.midY) <= 1
+                  && website.maxX < releases.minX && releases.maxX < license.minX
+                  && license.maxX < project.minX
+                  && copyright.minY >= max(website.maxY, project.maxY, license.maxY, releases.maxY),
+                  "the four footer links must appear in order (website, releases, license, source) on one row below the copyright")
         let contentBottom = window.convertPoint(toScreen: NSPoint(x: 0, y: window.contentLayoutRect.minY)).y
-        try check(abs(min(project.minY, license.minY, releases.minY) - contentBottom
+        try check(abs(min(website.minY, project.minY, license.minY, releases.minY) - contentBottom
                       - SettingsPageMetrics.bottomInset) <= 1,
                   "the About footer must align with the bottom page inset")
         // 三层间距：身份区 → 更新卡 → 页脚。身份区与更新卡之间是页面的 20pt 节奏；
@@ -2309,8 +2312,8 @@ import BlinkClipCapture
         let aboutNodes = accessibilityTree(navigationHost)
         for identifier in ["about-application-icon", "about-product-name", "about-current-version",
                            "about-description", "about-update-status", "about-check-updates",
-                           "about-project-link", "about-release-notes-link", "about-copyright",
-                           "about-license-link"] {
+                           "about-website-link", "about-project-link", "about-release-notes-link",
+                           "about-copyright", "about-license-link"] {
             try check(aboutNodes.contains { axID($0) == identifier },
                       "the About page is missing \(identifier) in \(language)")
         }

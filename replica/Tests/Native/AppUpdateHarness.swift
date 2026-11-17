@@ -356,6 +356,7 @@ struct AppUpdateHarness {
         let description = try frame("about-description")
         let status = try frame("about-update-status")
         let button = try frame("about-check-updates")
+        let website = try frame("about-website-link")
         let project = try frame("about-project-link")
         let releases = try frame("about-release-notes-link")
         let copyright = try frame("about-copyright")
@@ -371,12 +372,14 @@ struct AppUpdateHarness {
         try check(card.contains(status) && card.contains(button) && status.maxX < button.minX
                   && status.maxY > button.minY && status.minY < button.maxY,
                   "the update status and Check for Updates must share a row")
-        try check(abs(project.midY - license.midY) <= 1 && abs(project.midY - releases.midY) <= 1
-                  && project.maxX < license.minX && license.maxX < releases.minX
-                  && copyright.minY >= max(project.maxY, license.maxY, releases.maxY),
-                  "the three footer links must appear in order on one row below the copyright")
+        try check(abs(website.midY - project.midY) <= 1 && abs(project.midY - releases.midY) <= 1
+                  && abs(project.midY - license.midY) <= 1
+                  && website.maxX < releases.minX && releases.maxX < license.minX
+                  && license.maxX < project.minX
+                  && copyright.minY >= max(website.maxY, project.maxY, license.maxY, releases.maxY),
+                  "the four footer links must appear in order (website, releases, license, source) on one row below the copyright")
         let contentBottom = host.window.convertPoint(toScreen: NSPoint(x: 0, y: host.window.contentLayoutRect.minY)).y
-        try check(abs(min(project.minY, license.minY, releases.minY) - contentBottom
+        try check(abs(min(website.minY, project.minY, license.minY, releases.minY) - contentBottom
                       - SettingsPageMetrics.bottomInset) <= 1,
                   "the About footer must align with the bottom page inset")
         let pageTopGap = contentTop - icon.maxY
@@ -402,9 +405,11 @@ struct AppUpdateHarness {
             ("about-description", SettingsLocalization.text("updates.description")),
             ("about-update-status", host.model.statusText),
             ("about-copyright", SettingsLocalization.text("updates.copyright")),
-            ("about-project-link", SettingsLocalization.text("updates.link-project")),
-            ("about-release-notes-link", SettingsLocalization.text("updates.link-releases")),
-            ("about-license-link", SettingsLocalization.text("updates.link-license")),
+            // 链接行四个标签都走设置页三语表（`SettingsCopy`），与页面上的实际取值同源。
+            ("about-website-link", SettingsCopy.text("updates.link-website")),
+            ("about-release-notes-link", SettingsCopy.text("updates.link-releases")),
+            ("about-license-link", SettingsCopy.text("updates.link-license")),
+            ("about-project-link", SettingsCopy.text("updates.link-source")),
         ] {
             guard let node = pageNode(tree, identifier) else {
                 throw Failure(message: "the About page is missing \(identifier)")

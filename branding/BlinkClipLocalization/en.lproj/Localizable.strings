@@ -122,7 +122,7 @@
 "updates.unreachable" = "Can’t check for updates right now. Please try again later.";
 "updates.about-title" = "About BlinkClip";
 "updates.description" = "Clipboard history and screenshot tools for macOS";
-"updates.link-project" = "GitHub Project";
+"updates.link-source" = "Source Code";
 "updates.link-releases" = "Release Notes";
 "updates.link-license" = "AGPL-3.0 License";
 "updates.copyright" = "© 2026 BlinkClip";

@@ -124,6 +124,13 @@ enum SettingsCopy {
         "settings.automatic-updates.title": ("自动检查更新", "自動檢查更新", "Check for Updates Automatically"),
         "settings.automatic-updates.subtitle": ("每天在后台检查一次，发现新版本时提示。", "每天在背景檢查一次，發現新版本時提示。", "Checks once a day in the background and lets you know when a new version is available."),
         "settings.sound-effects.title": ("播放操作提示音", "播放操作提示音", "Play Feedback Sounds"),
-        "updates.about-title": ("关于闪贴", "關於閃貼", "About BlinkClip")
+        "updates.about-title": ("关于闪贴", "關於閃貼", "About BlinkClip"),
+        // 关于页链接行的四个标签。它们原本只走 Core 资源表，而 Core 资源包没有
+        // `zh-Hant.lproj`，繁中用户读到的是英文；这一行现在三语齐全，不再一半中文
+        // 一半英文。（2026-11-17 帮助与关于链接改指新官网时一并收进本表。）
+        "updates.link-website": ("官方网站", "官方網站", "Website"),
+        "updates.link-releases": ("更新日志", "更新日誌", "Release Notes"),
+        "updates.link-license": ("AGPL-3.0 许可证", "AGPL-3.0 許可證", "AGPL-3.0 License"),
+        "updates.link-source": ("源代码", "原始碼", "Source Code")
     ]
 }

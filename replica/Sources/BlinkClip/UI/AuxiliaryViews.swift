@@ -383,7 +383,9 @@ struct ReplicaSettingsView: View {
             .padding(.top, sidebarTopInset)
             // 页脚只留帮助入口。原来的「闪贴设置」产品名一行已删掉：产品身份现在由
             // 分区列表末尾的「关于闪贴」承载。
-            Link(destination: URL(string: "https://github.com/aexachao/BlinkClip#readme")!) {
+            // 帮助入口指向官网（功能说明与常见问题都在那里），与关于页的「官方网站」
+            // 是同一个地址：仓库 README 是开发者文档，不是用户帮助。
+            Link(destination: Self.aboutWebsiteURL) {
                 Label(SettingsCopy.text("general.help-center"), systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -781,6 +783,10 @@ struct ReplicaSettingsView: View {
         .accessibilityIdentifier("about-page")
     }
 
+    /// 官网（GitHub Pages）。它是产品介绍与常见问题的入口，也是侧栏帮助入口的
+    /// 目标；仓库与 README 只作开发者文档，不再从设置页直接跳。
+    private static let aboutWebsiteURL = URL(string: "https://aexachao.github.io/BlinkClip/")!
+    /// 源代码仓库。它现在排在关于页链接行的末尾，只承担「源码在哪」这一件事。
     private static let aboutProjectURL = URL(string: "https://github.com/aexachao/BlinkClip")!
     private static let aboutReleaseNotesURL = URL(string: "https://github.com/aexachao/BlinkClip/releases")!
     private static let aboutLicenseURL = URL(string: "https://github.com/aexachao/BlinkClip/blob/main/LICENSE")!
@@ -842,20 +848,26 @@ struct ReplicaSettingsView: View {
                 .settingsSecondaryText()
                 .accessibilityIdentifier("about-copyright")
             HStack(spacing: 12) {
-                aboutLink("updates.link-project", url: Self.aboutProjectURL,
-                          identifier: "about-project-link", fontSize: 11.5)
-                aboutLink("updates.link-license", url: Self.aboutLicenseURL,
-                          identifier: "about-license-link", fontSize: 11.5)
-                aboutLink("updates.link-releases", url: Self.aboutReleaseNotesURL,
+                // 排序按「这个链接对读者有多近」：官网（用这个应用）→ 更新日志 →
+                // 许可证 → 源代码（它是怎么做的）。官网排第一、源代码排最后。
+                // 四个标签都走设置页的三语表（`SettingsCopy.terms`）：Core 资源包没有
+                // `zh-Hant.lproj`，走 Core 的那一半在繁中系统上会读成英文。
+                aboutLink(SettingsCopy.text("updates.link-website"), url: Self.aboutWebsiteURL,
+                          identifier: "about-website-link", fontSize: 11.5)
+                aboutLink(SettingsCopy.text("updates.link-releases"), url: Self.aboutReleaseNotesURL,
                           identifier: "about-release-notes-link", fontSize: 11.5)
+                aboutLink(SettingsCopy.text("updates.link-license"), url: Self.aboutLicenseURL,
+                          identifier: "about-license-link", fontSize: 11.5)
+                aboutLink(SettingsCopy.text("updates.link-source"), url: Self.aboutProjectURL,
+                          identifier: "about-project-link", fontSize: 11.5)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    private func aboutLink(_ key: String, url: URL, identifier: String,
+    private func aboutLink(_ label: String, url: URL, identifier: String,
                            fontSize: CGFloat = 12) -> some View {
-        Link(updatesText(key), destination: url)
+        Link(label, destination: url)
             .font(.system(size: fontSize))
             .accessibilityIdentifier(identifier)
     }

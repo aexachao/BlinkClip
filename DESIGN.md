@@ -74,7 +74,7 @@
 - 标题区沿用 52pt 不透明条，新增页面不靠额外内边距补高度；52pt 的实测值与取舍见「组件与交互」，此处不重复论证。（沿用「组件与交互」实测值）
 
 ## 关于页几何
-- 关于沿用设置窗口右侧的第七页，所有现有入口都落到同一页。按任务分三层：顶部依次展示闪贴图标、名称、已装版本和说明。软件更新卡片左侧显示状态，右侧放「检查更新」。关于页页脚贴齐内容区底部，空间不足时随页面滚动。版权在上，GitHub 项目、AGPL-3.0 许可证与更新日志在下一行居中并排。
+- 关于沿用设置窗口右侧的第七页，所有现有入口都落到同一页。按任务分三层：顶部依次展示闪贴图标、名称、已装版本和说明。软件更新卡片左侧显示状态，右侧放「检查更新」。关于页页脚贴齐内容区底部，空间不足时随页面滚动。版权在上，下一行居中并排四个链接，按「离读者多远」排序：官方网站 → 更新日志 → AGPL-3.0 许可证 → 源代码（官网是 GitHub Pages 上的产品站 `https://aexachao.github.io/BlinkClip/`，源代码仍指仓库根）。
 - 顶部沿用 16pt 页边距；图标按布局框量，资产透明边缘不参与测量。更新操作始终只有一个主按钮；检查中禁用，检查状态继续由同一份模型提供。
 - 状态文案必须带时间戳或具体事实：「上次检查 HH:mm」用 24 小时制、语言无关，完成过检查才出现；未检查前只写「尚未检查更新」，不得断言“已是最新”——Sparkle 自己的弹窗已经说过，内联不再重复。（2026-11-15 核对：`BlinkClipUpdateChecker.swift`、`AppUpdateHarness.swift`）
 
@@ -156,3 +156,4 @@ A1 设置四态、A2 类别四种和 A5 通用权限插图由基本几何独立�
 - 2026-11-16 CL：尺寸标签加**屏幕边界钳制**。改前标签固定画在选区左上外侧（上方 8pt），选区贴屏幕顶部时胶囊会被屏幕边缘裁掉。现在 `SelectionView.sizeLabelRect(for:in:text:)` 先取该视图所在屏幕的 `visibleFrame`（`window?.screen`，回退 `NSScreen.main`），默认仍是上方 8pt / 左边对齐；上方放不下就翻到选区下方外侧 8pt；左右越界平移回屏内（各留 4pt）；上下都放不下时才允许压进选区内部，但始终完整落在 `visibleFrame` 内。尺寸/字号/圆角/颜色/文案（含 `×`）不变，覆盖层与编辑器共用同一函数，因此编辑器 live 选框的标签同样不会被裁。`CaptureChromeExclusionHarness` 用与 `visibleFrame` 等大的离屏视图实测贴顶/贴底/贴左/贴右四边（全部边在屏内、与选区重叠面积 0）与全高选区兜底（可重叠但仍完整在屏内），并逐像素证明编辑器与覆盖层的强调色像素集合完全相同；证据见 `evidence/patches/cl-label-clamp-report.md`、`evidence/patches/cl-label-clamp-renders/`。
 - 2026-11-17 TFA：截图分区新增「框选覆盖层」组与「显示十字辅助线」开关（`blinkclip.screenshot.showCrosshairGuides`，缺键 = 开，三语键进 `ScreenshotSettingsCopy`，设置页多一张单行卡，截图分区两张卡变三张——`SettingsArchitectureHarness.cardCentringCoverage` 与逐行对齐点名同步 +1，`CaptureChromeExclusionHarness` 实测「关 → 两条辅线不可见且 chrome/hover/band 全在、开 → 复现」；截图页仍一屏装得下：en 532pt / zh 506pt ≤ 548pt 视口）。证据见 `evidence/patches/two-fixes-report.md` 与同目录的截屏。
 - 2026-11-17 TFB：退出二次确认弹窗「退出」改为强调色实心 + 白字（压深到白字 ≥4.5:1），取消不变，`PanelShortcutMenuHarness` 断言填充色/白字/非 destructive；浅深外观实机截屏量得 5.18:1 / 4.97:1。证据见 `evidence/patches/two-fixes-report.md` 与同目录的截屏。
+- 2026-11-17 WEBLINK：设置页的帮助与关于链接改指新官网。关于页链接行由三个变四个，顺序为官方网站（`aboutWebsiteURL` = `https://aexachao.github.io/BlinkClip/`）→ 更新日志 → AGPL-3.0 许可证 → 源代码（原「GitHub 项目」，仍指仓库根）；侧栏页脚的「帮助与指南」也从仓库 README 锚点改为同一个官网地址。四个标签一并收进 `SettingsCopy` 三语表（官方网站 / 官方網站 / Website、更新日志 / 更新日誌 / Release Notes、AGPL-3.0 许可证 / AGPL-3.0 許可證 / AGPL-3.0 License、源代码 / 原始碼 / Source Code），Core 资源表的 `updates.link-project` 同步改名 `updates.link-source`（值 源代码 / Source Code）。断言：`SettingsArchitectureHarness` 与 `AppUpdateHarness` 的页脚断言由「三链接同排」改为「四链接同排 + 官网第一 + 源代码最后」，`test-settings-localization.sh` 键数 52 → 56（总键 91 → 95），并补四条繁中定点断言。证据见 `evidence/patches/about-link-report.md`。
