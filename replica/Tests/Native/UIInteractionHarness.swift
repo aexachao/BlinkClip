@@ -72,6 +72,202 @@ struct UIInteractionHarness {
             + "applied=\(String(describing: applied)), visible=\(state.visibleItems.count), "
             + "expected=\(expectedItemCount), focused=\(focused)")
     }
+    // MARK: - 卡片正文溢出（2026-11）
+
+    /// 卡片：标题条固定高度、正文只占剩余高度、超长内容尾部省略号。
+    ///
+    /// 旧实现把正文放进 `.padding(.top, bodyTop)` 的 VStack，正文自然高度一超过剩余
+    /// 空间就把 ZStack 撑得比卡片更高，外层 `.frame(sideLength, sideLength)` 再把它
+    /// 居中，标题条被顶到卡片边界之外（长文本卡完全没有标题条）。这里用离屏面板 +
+    /// 临时 Store 复现三类长内容（2000 字符 shell 单行 / 无空格长 token / 40 行多行
+    /// 文本），外加长 URL 链接卡与图片卡，断言：
+    /// ① 标题条矩形（[0, headerHeight]）与正文矩形不相交，正文不出卡片；
+    /// ② 文本渲染行数 ≤ 行数上限、以 `…` 结尾、label 不越出正文区；
+    /// ③ 面板高度（卡片尺寸）变化后同一组断言仍成立。
+    @MainActor static func assertCardContentOverflow() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BlinkClipCardOverflow-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try ClipboardStore(directoryURL: directory)
+        store.preferences.historyRetentionDays = 0
+
+        var shell = "curl -sSL --retry 5 --retry-delay 2 --connect-timeout 10 -H 'Accept: application/json' "
+        shell += "-H 'Authorization: Bearer $BLINKCLIP_TOKEN' -X POST "
+        var argument = 0
+        while shell.utf8.count < 2000 {
+            shell += "--data-urlencode 'payload_\(argument)=value_with_underscores_and_digits_0123456789' "
+            argument += 1
+        }
+        var token = "abcdef0123456789"
+        while token.utf8.count < 900 { token += "0123456789abcdef" }
+        var url = "https://downloads.example.com/api/v3/artifacts/"
+        var pathPart = 0
+        while url.utf8.count < 1200 {
+            url += "a1b2c3d4e5f6\(pathPart)0123456789abcdef"
+            pathPart += 1
+        }
+        let multiline = (1...40).map { line in
+            "line \(line): 多行文本 fixture，用于检查卡片正文在固定高度内被截断"
+        }.joined(separator: "\n")
+
+        func addText(_ text: String, kind: ClipboardKind) throws -> UUID {
+            var payloads: [String: Data] = ["public.utf8-plain-text": Data(text.utf8)]
+            if kind == .link { payloads["public.url"] = Data(text.utf8) }
+            return try store.add(ClipboardItem(title: "fixture", kind: kind, plainText: text,
+                                               sourceName: "BlinkClip", payloads: payloads))
+        }
+        let longText = try addText(String(shell.prefix(2000)), kind: .text)
+        let longToken = try addText(String(token.prefix(900)), kind: .text)
+        let longURL = try addText(String(url.prefix(1200)), kind: .link)
+        let manyLines = try addText(multiline, kind: .text)
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 512, pixelsHigh: 512,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        memset(bitmap.bitmapData!, 96, bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let png = bitmap.representation(using: .png, properties: [:])!
+        let imageItem = PasteboardItem()
+        imageItem.setData(png, forType: "public.png")
+        let imageID = try store.add(ClipboardItem(title: "image fixture", kind: .image,
+            payloads: ["public.png": png],
+            imagePreviewMetadata: ImagePreviewMetadataGenerator.previewMetadata([imageItem])!))
+
+        let ui = ReplicaUIController(store: store)
+        defer { ui.panel.orderOut(nil) }
+        ui.showPanel()
+        if let screen = NSScreen.main {
+            ui.panel.setFrameOrigin(.init(x: screen.frame.maxX + 200, y: screen.frame.maxY + 200))
+        }
+        try await waitForCollectionReady(ui, ui.state, expectedItemCount: 5)
+
+        func collectHost(_ view: NSView?) -> ReplicaNativeCollectionHost? {
+            guard let view else { return nil }
+            if let host = view as? ReplicaNativeCollectionHost { return host }
+            for subview in view.subviews { if let host = collectHost(subview) { return host } }
+            return nil
+        }
+        func descendants(_ view: NSView) -> [NSView] {
+            view.subviews.flatMap { [$0] + descendants($0) }
+        }
+        func firstView(_ root: NSView, containing fragment: String) -> NSView? {
+            if String(describing: Swift.type(of: root)).contains(fragment) { return root }
+            return descendants(root).first { String(describing: Swift.type(of: $0)).contains(fragment) }
+        }
+        /// 产品里的 sizeClass → headerHeight 映射（`ReplicaClipboardCard.headerHeight`）。
+        func expectedHeaderHeight(side: CGFloat) -> CGFloat {
+            if side < 200 {
+                if #available(macOS 26, *) { return 36 }
+                return 34
+            }
+            if side < 240 { return 48 }
+            if side < 280 { return 52 }
+            return 56
+        }
+        guard let host = collectHost(ui.panel.contentView) else {
+            throw Failure(description: "card overflow: native collection host missing")
+        }
+        let fixtures: [(id: UUID, name: String, kind: String)] = [
+            (longText, "long-text", "text"),
+            (longToken, "long-token", "text"),
+            (manyLines, "multiline", "text"),
+            (longURL, "long-url", "link"),
+            (imageID, "image", "image"),
+        ]
+        var report: [String] = []
+        for height in [CGFloat(332), CGFloat(420)] {
+            if let screen = NSScreen.main {
+                ui.panel.setFrame(.init(x: screen.frame.maxX + 200,
+                    y: screen.frame.maxY + 200, width: screen.frame.width, height: height), display: false)
+            }
+            try await Task.sleep(for: .milliseconds(450))
+            ui.panel.contentView?.layoutSubtreeIfNeeded()
+            for fixture in fixtures {
+                guard let cell = host.previewAnchor(for: fixture.id, revealIfNeeded: true) else {
+                    throw Failure(description: "card overflow: no native cell for \(fixture.name)")
+                }
+                cell.layoutSubtreeIfNeeded()
+                let side = cell.bounds.width
+                guard side > 0 else { throw Failure(description: "card overflow: \(fixture.name) has no size") }
+                let headerHeight = expectedHeaderHeight(side: side)
+                guard let hosting = firstView(cell, containing: "NSHostingView") else {
+                    throw Failure(description: "card overflow: \(fixture.name) has no hosting view")
+                }
+                let flipped = hosting.isFlipped
+                func span(_ view: NSView) -> (top: CGFloat, bottom: CGFloat, height: CGFloat) {
+                    let rect = view.convert(view.bounds, to: hosting)
+                    let top = flipped ? rect.minY : hosting.bounds.height - rect.maxY
+                    let bottom = flipped ? rect.maxY : hosting.bounds.height - rect.minY
+                    return (top, bottom, rect.height)
+                }
+                func check(_ condition: Bool, _ message: @autoclosure () -> String,
+                           line: UInt = #line) throws {
+                    guard condition else {
+                        throw Failure(description: "card overflow \(fixture.name)@\(Int(side)): "
+                            + "\(message()) (line \(line))")
+                    }
+                }
+                // ① 标题条自身完整落在 [0, headerHeight]。
+                guard let title = firstView(cell, containing: "ReplicaCardTitleView") else {
+                    throw Failure(description: "card overflow: \(fixture.name) has no header title")
+                }
+                let titleSpan = span(title)
+                try check(titleSpan.top >= -0.5 && titleSpan.bottom <= headerHeight + 0.5,
+                    "标题条越出卡片顶部区间：title=\(titleSpan) headerHeight=\(headerHeight)")
+                // ① 正文内容不进入标题条、不越出卡片、不高于正文带。
+                let contentClasses = ["CompactTextContent", "CompactTextFooter", "LinkPreviewViewport",
+                                      "AdaptiveScalingImageView", "ImageCheckerboardView", "NSImageView"]
+                var checked = 0
+                for name in contentClasses {
+                    guard let content = firstView(hosting, containing: name) else { continue }
+                    let contentSpan = span(content)
+                    try check(contentSpan.top >= headerHeight - 0.5,
+                        "\(name) 进入标题区：\(contentSpan) headerHeight=\(headerHeight)")
+                    try check(contentSpan.bottom <= side + 0.5,
+                        "\(name) 越出卡片底部：\(contentSpan) side=\(side)")
+                    try check(contentSpan.height <= side - headerHeight + 0.5,
+                        "\(name) 高于正文带：\(contentSpan.height) > \(side - headerHeight)")
+                    checked += 1
+                }
+                try check(checked > 0, "没有任何可检查的正文视图")
+                if fixture.kind == "text" {
+                    // ② 文本：行数 ≤ 上限、以 `…` 结尾、label 不越出正文区。
+                    guard let textView = firstView(cell, containing: "CompactTextContentView")
+                        as? CompactTextContentView else {
+                        throw Failure(description: "card overflow: \(fixture.name) has no compact text view")
+                    }
+                    let textSpan = span(textView)
+                    try check(textSpan.top >= headerHeight - 0.5,
+                        "文本进入标题区：\(textSpan) headerHeight=\(headerHeight)")
+                    try check(textSpan.bottom <= side + 0.5, "文本越出卡片：\(textSpan) side=\(side)")
+                    try check(textView.isTruncated, "超长文本没有截断")
+                    try check(textView.displayedText.hasSuffix("…"),
+                        "截断后末行不是省略号：\(textView.displayedText.suffix(24))")
+                    try check(textView.displayedText.count < textView.sourceCharacterCount,
+                        "截断后长度没有变短：\(textView.displayedText.count)/\(textView.sourceCharacterCount)")
+                    try check(textView.maxLineCount >= 1, "行数上限未算出：\(textView.maxLineCount)")
+                    try check(textView.renderedLineCount >= 1
+                        && textView.renderedLineCount <= textView.maxLineCount,
+                        "渲染行数 \(textView.renderedLineCount) 超过上限 \(textView.maxLineCount)")
+                    guard let label = descendants(textView).compactMap({ $0 as? NSTextField }).first else {
+                        throw Failure(description: "card overflow: \(fixture.name) has no text label")
+                    }
+                    try check(label.frame.minY >= -0.5
+                        && label.frame.maxY <= textView.bounds.height + 0.5,
+                        "label 越出正文区：\(label.frame) bounds=\(textView.bounds)")
+                    // 脚注带在正文下面，不与正文重叠。
+                    if let footer = firstView(cell, containing: "CompactTextFooterView") {
+                        let footerSpan = span(footer)
+                        try check(footerSpan.top >= textSpan.bottom - 0.5,
+                            "脚注带压住正文：footer=\(footerSpan) text=\(textSpan)")
+                        try check(footerSpan.bottom <= side + 0.5, "脚注带越出卡片：\(footerSpan)")
+                    }
+                }
+                report.append("\(fixture.name)@\(Int(side)):header=\(Int(headerHeight)),content=\(checked)")
+            }
+        }
+        let summary = report.joined(separator: "; ")
+        print("{\"status\":\"progress\",\"card_overflow\":\"\(summary)\"}")
+    }
+
     @MainActor static func run() async throws {
         let app = NSApplication.shared
         app.finishLaunching()
@@ -977,6 +1173,8 @@ struct UIInteractionHarness {
         guard globalHotKeyFires == 0 else {
             throw Failure(description: "panel-local key events reached the registered global hot key")
         }
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"panel card matrix: a plain click copies that card, hides the panel and leaves the Copied toast on screen (toast shown before the hide); a click inside a multi-selection copies only the clicked card; a double click pastes once without a copy; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        ui.panel.orderOut(nil)
+        try await assertCardContentOverflow()
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"card content overflow: header band [0, headerHeight] never intersects body content, body stays inside the card, and long text renders at most maxLineCount lines ending in … (2000-char shell one-liner, no-space token, 40-line text, long URL link, image; panel heights 332/420)\",\"panel card matrix: a plain click copies that card, hides the panel and leaves the Copied toast on screen (toast shown before the hide); a click inside a multi-selection copies only the clicked card; a double click pastes once without a copy; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }

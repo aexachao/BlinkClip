@@ -266,6 +266,33 @@ struct ReplicaPanelView: View {
 }
 
 @MainActor
+enum CardTextMetrics {
+    /// 正文行高（含行距）。`bodyFont` 是卡片正文的基准字体：文本预览视图（NSView 路径）
+    /// 与 SwiftUI 回退路径都用它，前者行距为 0，后者再叠 `.lineSpacing(3)`。
+    static func lineHeight(_ font: NSFont? = nil) -> CGFloat {
+        let font = font ?? PreviewAttributedText.bodyFont()
+        return ceil(font.ascender - font.descender + font.leading)
+    }
+
+    /// 给定可用高度能容纳的最大行数（至少 1 行，避免 0 行时完全不画）。
+    static func maxLines(forHeight height: CGFloat, lineSpacing: CGFloat = 0,
+                         font: NSFont? = nil) -> Int {
+        let line = lineHeight(font)
+        let step = line + max(0, lineSpacing)
+        guard step > 0, height.isFinite, height > 0 else { return 1 }
+        // n 行的占用高度 = n * lineHeight + (n - 1) * lineSpacing。
+        return max(1, Int(floor((height + lineSpacing) / step)))
+    }
+
+    /// 这段文字在给定宽度下的绘制高度（`.usesFontLeading` 与 NSTextField 的排版一致）。
+    static func height(of string: NSAttributedString, width: CGFloat) -> CGFloat {
+        guard string.length > 0, width > 0 else { return 0 }
+        return ceil(string.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                                        options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
+    }
+}
+
+@MainActor
 struct ReplicaClipboardCard: View {
     @ObservedObject var state: ReplicaUIState
     let item: ClipboardItem
@@ -279,23 +306,29 @@ struct ReplicaClipboardCard: View {
     @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
+        // 标题条是固定高度的带；正文只拿「卡片高 − 正文起点 − 脚注带」。
+        // 旧实现把正文放进 `.padding(.top, bodyTop)` 的 VStack：正文自然高度一旦超过
+        // 剩余空间，这个 VStack 就把 ZStack 撑到比卡片更高，外层 `.frame(sideLength,
+        // sideLength)` 再把它居中，标题条被顶到卡片上边界之外（文字直接画到标题区）。
+        // 现在两个子视图各自定高、ZStack 永远等于卡片尺寸，正文超出的部分由固定高度
+        // + `clipped()` + 行数上限（尾部省略号）吃掉。
         ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 0) {
                 cardContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(height: bodyContentHeight, alignment: .topLeading)
                     .clipped()
-            }
-            .overlay(alignment: .bottom) {
                 if let metadata = compactTextMetadata, let background = compactTextBackground {
                     CompactTextFooter(length: metadata.length, sizeClass: UInt8(sizeClass),
                                               fadingColor: background)
-                        .frame(height: sizeClass == 3 ? 32 : 50)
+                        .frame(height: footerHeight)
                 }
             }
-            .padding(.top, cardGeometry?.bodyTop ?? headerHeight)
+            .frame(width: sideLength, height: contentBandHeight, alignment: .topLeading)
+            .offset(y: bodyTopInset)
             cardHeader
         }
-        .frame(width: sideLength, height: sideLength)
+        .frame(width: sideLength, height: sideLength, alignment: .topLeading)
         .background(ReplicaItemPreviewAnchor(itemID: item.id, controller: state.controller))
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: cardCornerStyle))
@@ -407,7 +440,7 @@ struct ReplicaClipboardCard: View {
             UnavailableCompactContent(sizeClass: UInt8(sizeClass))
         default:
             ReplicaItemContent(item: item, compact: true, linkPreviewsEnabled: state.store.preferences.linkPreviewsEnabled,
-                               cardSizeClass: UInt8(sizeClass))
+                               cardSizeClass: UInt8(sizeClass), maxLines: maxBodyLines)
                 .padding(.horizontal, item.kind == .link ? 0 : 12).padding(.top, contentTopInset)
         }
     }
@@ -463,6 +496,33 @@ struct ReplicaClipboardCard: View {
             if #available(macOS 26, *) { return 36 }
             return 34
         }
+    }
+
+    /// 正文起点：普通卡片就是标题条下沿；`sizeClass == 3` 的满幅卡片（图片/色块/链接
+    /// 预览）仍然从卡片顶端铺满，标题条以透明底浮在其上（既有设计，不在这里改动）。
+    private var bodyTopInset: CGFloat { cardGeometry?.bodyTop ?? headerHeight }
+
+    /// 正文带（含脚注带）的高度。永远等于卡片剩余高度，不会因为内容变长而变大。
+    private var contentBandHeight: CGFloat { max(0, sideLength - bodyTopInset) }
+
+    /// 脚注带（「N 个字符」+ 渐隐带）的高度；只有带文本预览元数据的文字卡才有。
+    private var footerHeight: CGFloat {
+        guard compactTextMetadata != nil else { return 0 }
+        return sizeClass == 3 ? 32 : 50
+    }
+
+    /// 正文内容真正能用的高度：正文带减去脚注带，文字不再画到脚注底下。
+    private var bodyContentHeight: CGFloat { max(0, contentBandHeight - footerHeight) }
+
+    /// 正文文字区高度（`default` 内容分支自带顶部内边距，先扣掉）。
+    private var bodyTextHeight: CGFloat { max(0, bodyContentHeight - contentTopInset) }
+
+    /// 正文行数上限：按正文高度与正文行高算出的最大行数，超出部分用 `…` 截断。
+    ///
+    /// 只喂给 SwiftUI 文字分支（`.lineSpacing(3)`）；文本预览视图（NSView 路径）自己
+    /// 按实际 `bounds` 和行高算上限并把 `…` 写进渲染文本，两者都落在正文区高度内。
+    private var maxBodyLines: Int {
+        CardTextMetrics.maxLines(forHeight: bodyTextHeight, lineSpacing: 3)
     }
 
     private var sourceIconSide: CGFloat {
@@ -747,6 +807,12 @@ struct ReplicaItemContent: View {
     let compact: Bool
     var linkPreviewsEnabled = true
     var cardSizeClass: UInt8? = nil
+    /// 卡片正文能容纳的最大行数（由卡片尺寸算出）。只作用于紧凑卡片里的文字分支：
+    /// 超出行数后尾部省略号，正文永远塞不回标题区。
+    var maxLines: Int? = nil
+    private var compactLineLimit: Int? {
+        compact ? maxLines.map { max(1, $0) } ?? 7 : nil
+    }
     var body: some View {
         Group {
             if item.kind == .unknown, !compact {
@@ -776,7 +842,8 @@ struct ReplicaItemContent: View {
             } else if item.kind == .richText, let data = item.payloads["public.rtf"],
                       let attributed = NSAttributedString(rtf: data, documentAttributes: nil) {
                 Text(AttributedString(compact ? attributed.attributedSubstring(from: .init(location: 0, length: min(attributed.length, 2000))) : attributed))
-                    .lineLimit(compact ? 7 : nil)
+                    .lineLimit(compactLineLimit)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
                 Text(compact ? String((item.plainText?.isEmpty == false ? item.plainText! : item.title).prefix(2000))
@@ -784,7 +851,8 @@ struct ReplicaItemContent: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .lineSpacing(3)
-                    .lineLimit(compact ? 7 : nil)
+                    .lineLimit(compactLineLimit)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
