@@ -1,0 +1,160 @@
+{
+  "layout": [
+    {
+      "size": "1440x900",
+      "lang": "en",
+      "innerHeight": 900,
+      "heroBottom": 900,
+      "heroFillsScreen": true,
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "titleLines": 2,
+      "title": "Everythingyoucopystaysfindable.",
+      "h1Height": 156,
+      "buttons": [
+        {
+          "label": "Download for Mac",
+          "w": 214,
+          "h": 52
+        },
+        {
+          "label": "See features",
+          "w": 131,
+          "h": 52
+        },
+        {
+          "label": "Download for Mac",
+          "w": 225,
+          "h": 56
+        }
+      ],
+      "downloadHref": "https://github.com/aexachao/BlinkClip/releases/download/v1.0.33/BlinkClip-1.0.33-macos-universal.dmg"
+    },
+    {
+      "size": "1024x768",
+      "lang": "en",
+      "innerHeight": 768,
+      "heroBottom": 768,
+      "heroFillsScreen": true,
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "titleLines": 2,
+      "title": "Everythingyoucopystaysfindable.",
+      "h1Height": 113,
+      "buttons": [
+        {
+          "label": "Download for Mac",
+          "w": 214,
+          "h": 52
+        },
+        {
+          "label": "See features",
+          "w": 131,
+          "h": 52
+        },
+        {
+          "label": "Download for Mac",
+          "w": 225,
+          "h": 56
+        }
+      ],
+      "downloadHref": "https://github.com/aexachao/BlinkClip/releases/download/v1.0.33/BlinkClip-1.0.33-macos-universal.dmg"
+    },
+    {
+      "size": "390x844",
+      "lang": "en",
+      "innerHeight": 844,
+      "heroBottom": 844,
+      "heroFillsScreen": true,
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "titleLines": 2,
+      "title": "Everythingyoucopystaysfindable.",
+      "h1Height": 66,
+      "buttons": [
+        {
+          "label": "Download for Mac",
+          "w": 350,
+          "h": 48
+        },
+        {
+          "label": "See features",
+          "w": 350,
+          "h": 48
+        },
+        {
+          "label": "Download for Mac",
+          "w": 225,
+          "h": 56
+        }
+      ],
+      "downloadHref": "https://github.com/aexachao/BlinkClip/releases/download/v1.0.33/BlinkClip-1.0.33-macos-universal.dmg"
+    },
+    {
+      "size": "320x568",
+      "lang": "en",
+      "innerHeight": 568,
+      "heroBottom": 568,
+      "heroFillsScreen": true,
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "titleLines": 2,
+      "title": "Everythingyoucopystaysfindable.",
+      "h1Height": 61,
+      "buttons": [
+        {
+          "label": "Download for Mac",
+          "w": 280,
+          "h": 46
+        },
+        {
+          "label": "See features",
+          "w": 280,
+          "h": 46
+        },
+        {
+          "label": "Download for Mac",
+          "w": 225,
+          "h": 56
+        }
+      ],
+      "downloadHref": "https://github.com/aexachao/BlinkClip/releases/download/v1.0.33/BlinkClip-1.0.33-macos-universal.dmg"
+    }
+  ],
+  "faq": {
+    "opened": {
+      "open": "true",
+      "expanded": "true"
+    },
+    "exclusive": {
+      "first": "false",
+      "second": "true"
+    },
+    "closedAfterSecondToggle": "false"
+  },
+  "i18n": {
+    "before": {
+      "lang": "en",
+      "aria": "Change language: English",
+      "title": "BlinkClip — Everything you copy stays findable, every screenshot ready to annotate",
+      "nav": "Capture",
+      "lede": "Text, images, files, links, colours in one searchable panel. ⌘⇧A captures and annotates.",
+      "alt": "Selection overlay: full-screen crosshair",
+      "pressed": "true"
+    },
+    "english": {
+      "lang": "en",
+      "title": "BlinkClip — Everything you copy stays findable, every screenshot ready to annotate",
+      "nav": "Capture",
+      "lede": "Text, images, files, links, colours in one searchable panel. ⌘⇧A captures and annotates.",
+      "alt": "Selection overlay: full-screen crosshair",
+      "pressed": "true"
+    },
+    "back": {
+      "lang": "zh-Hans",
+      "pressed": "true"
+    },
+    "stored": null
+  },
+  "errors": []
+}

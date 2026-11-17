@@ -1,0 +1,1062 @@
+[
+  {
+    "size": "1440x900",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "heroBottom": 900,
+    "heroFillsScreen": true,
+    "heroHeight": 900,
+    "contentHeight": 5611,
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "horizontalOverflow": [],
+    "characters": {
+      "cjk": 924,
+      "total": 1398
+    },
+    "heroTitle": {
+      "height": 156,
+      "lines": 2
+    },
+    "titleLines": [
+      {
+        "text": "复制过的，",
+        "wrapped": false
+      },
+      {
+        "text": "都找得回来。",
+        "wrapped": false
+      },
+      {
+        "text": "把下一个灵感，",
+        "wrapped": false
+      },
+      {
+        "text": "留在手边。",
+        "wrapped": false
+      }
+    ],
+    "shots": [
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 1178,
+        "natural": 2100,
+        "density": 1.78
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "css": 568,
+        "natural": 1500,
+        "density": 2.64
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "css": 568,
+        "natural": 2240,
+        "density": 3.94
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 1048,
+        "natural": 2100,
+        "density": 2
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "css": 438,
+        "natural": 1080,
+        "density": 2.47
+      }
+    ],
+    "targets": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "剪贴板",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "AI 与同步",
+        "w": 105,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 103,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 80,
+        "h": 44
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 198,
+        "h": 52
+      },
+      {
+        "label": "查看功能",
+        "w": 107,
+        "h": 52
+      },
+      {
+        "label": "需要哪些权限？",
+        "w": 820,
+        "h": 77
+      },
+      {
+        "label": "数据会上传吗？",
+        "w": 820,
+        "h": 77
+      },
+      {
+        "label": "支持 Intel Mac 吗？",
+        "w": 820,
+        "h": 77
+      },
+      {
+        "label": "怎么更新或卸载？",
+        "w": 820,
+        "h": 77
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 208,
+        "h": 56
+      }
+    ],
+    "smallTargets": [],
+    "sections": [
+      {
+        "id": "top",
+        "height": 900
+      },
+      {
+        "id": "capture",
+        "height": 624
+      },
+      {
+        "id": "history",
+        "height": 688
+      },
+      {
+        "id": "integrations",
+        "height": 478
+      },
+      {
+        "id": "shortcuts",
+        "height": 488
+      },
+      {
+        "id": "permissions",
+        "height": 1073
+      },
+      {
+        "id": "faq",
+        "height": 653
+      },
+      {
+        "id": "cta",
+        "height": 529
+      }
+    ],
+    "reducedMotion": [
+      {
+        "tag": "hero-title",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 156
+      },
+      {
+        "tag": "hero-lede",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 59
+      },
+      {
+        "tag": "hero-meta",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 21
+      },
+      {
+        "tag": "hero-actions",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 52
+      },
+      {
+        "tag": "hero-shot",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 297
+      }
+    ],
+    "reducedVisible": true
+  },
+  {
+    "size": "1024x768",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 1024,
+      "height": 768
+    },
+    "heroBottom": 768,
+    "heroFillsScreen": true,
+    "heroHeight": 768,
+    "contentHeight": 4828,
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "horizontalOverflow": [],
+    "characters": {
+      "cjk": 924,
+      "total": 1398
+    },
+    "heroTitle": {
+      "height": 113,
+      "lines": 2
+    },
+    "titleLines": [
+      {
+        "text": "复制过的，",
+        "wrapped": false
+      },
+      {
+        "text": "都找得回来。",
+        "wrapped": false
+      },
+      {
+        "text": "把下一个灵感，",
+        "wrapped": false
+      },
+      {
+        "text": "留在手边。",
+        "wrapped": false
+      }
+    ],
+    "shots": [
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 920,
+        "natural": 2100,
+        "density": 2.28
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "css": 471,
+        "natural": 1500,
+        "density": 3.19
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "css": 471,
+        "natural": 2240,
+        "density": 4.76
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 920,
+        "natural": 2100,
+        "density": 2.28
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "css": 436,
+        "natural": 1080,
+        "density": 2.48
+      }
+    ],
+    "targets": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "剪贴板",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "AI 与同步",
+        "w": 105,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 103,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 80,
+        "h": 44
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 198,
+        "h": 52
+      },
+      {
+        "label": "查看功能",
+        "w": 107,
+        "h": 52
+      },
+      {
+        "label": "需要哪些权限？",
+        "w": 820,
+        "h": 71
+      },
+      {
+        "label": "数据会上传吗？",
+        "w": 820,
+        "h": 71
+      },
+      {
+        "label": "支持 Intel Mac 吗？",
+        "w": 820,
+        "h": 71
+      },
+      {
+        "label": "怎么更新或卸载？",
+        "w": 820,
+        "h": 71
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 208,
+        "h": 56
+      }
+    ],
+    "smallTargets": [],
+    "sections": [
+      {
+        "id": "top",
+        "height": 768
+      },
+      {
+        "id": "capture",
+        "height": 495
+      },
+      {
+        "id": "history",
+        "height": 571
+      },
+      {
+        "id": "integrations",
+        "height": 399
+      },
+      {
+        "id": "shortcuts",
+        "height": 408
+      },
+      {
+        "id": "permissions",
+        "height": 1016
+      },
+      {
+        "id": "faq",
+        "height": 546
+      },
+      {
+        "id": "cta",
+        "height": 446
+      }
+    ],
+    "reducedMotion": [
+      {
+        "tag": "hero-title",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 113
+      },
+      {
+        "tag": "hero-lede",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 55
+      },
+      {
+        "tag": "hero-meta",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 21
+      },
+      {
+        "tag": "hero-actions",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 52
+      },
+      {
+        "tag": "hero-shot",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 232
+      }
+    ],
+    "reducedVisible": true
+  },
+  {
+    "size": "768x1024",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 768,
+      "height": 1024
+    },
+    "heroBottom": 1024,
+    "heroFillsScreen": true,
+    "heroHeight": 1024,
+    "contentHeight": 5722,
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "horizontalOverflow": [],
+    "characters": {
+      "cjk": 924,
+      "total": 1398
+    },
+    "heroTitle": {
+      "height": 88,
+      "lines": 2
+    },
+    "titleLines": [
+      {
+        "text": "复制过的，",
+        "wrapped": false
+      },
+      {
+        "text": "都找得回来。",
+        "wrapped": false
+      },
+      {
+        "text": "把下一个灵感，",
+        "wrapped": false
+      },
+      {
+        "text": "留在手边。",
+        "wrapped": false
+      }
+    ],
+    "shots": [
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 689,
+        "natural": 2100,
+        "density": 3.05
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "css": 689,
+        "natural": 1500,
+        "density": 2.18
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "css": 689,
+        "natural": 2240,
+        "density": 3.25
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 689,
+        "natural": 2100,
+        "density": 3.05
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "css": 438,
+        "natural": 1080,
+        "density": 2.47
+      }
+    ],
+    "targets": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "剪贴板",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "AI 与同步",
+        "w": 105,
+        "h": 44
+      },
+      {
+        "label": "快捷键",
+        "w": 89,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 76,
+        "h": 44
+      },
+      {
+        "label": "常见问题",
+        "w": 103,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 80,
+        "h": 44
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 198,
+        "h": 52
+      },
+      {
+        "label": "查看功能",
+        "w": 107,
+        "h": 52
+      },
+      {
+        "label": "需要哪些权限？",
+        "w": 691,
+        "h": 62
+      },
+      {
+        "label": "数据会上传吗？",
+        "w": 691,
+        "h": 62
+      },
+      {
+        "label": "支持 Intel Mac 吗？",
+        "w": 691,
+        "h": 62
+      },
+      {
+        "label": "怎么更新或卸载？",
+        "w": 691,
+        "h": 62
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 208,
+        "h": 56
+      }
+    ],
+    "smallTargets": [],
+    "sections": [
+      {
+        "id": "top",
+        "height": 1024
+      },
+      {
+        "id": "capture",
+        "height": 831
+      },
+      {
+        "id": "history",
+        "height": 517
+      },
+      {
+        "id": "integrations",
+        "height": 534
+      },
+      {
+        "id": "shortcuts",
+        "height": 467
+      },
+      {
+        "id": "permissions",
+        "height": 1249
+      },
+      {
+        "id": "faq",
+        "height": 471
+      },
+      {
+        "id": "cta",
+        "height": 396
+      }
+    ],
+    "reducedMotion": [
+      {
+        "tag": "hero-title",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 88
+      },
+      {
+        "tag": "hero-lede",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 55
+      },
+      {
+        "tag": "hero-meta",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 21
+      },
+      {
+        "tag": "hero-actions",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 52
+      },
+      {
+        "tag": "hero-shot",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 174
+      }
+    ],
+    "reducedVisible": true
+  },
+  {
+    "size": "390x844",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "heroBottom": 844,
+    "heroFillsScreen": true,
+    "heroHeight": 844,
+    "contentHeight": 5487,
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "horizontalOverflow": [],
+    "characters": {
+      "cjk": 905,
+      "total": 1377
+    },
+    "heroTitle": {
+      "height": 79,
+      "lines": 2
+    },
+    "titleLines": [
+      {
+        "text": "复制过的，",
+        "wrapped": false
+      },
+      {
+        "text": "都找得回来。",
+        "wrapped": false
+      },
+      {
+        "text": "把下一个灵感，",
+        "wrapped": false
+      },
+      {
+        "text": "留在手边。",
+        "wrapped": false
+      }
+    ],
+    "shots": [
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 348,
+        "natural": 2100,
+        "density": 6.03
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "css": 348,
+        "natural": 1500,
+        "density": 4.31
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "css": 348,
+        "natural": 2240,
+        "density": 6.44
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 348,
+        "natural": 2100,
+        "density": 6.03
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "css": 348,
+        "natural": 1080,
+        "density": 3.1
+      }
+    ],
+    "targets": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "剪贴板",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 350,
+        "h": 48
+      },
+      {
+        "label": "查看功能",
+        "w": 350,
+        "h": 48
+      },
+      {
+        "label": "需要哪些权限？",
+        "w": 350,
+        "h": 62
+      },
+      {
+        "label": "数据会上传吗？",
+        "w": 350,
+        "h": 62
+      },
+      {
+        "label": "支持 Intel Mac 吗？",
+        "w": 350,
+        "h": 62
+      },
+      {
+        "label": "怎么更新或卸载？",
+        "w": 350,
+        "h": 62
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 208,
+        "h": 56
+      }
+    ],
+    "smallTargets": [],
+    "sections": [
+      {
+        "id": "top",
+        "height": 844
+      },
+      {
+        "id": "capture",
+        "height": 669
+      },
+      {
+        "id": "history",
+        "height": 477
+      },
+      {
+        "id": "integrations",
+        "height": 550
+      },
+      {
+        "id": "shortcuts",
+        "height": 490
+      },
+      {
+        "id": "permissions",
+        "height": 1279
+      },
+      {
+        "id": "faq",
+        "height": 467
+      },
+      {
+        "id": "cta",
+        "height": 423
+      }
+    ],
+    "reducedMotion": [
+      {
+        "tag": "hero-title",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 79
+      },
+      {
+        "tag": "hero-lede",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 50
+      },
+      {
+        "tag": "hero-meta",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 21
+      },
+      {
+        "tag": "hero-actions",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 106
+      },
+      {
+        "tag": "hero-shot",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 89
+      }
+    ],
+    "reducedVisible": true
+  },
+  {
+    "size": "320x568",
+    "lang": "zh-Hans",
+    "viewport": {
+      "width": 320,
+      "height": 568
+    },
+    "heroBottom": 568,
+    "heroFillsScreen": true,
+    "heroHeight": 568,
+    "contentHeight": 5428,
+    "scrollWidth": 320,
+    "clientWidth": 320,
+    "horizontalOverflow": [],
+    "characters": {
+      "cjk": 905,
+      "total": 1377
+    },
+    "heroTitle": {
+      "height": 58,
+      "lines": 2
+    },
+    "titleLines": [
+      {
+        "text": "复制过的，",
+        "wrapped": false
+      },
+      {
+        "text": "都找得回来。",
+        "wrapped": false
+      },
+      {
+        "text": "把下一个灵感，",
+        "wrapped": false
+      },
+      {
+        "text": "留在手边。",
+        "wrapped": false
+      }
+    ],
+    "shots": [
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 278,
+        "natural": 2100,
+        "density": 7.55
+      },
+      {
+        "src": "./assets/screenshot-capture-overlay.jpg",
+        "css": 278,
+        "natural": 1500,
+        "density": 5.4
+      },
+      {
+        "src": "./assets/screenshot-editor-toolbar.png",
+        "css": 278,
+        "natural": 2240,
+        "density": 8.06
+      },
+      {
+        "src": "./assets/screenshot-clipboard-panel.png",
+        "css": 278,
+        "natural": 2100,
+        "density": 7.55
+      },
+      {
+        "src": "./assets/screenshot-settings-permissions.png",
+        "css": 278,
+        "natural": 1080,
+        "density": 3.88
+      }
+    ],
+    "targets": [
+      {
+        "label": "中文",
+        "w": 85,
+        "h": 44
+      },
+      {
+        "label": "截图",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "剪贴板",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "权限",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "下载",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 280,
+        "h": 46
+      },
+      {
+        "label": "查看功能",
+        "w": 280,
+        "h": 46
+      },
+      {
+        "label": "需要哪些权限？",
+        "w": 280,
+        "h": 62
+      },
+      {
+        "label": "数据会上传吗？",
+        "w": 280,
+        "h": 62
+      },
+      {
+        "label": "支持 Intel Mac 吗？",
+        "w": 280,
+        "h": 62
+      },
+      {
+        "label": "怎么更新或卸载？",
+        "w": 280,
+        "h": 62
+      },
+      {
+        "label": "免费下载 Mac 版",
+        "w": 208,
+        "h": 56
+      }
+    ],
+    "smallTargets": [],
+    "sections": [
+      {
+        "id": "top",
+        "height": 568
+      },
+      {
+        "id": "capture",
+        "height": 644
+      },
+      {
+        "id": "history",
+        "height": 482
+      },
+      {
+        "id": "integrations",
+        "height": 601
+      },
+      {
+        "id": "shortcuts",
+        "height": 696
+      },
+      {
+        "id": "permissions",
+        "height": 1239
+      },
+      {
+        "id": "faq",
+        "height": 465
+      },
+      {
+        "id": "cta",
+        "height": 423
+      }
+    ],
+    "reducedMotion": [
+      {
+        "tag": "hero-title",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 58
+      },
+      {
+        "tag": "hero-lede",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 47
+      },
+      {
+        "tag": "hero-meta",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 19
+      },
+      {
+        "tag": "hero-actions",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 102
+      },
+      {
+        "tag": "hero-shot",
+        "opacity": "1",
+        "visibility": "visible",
+        "height": 72
+      }
+    ],
+    "reducedVisible": true
+  }
+]
