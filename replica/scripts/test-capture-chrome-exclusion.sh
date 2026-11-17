@@ -142,8 +142,12 @@ update_hover = body(selection_code, 'func updateHover(screenPoint: NSPoint)', 'p
 cursor_rects = body(selection_code, 'override func resetCursorRects()', 'func refreshCursorRects')
 clear_hover = body(selection_code, 'private func clearHover()', 'override func draw(_ dirtyRect: NSRect) {')
 # `SelectionView.draw(_:)` 只画快照——选区外观在子图层里。
+# 起始锚点用 MEAS 埋点那一行（`let perfDraw = ...`）：它的 `defer` 现在在埋点之后，
+# 所以旧的 `{\n        defer {` 锚点在这版源码上取不到函数体（这是源码门自身的
+# 锚点问题，与绘制内容无关）。三种区域（hover / 选区 chrome / 快照）各有一处
+# `override func draw`，只有快照这处带 `perfDraw`，因此锚点唯一。
 selection_draw = body(selection_code,
-                      '    override func draw(_ dirtyRect: NSRect) {\n        defer {',
+                      '    override func draw(_ dirtyRect: NSRect) {\n        let perfDraw',
                       '    func drawSelectionChrome(')
 drag_new = body(selection_code, '        case .drawNew:', '        case .move:')
 mouse_up = body(selection_code, 'override func mouseUp(with event: NSEvent)', 'override func mouseMoved(with event: NSEvent)')
@@ -242,10 +246,11 @@ checks = {
         and 'broadcastCrosshair' not in overlay_code
         and 'updateCrosshair' not in overlay_code,
 
-    # SG：窗口列表开场枚举一次 + 8Hz 增量刷新；鼠标移动只扫缓存；
-    # 计时器在 tearDown 里停掉（定义 + 调用至少两处）。
-    'window-list-refresh-is-capped-at-8hz': all(fragment in overlay_code for fragment in (
-        'windowEnumerationInterval: TimeInterval = 1.0 / 8.0',
+    # SG/OPT：窗口列表开场枚举一次 + 2Hz 增量刷新（指针静止暂停、hover
+    # 未命中补采，见 `test-overlay-opt.sh`）；鼠标移动只扫缓存；计时器在
+    # tearDown 里停掉（定义 + 调用至少两处）。
+    'window-list-refresh-is-capped-at-2hz': all(fragment in overlay_code for fragment in (
+        'windowEnumerationInterval: TimeInterval = 1.0 / 2.0',
         'DispatchSource.makeTimerSource(queue: .main)',
         'repeating: Self.windowEnumerationInterval',
         'private func refreshWindowList(generation: Int)',
@@ -285,7 +290,7 @@ checks = {
         and 'the Y flip is correct on a display above the primary' in harness
         and 'own/twin floating chrome is skipped' in harness,
 
-    # 文档写清新口径：系统十字光标、吸附四边、8Hz、同窗口零更新、虚线 6/4、跨屏不串位。
+    # 文档写清新口径：系统十字光标、吸附四边、2Hz、同窗口零更新、虚线 6/4、跨屏不串位。
     'design-doc-snap-guides': all(fragment in design for fragment in (
         '系统十字光标',
         '不再自绘、不再隐藏系统光标',
@@ -294,7 +299,7 @@ checks = {
         '同步 `displayIfNeeded()`',
         '1.5pt',
         '虚线（6/4）',
-        '8Hz',
+        '2Hz',
         '0 次重绘',
         '跨屏不串位',
         '选框本体保持',

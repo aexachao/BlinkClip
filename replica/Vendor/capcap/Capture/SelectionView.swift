@@ -59,11 +59,18 @@ protocol SelectionViewDelegate: AnyObject {
     func selectionDidChange(rect: NSRect, inView view: NSView)
     func selectionMaskDidDoubleClick(inView view: NSView)
     func selectionDidDoubleClickInsideSelection(inView view: NSView)
+    /// Called on every pointer event this overlay handles. It is the *only*
+    /// per-event call left in the event path: the controller uses it to keep
+    /// the 2Hz window-list enumeration awake (it suspends while the pointer
+    /// rests) and to resume it immediately when movement starts again. It
+    /// carries no content work — the magnifier lens has its own 20Hz clock.
+    func selectionDidMovePointer()
 }
 
 extension SelectionViewDelegate {
     func selectionDidHoverWindow(_ window: DetectedWindow?) {}
     func selectionDidChange(rect: NSRect, inView view: NSView) {}
+    func selectionDidMovePointer() {}
     func selectionMaskDidDoubleClick(inView view: NSView) {}
     func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
 }
@@ -1255,6 +1262,7 @@ class SelectionView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let perfEvent = OverlayPerfSignpost.begin("event-dragged")
         defer { OverlayPerfSignpost.end("event-dragged", perfEvent) }
+        delegate?.selectionDidMovePointer()
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1389,6 +1397,7 @@ class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let perfEvent = OverlayPerfSignpost.begin("event-moved")
         defer { OverlayPerfSignpost.end("event-moved", perfEvent) }
+        delegate?.selectionDidMovePointer()
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1411,6 +1420,7 @@ class SelectionView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        delegate?.selectionDidMovePointer()
         guard selectionInteractionEnabled else { return }
         let point = convert(event.locationInWindow, from: nil)
         updateCursor(at: point)

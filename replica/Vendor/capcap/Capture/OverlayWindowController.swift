@@ -70,8 +70,6 @@ class OverlayWindowController {
     private var chipWindow: CursorChipWindow?
     private var magnifierLensPanel: MagnifierLensPanelWindow?
     private var magnifierLensPanelFormat: MagnifierLensPanelWindow.Format = .hex
-    private var mouseMovedLocalMonitor: Any?
-    private var mouseMovedGlobalMonitor: Any?
     private var magnifierLensPanelKeyDownGlobalMonitor: Any?
     private var magnifierLensPanelActive: Bool { magnifierLensPanel != nil }
     private var screenFramesByDisplayID: [CGDirectDisplayID: NSRect] = [:]
@@ -459,6 +457,9 @@ class OverlayWindowController {
             if shouldShowMagnifierLensPanel {
                 magnifierLensPanel = MagnifierLensPanelWindow()
                 magnifierLensPanelFormat = .hex
+                // The lens follows the pointer on its own 20Hz clock from the
+                // first presented frame (no per-event content request).
+                startMagnifierLensRefresh()
             } else {
                 chipWindow = CursorChipWindow(text: currentCursorChipText)
             }
@@ -558,15 +559,49 @@ class OverlayWindowController {
 
     /// Full window-list enumerations are not free, and the snap guide only
     /// needs a fresh list when a window opens, closes, moves or changes z-order.
-    /// Enumerate once at open, then refresh the cached list at 8Hz: hit testing
+    /// Enumerate once at open, then refresh the cached list at 2Hz: hit testing
     /// on every mouse move stays a scan of the cache (no enumeration), and a
-    /// still pointer costs only eight lists a second.
-    private static let windowEnumerationInterval: TimeInterval = 1.0 / 8.0
+    /// still pointer costs two lists a second at most.
+    ///
+    /// OPT (this revision) — three rules turn that 2Hz ceiling into the real
+    /// rate instead of a floor:
+    ///
+    /// 1. **Idle suspension.** No pointer event for
+    ///    `windowEnumerationIdleTimeout` means nothing can be hovered or snapped,
+    ///    so no enumeration may be observed: the tick returns without work and
+    ///    the first new pointer event resumes it immediately
+    ///    (`selectionDidMovePointer`).
+    /// 2. **Hover-miss catch-up.** Crossing from a hovered window to a hover
+    ///    miss means the cache might be stale exactly where the pointer is now
+    ///    (a window opened there), so that transition asks for one immediate
+    ///    enumeration instead of waiting up to 500ms — rate limited so it can
+    ///    never become a per-event loop.
+    /// 3. The floating-window bundle-id lookup is cached per pid (see
+    ///    `WindowDetector.ownerBundleID`), so a round trip to launchd is not
+    ///    repeated every tick.
+    private static let windowEnumerationInterval: TimeInterval = 1.0 / 2.0
+
+    /// Pointer rest longer than this suspends the periodic enumeration.
+    private static let windowEnumerationIdleTimeout: TimeInterval = 2.0
+
+    /// Shortest gap between two enumerations, including hover-miss catch-ups.
+    private static let windowEnumerationMinimumGap: TimeInterval = 0.25
 
     private var windowEnumerationTimer: DispatchSourceTimer?
     private var windowEnumerationInFlight = false
+    /// When the last enumeration was started (main thread only).
+    private var lastWindowEnumerationTime: CFTimeInterval = 0
+    /// When the pointer last moved over an overlay (main thread only).
+    private var lastPointerActivityTime: CFTimeInterval = 0
+    private var enumerationSuspendedForIdle = false
+    /// Whether the last hover result was a window (used to detect the
+    /// hover-hit → hover-miss transition).
+    private var hoverTargetPresent = false
 
     private func startWindowEnumeration(generation: Int) {
+        lastPointerActivityTime = CACurrentMediaTime()
+        enumerationSuspendedForIdle = false
+        hoverTargetPresent = false
         refreshWindowList(generation: generation)
         startWindowEnumerationRefresh(generation: generation)
     }
@@ -583,6 +618,13 @@ class OverlayWindowController {
             guard let self,
                   generation == self.presentationGeneration,
                   !self.sessionEnded else { return }
+            // Pointer at rest: nothing can be hovered or snapped, so refreshing
+            // the list is unobservable work. Resume on the next pointer event.
+            if CACurrentMediaTime() - self.lastPointerActivityTime
+                > Self.windowEnumerationIdleTimeout {
+                self.enumerationSuspendedForIdle = true
+                return
+            }
             self.refreshWindowList(generation: generation)
         }
         timer.resume()
@@ -614,12 +656,13 @@ class OverlayWindowController {
               suspendedDraft == nil,
               let primaryFrame = NSScreen.screens.first?.frame else { return }
         windowEnumerationInFlight = true
+        lastWindowEnumerationTime = CACurrentMediaTime()
         let primaryScreenArea = primaryFrame.width * primaryFrame.height
 
         let snapshotLoader = windowSnapshotLoader
         let context = triggerContext
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            // The 8Hz full window-list enumeration: measured on its own queue so
+            // The 2Hz full window-list enumeration: measured on its own queue so
             // the interval never crosses threads (both ends are emitted here).
             let perfScan = OverlayPerfSignpost.begin("window-scan")
             let result = snapshotLoader(primaryScreenArea)
@@ -961,13 +1004,6 @@ class OverlayWindowController {
         // another app is focused underneath.
         magnifierLensPanelKeyDownGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             _ = self?.handleMagnifierLensPanelCopyShortcut(for: event, allowsPlainC: false)
-        }
-        mouseMovedLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-            self?.refreshMagnifierLensPanelContent()
-            return event
-        }
-        mouseMovedGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
-            self?.refreshMagnifierLensPanelContent()
         }
         rightMouseLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
             if self?.editController?.isTextEditing == true {
@@ -1461,6 +1497,7 @@ class OverlayWindowController {
         chipWindow?.dismiss()
         chipWindow = nil
 
+        stopMagnifierLensRefresh()
         magnifierLensPanel?.dismiss()
         magnifierLensPanel = nil
         magnifierLensPanelFormat = .hex
@@ -1468,8 +1505,6 @@ class OverlayWindowController {
         if let m = escLocalMonitor { NSEvent.removeMonitor(m); escLocalMonitor = nil }
         if let m = escGlobalMonitor { NSEvent.removeMonitor(m); escGlobalMonitor = nil }
         if let m = magnifierLensPanelKeyDownGlobalMonitor { NSEvent.removeMonitor(m); magnifierLensPanelKeyDownGlobalMonitor = nil }
-        if let m = mouseMovedLocalMonitor { NSEvent.removeMonitor(m); mouseMovedLocalMonitor = nil }
-        if let m = mouseMovedGlobalMonitor { NSEvent.removeMonitor(m); mouseMovedGlobalMonitor = nil }
         if let m = leftMouseLocalMonitor { NSEvent.removeMonitor(m); leftMouseLocalMonitor = nil }
         if let m = rightMouseLocalMonitor { NSEvent.removeMonitor(m); rightMouseLocalMonitor = nil }
         if let m = rightMouseGlobalMonitor { NSEvent.removeMonitor(m); rightMouseGlobalMonitor = nil }
@@ -1530,7 +1565,43 @@ class OverlayWindowController {
             magnifierLensPanelFormat = .hex
         }
         magnifierLensPanel?.show()
+        startMagnifierLensRefresh()
         refreshMagnifierLensPanelContent()
+    }
+
+    /// How often the lens reads the pointer on its own.
+    ///
+    /// OPT: the lens used to be fed by a `mouseMoved` monitor pair — one content
+    /// request per pointer event (measured 119 requests/s at 120Hz injection),
+    /// each one scanning `NSScreen.screens` and two dictionaries just to write a
+    /// coalesced `pendingUpdate` that the panel then consumed 30 times a second.
+    /// The panel is now its own clock: this 20Hz tick is the single producer of
+    /// `MagnifierLensPanelWindow.update(...)`, so the event path carries no
+    /// content request at all and the lens costs the same on a 60Hz and a
+    /// 1000Hz mouse.
+    private static let magnifierLensRefreshInterval: TimeInterval = 1.0 / 20.0
+
+    private var magnifierLensRefreshTimer: DispatchSourceTimer?
+
+    private func startMagnifierLensRefresh() {
+        guard magnifierLensRefreshTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(
+            deadline: .now() + Self.magnifierLensRefreshInterval,
+            repeating: Self.magnifierLensRefreshInterval,
+            leeway: .milliseconds(4)
+        )
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.sessionEnded, self.magnifierLensPanel != nil else { return }
+            self.refreshMagnifierLensPanelContent()
+        }
+        timer.resume()
+        magnifierLensRefreshTimer = timer
+    }
+
+    private func stopMagnifierLensRefresh() {
+        magnifierLensRefreshTimer?.cancel()
+        magnifierLensRefreshTimer = nil
     }
 
     private func refreshMagnifierLensPanelContent() {
@@ -1621,7 +1692,34 @@ class OverlayWindowController {
 // MARK: - SelectionViewDelegate
 
 extension OverlayWindowController: SelectionViewDelegate {
+    /// One call per pointer event the overlay handles. The write is a single
+    /// timestamp; its only job is to wake the window-list enumeration back up
+    /// after an idle rest suspended it (see `windowEnumerationIdleTimeout`), so
+    /// the event path stays free of enumeration work.
+    func selectionDidMovePointer() {
+        lastPointerActivityTime = CACurrentMediaTime()
+        guard enumerationSuspendedForIdle else { return }
+        enumerationSuspendedForIdle = false
+        refreshWindowList(generation: presentationGeneration)
+    }
+
+    /// The hover hit-test just crossed from a window to nothing. That is the
+    /// one instant where the 2Hz cache can be plainly stale *and* the pointer
+    /// is already sitting in the stale spot (a window opened there since the
+    /// last enumeration), so it asks for one immediate enumeration instead of
+    /// waiting for the next tick. A miss that was already a miss is ignored:
+    /// the periodic tick covers it, and empty desktop must not scan per event.
+    private func noteHoverTargetChange(_ window: DetectedWindow?) {
+        let hadTarget = hoverTargetPresent
+        hoverTargetPresent = window != nil
+        guard window == nil, hadTarget else { return }
+        guard CACurrentMediaTime() - lastWindowEnumerationTime
+            >= Self.windowEnumerationMinimumGap else { return }
+        refreshWindowList(generation: presentationGeneration)
+    }
+
     func selectionDidHoverWindow(_ window: DetectedWindow?) {
+        noteHoverTargetChange(window)
         guard editController == nil, pendingWindowCapture == nil, !sessionEnded else { return }
         if prefetchedWindow?.windowID == window?.windowID,
            prefetchedWindow?.frame == window?.frame { return }
@@ -1688,6 +1786,7 @@ extension OverlayWindowController: SelectionViewDelegate {
 
     func selectionDidComplete(rect: NSRect, inView view: NSView, isWindowSelection: Bool, windowID: CGWindowID?) {
         // Selection is done — the lens has served its purpose during drag.
+        stopMagnifierLensRefresh()
         magnifierLensPanel?.dismiss()
         magnifierLensPanel = nil
 
