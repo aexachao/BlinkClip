@@ -152,6 +152,12 @@ _SHELL_ITEMS = [
      "Vendor/capcap/Capture/ClipboardHistorySkipMarker.swift、"
      "Vendor/capcap/Utilities/BlinkClipIdentifierMigration.swift",
      "pasteboard skip marker 与 UserDefaults 键迁移"),
+    ("overlay-opt", "覆盖层开销三项下调",
+     "Vendor/capcap/Capture/OverlayWindowController.swift、Capture/SelectionView.swift、"
+     "Capture/WindowDetector.swift、Vendor/capcap/UI/MagnifierLensPanelWindow.swift、"
+     "Tests/Native/OverlayOptHarness.swift、DESIGN.md",
+     "2Hz 枚举 + 静止暂停 + 未命中补采、20Hz 放大镜由自己的时钟驱动、事件路径零请求、pid 缓存，"
+     "以及放大镜坐标/色值/缓存 chrome 的实测断言"),
     ("packaged-resources", "打包资源布局",
      "BlinkClipCore bundle（app Contents/Resources 布局）、Tests/Native/PackagedResourcesHarness.swift",
      "从打包位置解析本地化与音频资源"),
@@ -475,8 +481,10 @@ RULES = [
          why="站点 i18n 测试自身"),
 
     # ============ 2. 文档 / 元数据 ============
-    dict(id="design-doc", globs=["DESIGN.md"], tests=("capture-chrome-exclusion",),
-         why="test-capture-chrome-exclusion.sh 的 SEL 源码门直接读 DESIGN.md 的设计口径"),
+    dict(id="design-doc", globs=["DESIGN.md"],
+         tests=("capture-chrome-exclusion", "overlay-opt"),
+         why="test-capture-chrome-exclusion.sh 的 SEL 源码门直接读 DESIGN.md 的设计口径；"
+             "test-overlay-opt.sh 的口径门读 DESIGN.md 的 OPT 三条改法"),
     dict(id="notice-license", globs=["NOTICE.md", "LICENSE", "replica/Vendor/capcap/LICENSE"],
          tests=("blinkclip-owned-resources",),
          why="自有资源测试断言 NOTICE/LICENSE 被打进 app 且与仓库一致"),
@@ -720,16 +728,22 @@ RULES = [
          why="标识符迁移测试只编译这两个文件的 harness"),
     dict(id="vendor-selection-view",
          globs=["replica/Vendor/capcap/Capture/SelectionView.swift"],
-         tests=("capture-chrome-exclusion", "editor-chrome-parity", "capture-integration"),
+         tests=("capture-chrome-exclusion", "overlay-opt", "editor-chrome-parity",
+                "capture-integration"),
          why="chrome-exclusion 直接读 SelectionView 断言标签/辅线/边框/手柄/光标；"
+             "overlay-opt 的源码门读 mouseMoved 断言事件路径零请求；"
              "editor-chrome-parity 比对它与编辑器 chrome；capture-integration 编译整个 Capture 模块"),
     dict(id="vendor-capture-gate",
          globs=["replica/Vendor/capcap/Capture/OverlayWindowController.swift"],
-         tests=("capture-chrome-exclusion", "editor-chrome-parity", "capture-integration"),
-         why="源码门读 OverlayWindowController 断言光标与选框生命周期"),
+         tests=("overlay-opt", "capture-chrome-exclusion", "editor-chrome-parity",
+                "capture-integration"),
+         why="源码门读 OverlayWindowController 断言光标与选框生命周期；"
+             "overlay-opt 的源码门断言 2Hz 枚举 + 静止暂停 + 未命中补采 + 事件路径零请求"),
     dict(id="vendor-capture-generic", globs=["replica/Vendor/capcap/Capture/**"],
-         tests=("capture-chrome-exclusion", "editor-chrome-parity", "capture-integration"),
-         why="框选/截图引擎其余文件由 chrome 源码门 + chrome 一致性 + 截图胶水覆盖"),
+         tests=("overlay-opt", "capture-chrome-exclusion", "editor-chrome-parity",
+                "capture-integration"),
+         why="框选/截图引擎其余文件由 chrome 源码门 + chrome 一致性 + 截图胶水覆盖；"
+             "overlay-opt 另读 WindowDetector 断言 pid 缓存"),
     dict(id="vendor-editor-window",
          globs=["replica/Vendor/capcap/Editor/EditWindowController.swift"],
          tests=("editor-chrome-parity", "capture-chrome-exclusion", "toolbar-upload-removal"),
@@ -765,8 +779,10 @@ RULES = [
                 "blinkclip-owned-resources", "packaged-resources"),
          why="capcap 本地化表被翻译、工具栏与资源白名单测试三方断言"),
     dict(id="vendor-ui", globs=["replica/Vendor/capcap/UI/**"],
-         tests=("toolbar-upload-removal", "editor-chrome-parity", "capture-chrome-exclusion"),
-         why="自适应 chrome/光标/放大镜等与编辑器 chrome 一致性直接相关"),
+         tests=("overlay-opt", "toolbar-upload-removal", "editor-chrome-parity",
+                "capture-chrome-exclusion"),
+         why="自适应 chrome/光标/放大镜等与编辑器 chrome 一致性直接相关；"
+             "overlay-opt 的源码门读 MagnifierLensPanelWindow 断言 20Hz 与静态 chrome 缓存"),
     dict(id="vendor-generic", globs=["replica/Vendor/capcap/**"], tests=VENDOR_CAPTURE,
          why="BlinkClipCapture 其余目录（ImageMerge/Upload/ImageOutputEncoder 等）随模块编译，"
              "由捕获/编辑器/工具栏面保守覆盖"),
