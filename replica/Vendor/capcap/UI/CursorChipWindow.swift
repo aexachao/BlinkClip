@@ -1,8 +1,19 @@
 import AppKit
+import QuartzCore
 
 class CursorChipWindow: NSPanel {
+    /// How often the chip may move while the pointer drags it along.
+    ///
+    /// The chip is a static rounded rectangle, so a 60Hz follow is
+    /// indistinguishable from a per-event one while costing half the window
+    /// moves of a 120Hz pointer stream.
+    private static let followInterval: TimeInterval = 1.0 / 60.0
+
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var followWorkItem: DispatchWorkItem?
+    private var lastFollowTime: CFTimeInterval = 0
+    private var lastOrigin: NSPoint?
     private let chipView: ChipView
 
     init(text: String = L10n.dragToScreenshot) {
@@ -52,12 +63,39 @@ class CursorChipWindow: NSPanel {
     func dismiss() {
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
+        followWorkItem?.cancel()
+        followWorkItem = nil
         orderOut(nil)
     }
 
+    /// Coalesces the pointer stream into at most one window move per
+    /// `followInterval`, with a trailing move so the chip ends where the
+    /// pointer does.
     private func updatePosition() {
+        let elapsed = CACurrentMediaTime() - lastFollowTime
+        if elapsed >= Self.followInterval {
+            followWorkItem?.cancel()
+            followWorkItem = nil
+            moveToPointer()
+            return
+        }
+        guard followWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.followWorkItem = nil
+            self.moveToPointer()
+        }
+        followWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (Self.followInterval - elapsed), execute: work)
+    }
+
+    private func moveToPointer() {
+        lastFollowTime = CACurrentMediaTime()
         let loc = NSEvent.mouseLocation
-        setFrameOrigin(NSPoint(x: loc.x + 15, y: loc.y - 40))
+        let origin = NSPoint(x: loc.x + 15, y: loc.y - 40)
+        guard origin != lastOrigin else { return }
+        lastOrigin = origin
+        setFrameOrigin(origin)
     }
 }
 

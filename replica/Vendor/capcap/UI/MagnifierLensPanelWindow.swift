@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import QuartzCore
 
 private enum MagnifierLensPanelLayout {
     static let panelWidth: CGFloat = 148
@@ -47,9 +48,34 @@ final class MagnifierLensPanelWindow: NSPanel {
         return NSSize(width: ceil(width), height: ceil(height))
     }
 
+    /// How often the lens may redraw (and re-sample) while the pointer moves.
+    ///
+    /// The pointer delivers events at the display's rate (60–120Hz, more for a
+    /// high-polling-rate mouse). Re-sampling the pixel and repainting the whole
+    /// panel on *every* one of those events was the most expensive thing the
+    /// idle overlay did. The lens is a static swatch that follows the pointer, so
+    /// 30Hz is visually indistinguishable while costing a quarter of the work.
+    /// A trailing update guarantees the final position of a movement is applied.
+    static let contentRefreshInterval: TimeInterval = 1.0 / 30.0
+
     private let lensView: MagnifierLensPanelView
-    private var mouseMonitor: Any?
     private let panelSize: NSSize
+
+    /// Latest request from the overlay's pointer stream. Coalesced into one
+    /// `applyPendingUpdate()` per `contentRefreshInterval`.
+    private struct PendingUpdate {
+        var snapshot: CGImage?
+        var screenFrame: NSRect = .zero
+        var mouseLocation: NSPoint = .zero
+        var format: Format = .hex
+    }
+
+    private var pendingUpdate: PendingUpdate?
+    private var trailingRefresh: DispatchWorkItem?
+    private var lastAppliedTime: CFTimeInterval = 0
+    private var lastAppliedPixelPoint: CGPoint?
+    private var lastAppliedScreenFrame: NSRect = .zero
+    private var lastAppliedFormat: Format = .hex
 
     init() {
         let size = Self.computePanelSize()
@@ -73,46 +99,37 @@ final class MagnifierLensPanelWindow: NSPanel {
     }
 
     deinit {
-        stopTracking()
+        cancelPendingRefresh()
     }
 
     func show() {
         orderFrontRegardless()
         updatePosition()
-        startTracking()
     }
 
     func dismiss() {
-        stopTracking()
+        cancelPendingRefresh()
+        pendingUpdate = nil
+        MagnifierLensPanelSampler.releaseCachedPixels()
         orderOut(nil)
     }
 
+    /// Records the latest pointer state. The actual sample + repaint happens at
+    /// most `contentRefreshInterval` times a second (see `applyPendingUpdate`),
+    /// so a 120–1000Hz pointer stream cannot drive the lens that often.
     func update(
         snapshot: CGImage?,
         screenFrame: NSRect,
         mouseLocation: NSPoint,
         format: Format
     ) {
-        guard let snapshot else {
-            lensView.clear()
-            return
-        }
-        let pixelPoint = MagnifierLensPanelSampler.pixelCoordinate(
-            globalPoint: mouseLocation,
-            screenFrame: screenFrame,
-            snapshotSize: CGSize(width: snapshot.width, height: snapshot.height)
-        )
-        let sample = MagnifierLensPanelSampler.sample(image: snapshot, at: pixelPoint)
-            ?? Sample(r: 0, g: 0, b: 0)
-        lensView.update(
-            sample: sample,
-            pixelPoint: pixelPoint,
-            mouseLocation: mouseLocation,
+        pendingUpdate = PendingUpdate(
             snapshot: snapshot,
             screenFrame: screenFrame,
+            mouseLocation: mouseLocation,
             format: format
         )
-        updatePosition()
+        scheduleRefreshIfNeeded()
     }
 
     func setFormat(_ format: Format) {
@@ -128,21 +145,77 @@ final class MagnifierLensPanelWindow: NSPanel {
     var currentSample: Sample? { lensView.currentSample }
     var currentPixelPoint: CGPoint { lensView.currentPixelPoint }
 
-    // MARK: - Position tracking
+    // MARK: - Refresh cadence
 
-    private func startTracking() {
-        guard mouseMonitor == nil else { return }
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-            self?.updatePosition()
-            return event
+    /// Runs `applyPendingUpdate` now when the last one is older than the
+    /// interval, otherwise schedules exactly one trailing update.
+    private func scheduleRefreshIfNeeded() {
+        guard pendingUpdate != nil else { return }
+        let elapsed = CACurrentMediaTime() - lastAppliedTime
+        if elapsed >= Self.contentRefreshInterval {
+            trailingRefresh?.cancel()
+            trailingRefresh = nil
+            applyPendingUpdate()
+            return
         }
+        guard trailingRefresh == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.trailingRefresh = nil
+            self.applyPendingUpdate()
+        }
+        trailingRefresh = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + (Self.contentRefreshInterval - elapsed),
+            execute: work
+        )
     }
 
-    private func stopTracking() {
-        if let m = mouseMonitor {
-            NSEvent.removeMonitor(m)
-            mouseMonitor = nil
+    private func cancelPendingRefresh() {
+        trailingRefresh?.cancel()
+        trailingRefresh = nil
+    }
+
+    private func applyPendingUpdate() {
+        guard let pending = pendingUpdate else { return }
+        pendingUpdate = nil
+        lastAppliedTime = CACurrentMediaTime()
+
+        guard let snapshot = pending.snapshot else {
+            lensView.clear()
+            lastAppliedPixelPoint = nil
+            updatePosition()
+            return
         }
+        let pixelPoint = MagnifierLensPanelSampler.pixelCoordinate(
+            globalPoint: pending.mouseLocation,
+            screenFrame: pending.screenFrame,
+            snapshotSize: CGSize(width: snapshot.width, height: snapshot.height)
+        )
+        // The panel sits below/right of the pointer and does not cover it, so a
+        // still pointer means an identical sample: keep the painted frame and
+        // only make sure the panel is where it belongs.
+        let sampleUnchanged = pixelPoint == lastAppliedPixelPoint
+            && pending.screenFrame == lastAppliedScreenFrame
+            && pending.format == lastAppliedFormat
+        guard !sampleUnchanged else {
+            updatePosition()
+            return
+        }
+        let sample = MagnifierLensPanelSampler.sample(image: snapshot, at: pixelPoint)
+            ?? Sample(r: 0, g: 0, b: 0)
+        lastAppliedPixelPoint = pixelPoint
+        lastAppliedScreenFrame = pending.screenFrame
+        lastAppliedFormat = pending.format
+        lensView.update(
+            sample: sample,
+            pixelPoint: pixelPoint,
+            mouseLocation: pending.mouseLocation,
+            snapshot: snapshot,
+            screenFrame: pending.screenFrame,
+            format: pending.format
+        )
+        updatePosition()
     }
 
     private func updatePosition() {
@@ -202,47 +275,78 @@ enum MagnifierLensPanelSampler {
     /// Samples a single pixel from `image` at `point` (CGImage coords). Returns
     /// `nil` if the point lies outside the image bounds or the context cannot
     /// be allocated.
+    ///
+    /// The snapshot is decoded into one cached RGBA8 buffer per image, so a
+    /// sample is an array index. The previous implementation drew the *whole*
+    /// snapshot into a 1×1 context to read a single pixel, which re-rasterised
+    /// ~7 million pixels per pointer event (see `applyPendingUpdate`).
     static func sample(image: CGImage, at point: CGPoint) -> MagnifierLensPanelWindow.Sample? {
         guard point.x >= 0, point.y >= 0,
               point.x < CGFloat(image.width),
               point.y < CGFloat(image.height) else {
             return nil
         }
+        guard decodeIfNeeded(image: image) else { return nil }
+        let x = Int(point.x)
+        let y = Int(point.y)
+        guard x >= 0, x < cachedWidth, y >= 0, y < cachedHeight else { return nil }
+        let offset = (y * cachedWidth + x) * 4
+        return MagnifierLensPanelWindow.Sample(
+            r: Int(cachedPixels[offset]),
+            g: Int(cachedPixels[offset + 1]),
+            b: Int(cachedPixels[offset + 2])
+        )
+    }
+
+    // MARK: - Snapshot decode cache
+
+    /// The image the cache belongs to. Reference identity is the right test:
+    /// the overlay hands the same `CGImage` over for every pointer event of a
+    /// session and only replaces it when a new snapshot lands.
+    private static var cachedImage: CGImage?
+    private static var cachedPixels: [UInt8] = []
+    private static var cachedWidth = 0
+    private static var cachedHeight = 0
+
+    /// Drops the decoded buffer. Called when the lens is dismissed so a 30MB
+    /// snapshot copy never outlives the capture session.
+    static func releaseCachedPixels() {
+        cachedImage = nil
+        cachedPixels = []
+        cachedWidth = 0
+        cachedHeight = 0
+    }
+
+    /// Decodes `image` 1:1 into a device-RGB premultiplied buffer, once per
+    /// snapshot. Returns false when the buffer cannot be allocated.
+    private static func decodeIfNeeded(image: CGImage) -> Bool {
+        if let cachedImage, cachedImage === image { return true }
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel
-        var pixelData = [UInt8](repeating: 0, count: bytesPerRow)
-
-        guard let context = CGContext(
-            data: &pixelData,
-            width: 1,
-            height: 1,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else {
-            return nil
+        let decoded = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else { return false }
+            context.interpolationQuality = .none
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
         }
-
-        // Position the target pixel so it exactly covers the 1×1 output
-        // context. `interpolationQuality = .none` avoids edge rows blending
-        // with adjacent or transparent pixels.
-        context.interpolationQuality = .none
-        let drawRect = CGRect(
-            x: -point.x,
-            y: 1 + point.y - CGFloat(image.height),
-            width: CGFloat(image.width),
-            height: CGFloat(image.height)
-        )
-        context.draw(image, in: drawRect)
-
-        return MagnifierLensPanelWindow.Sample(
-            r: Int(pixelData[0]),
-            g: Int(pixelData[1]),
-            b: Int(pixelData[2])
-        )
+        guard decoded else { return false }
+        cachedImage = image
+        cachedPixels = pixels
+        cachedWidth = width
+        cachedHeight = height
+        return true
     }
 
     /// Picks the dark- or light-mode background color according to the user's
@@ -307,6 +411,77 @@ final class MagnifierLensPanelView: NSView {
         }.rounded(.up)
     }()
 
+    /// The rounded panel outline, built once per size.
+    private static var cachedPathSize: NSSize = .zero
+    private static var cachedPath: NSBezierPath?
+
+    static func panelPath(for bounds: NSRect) -> NSBezierPath {
+        if let cachedPath, cachedPathSize == bounds.size { return cachedPath }
+        let path = NSBezierPath(
+            roundedRect: bounds,
+            xRadius: MagnifierLensPanelLayout.cornerRadius,
+            yRadius: MagnifierLensPanelLayout.cornerRadius
+        )
+        cachedPath = path
+        cachedPathSize = bounds.size
+        return path
+    }
+
+    /// Panel background resolved from the current appearance (and the
+    /// `Defaults` palette). Invalidated when the effective appearance changes.
+    private var cachedPanelBackgroundColor: NSColor?
+    private var cachedAppearanceName: NSAppearance.Name?
+
+    var panelBackgroundColor: NSColor {
+        let appearance = effectiveAppearance
+        let name = appearance.bestMatch(from: [.darkAqua, .aqua]) ?? .darkAqua
+        if let cachedPanelBackgroundColor, cachedAppearanceName == name {
+            return cachedPanelBackgroundColor
+        }
+        let resolved = MagnifierLensPanelSampler.backgroundColor(forAppearance: appearance)
+        cachedPanelBackgroundColor = resolved
+        cachedAppearanceName = name
+        return resolved
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cachedPanelBackgroundColor = nil
+        cachedAppearanceName = nil
+    }
+
+    /// Static text styles: rebuilt per frame before, which allocated two
+    /// paragraph styles and three attribute dictionaries on every repaint.
+    private static let labelParagraphStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        return style
+    }()
+
+    private static let valueParagraphStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .right
+        style.lineBreakMode = .byTruncatingHead
+        return style
+    }()
+
+    private static let labelAttrs: [NSAttributedString.Key: Any] = [
+        .font: labelFont,
+        .foregroundColor: NSColor.labelColor,
+        .paragraphStyle: labelParagraphStyle,
+    ]
+
+    private static let valueAttrs: [NSAttributedString.Key: Any] = [
+        .font: valueFont,
+        .foregroundColor: NSColor.labelColor,
+        .paragraphStyle: valueParagraphStyle,
+    ]
+
+    private static let tipAttrs: [NSAttributedString.Key: Any] = [
+        .font: tipFont,
+        .foregroundColor: NSColor.labelColor.withAlphaComponent(0.7)
+    ]
+
     func clear() {
         currentSample = nil
         snapshot = nil
@@ -341,13 +516,11 @@ final class MagnifierLensPanelView: NSView {
         )
 
         // Panel background — pick dark or light based on appearance + setting.
-        let bgPath = NSBezierPath(
-            roundedRect: bounds,
-            xRadius: MagnifierLensPanelLayout.cornerRadius,
-            yRadius: MagnifierLensPanelLayout.cornerRadius
-        )
-        let panelBackground = MagnifierLensPanelSampler.backgroundColor(forAppearance: effectiveAppearance)
-        panelBackground.setFill()
+        // Both the palette (six `Defaults` reads) and the rounded path are
+        // resolved once: the lens repaints up to 30 times a second while the
+        // pointer moves and neither input changes between frames.
+        let bgPath = Self.panelPath(for: bounds)
+        panelBackgroundColor.setFill()
         bgPath.fill()
 
         NSGraphicsContext.current?.saveGraphicsState()
@@ -418,26 +591,9 @@ final class MagnifierLensPanelView: NSView {
     }
 
     private func drawInfo() {
-        let labelParagraphStyle = NSMutableParagraphStyle()
-        labelParagraphStyle.lineBreakMode = .byTruncatingTail
-        let valueParagraphStyle = NSMutableParagraphStyle()
-        valueParagraphStyle.alignment = .right
-        valueParagraphStyle.lineBreakMode = .byTruncatingHead
-
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.labelFont,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: labelParagraphStyle,
-        ]
-        let valueAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.valueFont,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: valueParagraphStyle,
-        ]
-        let tipAttrs: [NSAttributedString.Key: Any] = [
-            .font: Self.tipFont,
-            .foregroundColor: NSColor.labelColor.withAlphaComponent(0.7)
-        ]
+        let labelAttrs = Self.labelAttrs
+        let valueAttrs = Self.valueAttrs
+        let tipAttrs = Self.tipAttrs
 
         // Compute the row index (from the bottom) for each row that exists.
         // We always render coords + color (rows 3 and 2 in old layout).

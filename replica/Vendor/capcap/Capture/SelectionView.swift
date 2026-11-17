@@ -144,6 +144,79 @@ private final class SnapGuideView: NSView {
     }
 }
 
+/// The window-hover highlight: dimming cut-out, accent frame and size label.
+///
+/// This chrome used to be painted by `SelectionView.draw(_:)`, so every hover
+/// target change invalidated the *whole* overlay and re-blitted the frozen
+/// desktop snapshot (tens of megabytes on a 2x display) before drawing the
+/// cut-out on top — once per window crossing. It now lives in its own
+/// layer-backed view: a crossing repaints a dim fill, one inset stroke and the
+/// label, and never touches the snapshot underneath.
+private final class HoverHighlightView: NSView {
+    private let dimmingAlpha: CGFloat
+    private let borderWidth: CGFloat
+    private let tint: CGColor
+
+    /// Highlighted rect in this view's coordinates (same space as the overlay,
+    /// i.e. the whole display). `.null` means "nothing hovered".
+    var hoverRect: NSRect = .null {
+        didSet {
+            guard hoverRect != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    init(dimmingAlpha: CGFloat, borderWidth: CGFloat, tint: CGColor) {
+        self.dimmingAlpha = dimmingAlpha
+        self.borderWidth = borderWidth
+        self.tint = tint
+        super.init(frame: .zero)
+        wantsLayer = true
+        isHidden = true
+        layer?.isOpaque = false
+        layer?.masksToBounds = false
+        layer?.actions = [
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull(),
+            "contents": NSNull()
+        ]
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+
+    /// Decoration only: it must never take the pointer away from the overlay.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !hoverRect.isNull, hoverRect.width > 0, hoverRect.height > 0,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+
+        // Dark overlay with cutout (even-odd fill preserves the snapshot
+        // underneath, which this view's parent painted).
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        path.addRect(hoverRect)
+        context.setFillColor(NSColor.black.withAlphaComponent(dimmingAlpha).cgColor)
+        context.addPath(path)
+        context.fillPath(using: .evenOdd)
+
+        // Solid accent border — same 1pt weight as the committed frame and the
+        // dragged box, so the three never look like different line thicknesses.
+        // The stroke sits just outside the hover rect.
+        context.setStrokeColor(tint)
+        context.setLineWidth(borderWidth)
+        context.setLineDash(phase: 0, lengths: [])
+        context.stroke(hoverRect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
+        SelectionView.drawSizeLabel(context: context, rect: hoverRect, in: self)
+    }
+}
+
 class SelectionView: NSView {
     weak var delegate: SelectionViewDelegate?
     var onFirstDrawCompleted: (() -> Void)?
@@ -177,7 +250,11 @@ class SelectionView: NSView {
             if state != oldValue {
                 // The guide belonged to the idle hover; a click, a committed
                 // frame or a returned selection hides it without repainting
-                // the snapshot (it is a layer).
+                // the snapshot (it is a layer). The hover highlight is a layer
+                // too, and only the idle state owns it.
+                if state != .idle {
+                    hideHoverHighlight()
+                }
                 refreshSnapGuide()
             }
         }
@@ -193,6 +270,13 @@ class SelectionView: NSView {
 
     /// A foreground claim would dismiss an open menu before its snapshot lands.
     var mayActivateAppForCursor = true
+
+    /// A foreground claim is a one-shot: activation is retried at most once per
+    /// overlay session, never on every pointer move. `OverlayWindowController`
+    /// already claims activation when it presents the overlay; re-claiming from
+    /// `mouseMoved` used to run an activation attempt on every single event
+    /// while the pointer moved over an inactive overlay.
+    private var didAttemptCursorReactivation = false
 
     // When true, clicking outside selection won't start a new selection
     var selectionLocked = false {
@@ -282,6 +366,14 @@ class SelectionView: NSView {
     /// system crosshair: this view never draws or hides it.
     private let snapGuide = SnapGuideView()
 
+    /// The hover dimming/border/label, in its own layer so a window crossing
+    /// never repaints the frozen snapshot (see `HoverHighlightView`).
+    private lazy var hoverHighlight = HoverHighlightView(
+        dimmingAlpha: dimmingOverlayAlpha,
+        borderWidth: borderWidth,
+        tint: SelectionView.selectionTintCGColor
+    )
+
     /// Settings: draw the hovered window's horizontal/vertical centre lines too.
     /// Off by default. Read by `OverlayWindowController` from the screenshot
     /// preferences when the overlay opens.
@@ -351,13 +443,31 @@ class SelectionView: NSView {
     /// screen. It stays hidden until a window is hovered.
     private func installSnapGuide() {
         snapGuide.isHidden = true
+        hoverHighlight.frame = bounds
+        hoverHighlight.autoresizingMask = [.width, .height]
+        addSubview(hoverHighlight)
         addSubview(snapGuide)
+    }
+
+    /// Keeps the highlight layer the same size as the overlay after a resize.
+    private func layoutHoverHighlight() {
+        if hoverHighlight.frame != bounds {
+            hoverHighlight.frame = bounds
+        }
+    }
+
+    /// Takes the hover highlight off screen without touching the snapshot.
+    private func hideHoverHighlight() {
+        guard !hoverHighlight.isHidden || !hoverHighlight.hoverRect.isNull else { return }
+        hoverHighlight.isHidden = true
+        hoverHighlight.hoverRect = .null
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         // A clamped target is expressed in this view's coordinates, so a resize
         // re-states the guide against the new bounds.
+        layoutHoverHighlight()
         refreshSnapGuide()
     }
 
@@ -541,6 +651,10 @@ class SelectionView: NSView {
             hoverWindowRect = nil
             hoverWindowFullRect = nil
             hoverWindowID = nil
+            // The highlight is a layer of its own, so clearing the target has
+            // to hide it here too: `draw(_:)` no longer reads `hoverWindowRect`
+            // and would keep the stale dimming/border/label on screen.
+            hideHoverHighlight()
             selectionOrigin = point
             dragStart = point
             selectionRect = NSRect(origin: point, size: .zero)
@@ -733,8 +847,11 @@ class SelectionView: NSView {
         if state == .idle && !selectionLocked {
             // capcap may lose activation over time, which causes WindowServer
             // to ignore the crosshair cursor rect registered in resetCursorRects.
-            // Re-activate on every mouse-move so the cursor stays crosshair.
-            if mayActivateAppForCursor && !NSApp.isActive {
+            // One retry per session is enough: the overlay claims activation
+            // when it is presented, and a per-event activation attempt costs a
+            // full activation round trip on *every* pointer move.
+            if mayActivateAppForCursor, !didAttemptCursorReactivation, !NSApp.isActive {
+                didAttemptCursorReactivation = true
                 NSApp.activate(ignoringOtherApps: true)
             }
             NSCursor.crosshair.set()
@@ -845,6 +962,15 @@ class SelectionView: NSView {
         guard clamped != hoverWindowRect
             || viewRect != hoverWindowFullRect
             || hoverWindowID != detected.windowID else {
+            // Same target: nothing to push to the delegate or the guide. The
+            // highlight layer can still be off screen though — only the idle
+            // state owns it — so bring it back for this rect.
+            if hoverHighlight.isHidden {
+                layoutHoverHighlight()
+                hoverHighlight.isHidden = false
+                hoverHighlight.hoverRect = clamped
+                hoverHighlight.needsDisplay = true
+            }
             return
         }
         hoverWindowRect = clamped
@@ -852,9 +978,11 @@ class SelectionView: NSView {
         hoverWindowID = detected.windowID
         hoverTargetChangeCount += 1
         delegate?.selectionDidHoverWindow(detected)
-        // Hover dimming/border is drawn by `draw(_:)`; the guide is a layer and
-        // is written synchronously below, so it belongs to this event.
-        needsDisplay = true
+        // The highlight is its own layer: writing it repaints the dim, the
+        // border and the label only — the snapshot underneath is untouched.
+        layoutHoverHighlight()
+        hoverHighlight.isHidden = false
+        hoverHighlight.hoverRect = clamped
         refreshSnapGuide()
     }
 
@@ -886,7 +1014,7 @@ class SelectionView: NSView {
         hoverWindowFullRect = nil
         hoverWindowID = nil
         delegate?.selectionDidHoverWindow(nil)
-        needsDisplay = true
+        hideHoverHighlight()
         refreshSnapGuide()
     }
 
@@ -906,26 +1034,11 @@ class SelectionView: NSView {
             snapshot.draw(in: bounds)
         }
 
-        // Hover highlight for window detection (idle state, before any click)
-        if state == .idle, let hoverRect = hoverWindowRect {
-            // Dark overlay with cutout (even-odd fill preserves snapshot underneath)
-            let path = CGMutablePath()
-            path.addRect(bounds)
-            path.addRect(hoverRect)
-            context.setFillColor(NSColor.black.withAlphaComponent(dimmingOverlayAlpha).cgColor)
-            context.addPath(path)
-            context.fillPath(using: .evenOdd)
-            // Solid accent border — same 1pt weight as the committed frame
-            // and the dragged box, so the three never look like different
-            // line thicknesses. The stroke sits just outside the hover rect.
-            context.setStrokeColor(SelectionView.selectionTintCGColor)
-            context.setLineWidth(borderWidth)
-            context.setLineDash(phase: 0, lengths: [])
-            context.stroke(hoverRect.insetBy(dx: -borderWidth / 2, dy: -borderWidth / 2))
-            // Size label
-            SelectionView.drawSizeLabel(context: context, rect: hoverRect, in: self)
-            return
-        }
+        // The window-hover highlight (dimming cut-out, accent frame, size
+        // label) is not drawn here: it is a layer of its own
+        // (`HoverHighlightView`), so hovering another window never repaints
+        // this snapshot. Keeping it out of `draw(_:)` is what makes a window
+        // crossing cheap.
 
         // In idle state with no selection, just show the snapshot (already drawn above).
         // The pointer guides are not drawn here: they live in their own layers.

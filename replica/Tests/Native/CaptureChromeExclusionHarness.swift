@@ -25,11 +25,22 @@ private struct SnapGuideGeometry {
     let band: NSView?
     let subviewCount: Int
     let layer: CAShapeLayer?
+    /// The hover highlight is a sibling layer of the guide (dimming cut-out,
+    /// accent frame and size label). Counting it separately keeps the "exactly
+    /// one guide layer, no self-drawn pointer" property meaningful after the
+    /// hover chrome moved out of `draw(_:)`.
+    let hoverLayerCount: Int
+
+    private static func typeName(_ view: NSView) -> String {
+        String(describing: type(of: view))
+    }
 
     init(view: SelectionView) {
         let subviews = view.subviews
         subviewCount = subviews.count
-        band = subviews.count == 1 ? subviews.first : nil
+        hoverLayerCount = subviews.filter { Self.typeName($0) == "HoverHighlightView" }.count
+        let guides = subviews.filter { Self.typeName($0) == "SnapGuideView" }
+        band = guides.count == 1 ? guides[0] : nil
         layer = band?.layer?.sublayers?.first as? CAShapeLayer
     }
 
@@ -397,8 +408,8 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
         let snapView = primaryFixture.view
 
         let initialSnap = SnapGuideGeometry(view: snapView)
-        check(initialSnap.subviewCount == 1,
-              "the overlay installs exactly one guide layer and no self-drawn pointer")
+        check(initialSnap.subviewCount == 2 && initialSnap.hoverLayerCount == 1,
+              "the overlay installs exactly one guide layer, one hover-highlight layer and no self-drawn pointer")
         check(initialSnap.isHidden, "no guide before the pointer is over a window")
 
         // A point inside A resolves to A's four edges in this view's coordinates.
