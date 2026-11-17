@@ -24,24 +24,28 @@
 
 <table>
   <tr>
-    <td colspan="3" align="center"><img src="docs/images/screenshot-clipboard-panel.png" alt="剪贴板面板：横向卡片浏览文本、图片与链接，卡片标明类型与来源应用" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-clipboard-panel.png" alt="剪贴板面板：横向卡片浏览文本、图片与链接，卡片标明类型与来源应用" width="100%"></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><sub>剪贴板历史面板 —— 图为演示数据</sub></td>
+    <td colspan="2" align="center"><sub>剪贴板历史面板 —— 图为演示数据</sub></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><img src="docs/images/screenshot-editor-toolbar.png" alt="标注编辑器的浮动工具栏" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-capture-overlay.jpg" alt="框选覆盖层：贯穿全屏的十字辅助线、蓝色选区与放大镜读数（坐标 / 色值 / 比例）" width="100%"></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><sub>截图后的标注编辑器工具栏</sub></td>
+    <td colspan="2" align="center"><sub>框选覆盖层：十字辅助线 + 选区 + 放大镜读数</sub></td>
   </tr>
   <tr>
-    <td width="33%" align="center"><img src="docs/images/screenshot-capture-lens.png" alt="框选覆盖层：放大镜取色，显示坐标、色值与截图比例" width="100%"></td>
-    <td width="33%" align="center"><img src="docs/images/screenshot-settings-capture.png" alt="设置 → 截图：截图后行为、框选覆盖层与翻译" width="100%"></td>
-    <td width="33%" align="center"><img src="docs/images/screenshot-settings-permissions.png" alt="设置 → 隐私与权限：辅助功能与屏幕录制状态" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-editor-toolbar.png" alt="标注编辑器的浮动工具栏" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><sub>框选：放大镜取色（坐标 / 色值 / 比例）</sub></td>
+    <td colspan="2" align="center"><sub>截图后的标注编辑器工具栏</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/screenshot-settings-capture.png" alt="设置 → 截图：截图后行为、框选覆盖层与翻译" width="100%"></td>
+    <td width="50%" align="center"><img src="docs/images/screenshot-settings-permissions.png" alt="设置 → 隐私与权限：辅助功能与屏幕录制状态" width="100%"></td>
+  </tr>
+  <tr>
     <td align="center"><sub>设置 → 截图</sub></td>
     <td align="center"><sub>设置 → 隐私与权限</sub></td>
   </tr>

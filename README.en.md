@@ -24,24 +24,28 @@ Current stable version: **1.0.32**. One installer supports Intel and Apple silic
 
 <table>
   <tr>
-    <td colspan="3" align="center"><img src="docs/images/screenshot-clipboard-panel.png" alt="Clipboard panel: horizontal cards for text, images and links, each labelled with its type and source app" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-clipboard-panel.png" alt="Clipboard panel: horizontal cards for text, images and links, each labelled with its type and source app" width="100%"></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><sub>Clipboard history panel — demo data shown</sub></td>
+    <td colspan="2" align="center"><sub>Clipboard history panel — demo data shown</sub></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><img src="docs/images/screenshot-editor-toolbar.png" alt="Floating toolbar of the annotation editor" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-capture-overlay.jpg" alt="Selection overlay: full-screen crosshair guides, the blue selection, and live magnifier readouts (coordinates / colour / ratio)" width="100%"></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><sub>Annotation editor toolbar, opened right after a capture</sub></td>
+    <td colspan="2" align="center"><sub>Selection overlay: crosshair guides + selection + magnifier readouts</sub></td>
   </tr>
   <tr>
-    <td width="33%" align="center"><img src="docs/images/screenshot-capture-lens.png" alt="Selection overlay: magnifier colour picker showing coordinates, colour value and aspect ratio" width="100%"></td>
-    <td width="33%" align="center"><img src="docs/images/screenshot-settings-capture.png" alt="Settings → Screenshots: post-capture behaviour, selection overlay and translation" width="100%"></td>
-    <td width="33%" align="center"><img src="docs/images/screenshot-settings-permissions.png" alt="Settings → Privacy &amp; Permissions: Accessibility and Screen Recording status" width="100%"></td>
+    <td colspan="2" align="center"><img src="docs/images/screenshot-editor-toolbar.png" alt="Floating toolbar of the annotation editor" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Region capture: magnifier colour picker</sub></td>
+    <td colspan="2" align="center"><sub>Annotation editor toolbar, opened right after a capture</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/screenshot-settings-capture.png" alt="Settings → Screenshots: post-capture behaviour, selection overlay and translation" width="100%"></td>
+    <td width="50%" align="center"><img src="docs/images/screenshot-settings-permissions.png" alt="Settings → Privacy &amp; Permissions: Accessibility and Screen Recording status" width="100%"></td>
+  </tr>
+  <tr>
     <td align="center"><sub>Settings → Screenshots</sub></td>
     <td align="center"><sub>Settings → Privacy &amp; Permissions</sub></td>
   </tr>
