@@ -89,6 +89,301 @@
         </div>
       </div>
     </section>
+    <section class="features" id="features" aria-labelledby="features-title">
+      <div class="shell">
+        <header class="section-head">
+          <p class="eyebrow" data-i18n="features.eyebrow">一次装好，四件事都顺</p>
+          <h2 class="section-title js-line-reveal" id="features-title">
+            <span class="line-wrap"><span class="line-inner" data-i18n="features.title.one">剪贴板、截图、</span></span>
+            <span class="line-wrap"><span class="line-inner" data-i18n="features.title.two">AI 与同步。</span></span>
+          </h2>
+          <p class="section-lede" data-i18n="features.lede">历史、截图与标注、AI 工具接入、iCloud 同步——都在同一个原生应用里，没有账号，也没有订阅。</p>
+        </header>
+        <div class="bento">
+          <article class="bento-card bento-focus">
+            <span class="bento-tag" data-i18n="card.history.tag">01 · 剪贴板历史</span>
+            <h3 data-i18n="card.history.title">复制过的，按 ⇧⌘V 就回来</h3>
+            <p data-i18n="card.history.body">文本、图片、文件、链接和颜色自动入库，横向卡片浏览，支持关键字搜索，并按类型、来源应用和日期筛选。</p>
+            <ul class="bento-list">
+              <li data-i18n="card.history.point.one">保留期限 1 / 3 / 7 / 15 / 30 / 60 天或永久</li>
+              <li data-i18n="card.history.point.two">只清理过期且未加入分组的内容</li>
+              <li data-i18n="card.history.point.three">收藏分组（Pinboard）与 ⇧⌘C Stack 顺序粘贴</li>
+            </ul>
+            <div class="type-chips">
+              <span data-i18n="type.text">文本</span>
+              <span data-i18n="type.image">图片</span>
+              <span data-i18n="type.file">文件</span>
+              <span data-i18n="type.link">链接</span>
+              <span data-i18n="type.color">颜色</span>
+            </div>
+          </article>
+          <article class="bento-card bento-tall" id="capture">
+            <span class="bento-tag" data-i18n="card.capture.tag">02 · 截图与标注</span>
+            <h3 data-i18n="card.capture.title">⌘⇧A 框选，直接进标注</h3>
+            <p data-i18n="card.capture.body">框选时十字辅助线贯穿全屏，放大镜实时读坐标、色值与比例；松手即进入标注编辑器。</p>
+            <figure class="bento-shot">
+              <img src="./assets/screenshot-capture-overlay.jpg" width="1500" height="916" alt="框选覆盖层：贯穿全屏的十字辅助线、蓝色选区与放大镜读数（坐标 / 色值 / 比例）" data-i18n-alt="image.overlay" loading="lazy">
+            </figure>
+            <p class="bento-tools" data-i18n="card.capture.tools">矩形、椭圆、箭头、直线、画笔、马克笔、聚光灯、马赛克、橡皮、放大镜、序号、文字、二维码、表情、插入图片、取色</p>
+            <figure class="bento-strip">
+              <img src="./assets/screenshot-editor-toolbar.png" width="2240" height="169" alt="截图后的标注编辑器浮动工具栏" data-i18n-alt="image.toolbar" loading="lazy">
+            </figure>
+            <p class="bento-extra" data-i18n="card.capture.extra">长截图自动拼接 · 钉图浮窗 · 本地 Vision OCR · Apple 翻译（macOS 15+）</p>
+          </article>
+          <article class="bento-card bento-ai">
+            <span class="bento-tag" data-i18n="card.ai.tag">03 · AI 工具接入</span>
+            <h3 data-i18n="card.ai.title">把剪贴板交给 AI 当上下文</h3>
+            <p data-i18n="card.ai.body">blinkclip-mcp 是标准 stdio JSON-RPC 服务，Claude、Codex、Cursor 都能接；「设置 → AI 工具」里直接复制配置。</p>
+            <code class="code-pill">blinkclip-mcp</code>
+            <div class="api-chips" aria-hidden="true"><span>search</span><span>read_item</span><span>pinboards</span></div>
+          </article>
+          <article class="bento-card bento-sync">
+            <span class="bento-tag" data-i18n="card.sync.tag">04 · iCloud 同步</span>
+            <h3 data-i18n="card.sync.title">默认关闭，开不开你说了算</h3>
+            <p data-i18n="card.sync.body">开启后经 CloudKit 在 Mac 之间同步历史与分组（生产已上线）；未获授权的构建回退到 iCloud Drive。</p>
+            <div class="sync-state">
+              <span class="sync-switch" aria-hidden="true"><span></span></span>
+              <span data-i18n="card.sync.state">默认关闭</span>
+            </div>
+            <p class="bento-note" data-i18n="card.sync.note">快捷键、权限、排除列表、保留期限与 Stack 队列不同步</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats clip-parallelogram" id="stats" aria-labelledby="stats-title">
+      <div class="shell">
+        <header class="section-head stats-head">
+          <p class="eyebrow" data-i18n="stats.eyebrow">真实数字</p>
+          <h2 class="section-title js-line-reveal" id="stats-title">
+            <span class="line-wrap"><span class="line-inner" data-i18n="stats.title.one">没有包装，</span></span>
+            <span class="line-wrap"><span class="line-inner" data-i18n="stats.title.two">只有事实。</span></span>
+          </h2>
+        </header>
+        <div class="stat-rows">
+          <article class="stat-row is-focal">
+            <p class="stat-value" data-count="0">0</p>
+            <div class="stat-copy">
+              <h3 data-i18n="stats.account.title">账号</h3>
+              <p data-i18n="stats.account.desc">无需注册、无需登录，打开就能用；同步也只使用你自己的 Apple ID。</p>
+            </div>
+          </article>
+          <article class="stat-row">
+            <p class="stat-value" data-count="1">1</p>
+            <div class="stat-copy">
+              <h3 data-i18n="stats.installer.title">个通用安装包</h3>
+              <p data-i18n="stats.installer.desc">同一个 DMG 同时支持 Intel 与 Apple 芯片，不用挑版本。</p>
+            </div>
+          </article>
+          <article class="stat-row">
+            <p class="stat-value" data-count="5">5</p>
+            <div class="stat-copy">
+              <h3 data-i18n="stats.types.title">类收录内容</h3>
+              <p data-i18n="stats.types.desc">文本、图片、文件、链接、颜色，并保留原始格式（富文本、HTML、文件 URL）。</p>
+            </div>
+          </article>
+          <article class="stat-row">
+            <p class="stat-value" data-count="14" data-suffix="+">14+</p>
+            <div class="stat-copy">
+              <h3 data-i18n="stats.macos.title">macOS 版本</h3>
+              <p data-i18n="stats.macos.desc">系统要求 macOS 14 或更新；截图翻译需要 macOS 15+。</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="shortcuts clip-round-bottom" id="shortcuts" aria-labelledby="shortcuts-title">
+      <div class="shell">
+        <header class="section-head">
+          <p class="eyebrow" data-i18n="shortcuts.eyebrow">手指比鼠标快</p>
+          <h2 class="section-title js-line-reveal" id="shortcuts-title">
+            <span class="line-wrap"><span class="line-inner" data-i18n="shortcuts.title.one">四个快捷键，</span></span>
+            <span class="line-wrap"><span class="line-inner" data-i18n="shortcuts.title.two">记住就够用。</span></span>
+          </h2>
+          <p class="section-lede" data-i18n="shortcuts.lede">默认值如下，全部可以在「设置 → 快捷键」里改。</p>
+        </header>
+        <div class="shortcut-grid">
+          <article class="shortcut-card is-focal">
+            <div class="key-row"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>V</kbd></div>
+            <h3 data-i18n="shortcuts.open.title">打开历史面板</h3>
+            <p data-i18n="shortcuts.open.desc">任何应用里呼出横向卡片面板</p>
+          </article>
+          <article class="shortcut-card">
+            <div class="key-row"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>C</kbd></div>
+            <h3 data-i18n="shortcuts.stack.title">Stack 顺序粘贴</h3>
+            <p data-i18n="shortcuts.stack.desc">多条内容按队列依次粘贴，适合填表</p>
+          </article>
+          <article class="shortcut-card">
+            <div class="key-row"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd></div>
+            <h3 data-i18n="shortcuts.region.title">区域截图</h3>
+            <p data-i18n="shortcuts.region.desc">十字辅助线加放大镜读数</p>
+          </article>
+          <article class="shortcut-card">
+            <div class="key-row"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>E</kbd></div>
+            <h3 data-i18n="shortcuts.full.title">全屏截图</h3>
+            <p data-i18n="shortcuts.full.desc">截完直接进入标注编辑器</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="permissions clip-scallop" id="permissions" aria-labelledby="permissions-title">
+      <div class="shell">
+        <header class="section-head">
+          <p class="eyebrow" data-i18n="permissions.eyebrow">先说清楚要什么权限</p>
+          <h2 class="section-title js-line-reveal" id="permissions-title">
+            <span class="line-wrap"><span class="line-inner" data-i18n="permissions.title.one">两个开关，</span></span>
+            <span class="line-wrap"><span class="line-inner" data-i18n="permissions.title.two">一次授权。</span></span>
+          </h2>
+          <p class="section-lede" data-i18n="permissions.lede">闪贴需要系统级能力才能读取界面和投递按键；不授予也能用，只是部分功能会退化为手动操作。</p>
+        </header>
+        <div class="perm-grid">
+          <figure class="perm-shot">
+            <img src="./assets/screenshot-settings-permissions.png" width="1080" height="1000" alt="设置 → 隐私与权限：辅助功能与屏幕录制状态" data-i18n-alt="image.permissions" loading="lazy">
+          </figure>
+          <div class="perm-cards">
+            <article class="perm-card is-focal">
+              <span class="perm-icon" aria-hidden="true"><svg class="icon"><use href="./assets/icons.svg#i-shield"/></svg></span>
+              <h3 data-i18n="permissions.access.name">辅助功能</h3>
+              <p data-i18n="permissions.access.why">读取其他应用界面（滚动截图、读取内容），并向其他应用发送键盘事件（直接粘贴）。</p>
+              <p class="perm-where"><span aria-hidden="true">→</span><span data-i18n="permissions.access.where">系统设置 → 隐私与安全性 → 辅助功能；也可从「设置 → 隐私与权限」点「系统设置…」。</span></p>
+            </article>
+            <article class="perm-card">
+              <span class="perm-icon" aria-hidden="true"><svg class="icon"><use href="./assets/icons.svg#i-camera"/></svg></span>
+              <h3 data-i18n="permissions.screen.name">屏幕录制</h3>
+              <p data-i18n="permissions.screen.why">截取区域、窗口或整个屏幕。</p>
+              <p class="perm-where"><span aria-hidden="true">→</span><span data-i18n="permissions.screen.where">系统设置 → 隐私与安全性 → 屏幕录制；同样可以从应用内跳转。</span></p>
+            </article>
+            <article class="perm-card">
+              <span class="perm-icon" aria-hidden="true"><svg class="icon"><use href="./assets/icons.svg#i-command"/></svg></span>
+              <h3 data-i18n="permissions.events.name">发送事件</h3>
+              <p data-i18n="permissions.events.why">直接粘贴时向目标应用投递键盘事件；它与辅助功能同源，系统设置不会单独列出这一项。</p>
+              <p class="perm-where"><span aria-hidden="true">→</span><span data-i18n="permissions.events.where">随辅助功能一并生效；若提示未就绪，重新勾选辅助功能后重启应用。</span></p>
+            </article>
+          </div>
+        </div>
+        <p class="perm-fallback" data-i18n="permissions.fallback">不授予也能用：不依赖辅助功能的项目照常工作，滚动截图可改用手动滚动。</p>
+      </div>
+    </section>
+
+    <section class="privacy" id="privacy" aria-labelledby="privacy-title">
+      <div class="shell">
+        <div class="privacy-grid">
+          <div class="privacy-copy">
+            <p class="eyebrow" data-i18n="privacy.eyebrow">本地优先，不是口号</p>
+            <h2 class="section-title js-line-reveal" id="privacy-title">
+              <span class="line-wrap"><span class="line-inner" data-i18n="privacy.title.one">数据只存在</span></span>
+              <span class="line-wrap"><span class="line-inner" data-i18n="privacy.title.two">这台 Mac 上。</span></span>
+            </h2>
+            <p class="section-lede" data-i18n="privacy.lede">剪贴板历史、截图与设置默认只保存在本机；同步默认关闭，不需要账号，也不经过我们的服务器。</p>
+            <div class="data-path">
+              <p class="data-path-label" data-i18n="privacy.path.label">数据位置</p>
+              <code>~/Library/Application Support/BlinkClip/</code>
+              <p class="data-path-note" data-i18n="privacy.path.note">目录 0700，数据库 0600；首次启动会把旧的 clipboard.json 迁移进 clipboard.sqlite，原文件保留不覆盖。</p>
+            </div>
+            <div class="privacy-points">
+              <article>
+                <h3 data-i18n="privacy.sync.title">开启同步才会上云</h3>
+                <p data-i18n="privacy.sync.body">内容进入你自己 Apple ID 下的 iCloud（CloudKit 容器或 iCloud Drive/BlinkClip），不经过本项目的服务器；应用也不上报使用数据。</p>
+              </article>
+              <article>
+                <h3 data-i18n="privacy.sensitive.title">敏感内容不记录</h3>
+                <p data-i18n="privacy.sensitive.body">来源应用标记为机密或临时的剪贴板内容会被跳过；也可以在「设置 → 隐私与权限」里指定不记录的应用。</p>
+              </article>
+            </div>
+          </div>
+          <figure class="privacy-shot">
+            <img src="./assets/screenshot-settings-capture.png" width="1080" height="1000" alt="设置 → 截图：截图后行为、框选覆盖层与翻译" data-i18n-alt="image.captureSettings" loading="lazy">
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq section-rule" id="faq" aria-labelledby="faq-title">
+      <div class="shell">
+        <div class="faq-layout">
+          <div class="faq-anchor">
+            <p class="eyebrow" data-i18n="faq.eyebrow">上手前</p>
+            <h2 class="faq-title" id="faq-title">FAQ</h2>
+          </div>
+          <div class="faq-list">
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a1">
+                <span class="faq-question" data-i18n="faq.q1">需要哪些权限？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a1"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a1">辅助功能用于读取界面和发送按键（直接粘贴、滚动截图），屏幕录制用于截图；发送事件随辅助功能一并生效。都在「系统设置 → 隐私与安全性」里授权，应用内「设置 → 隐私与权限」有直达按钮。不授予也能用，滚动截图可以改用手动滚动。</p></div></div>
+            </div>
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a2">
+                <span class="faq-question" data-i18n="faq.q2">数据会上传吗？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a2"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a2">默认不会。历史、截图和设置只存在本机；同步默认关闭，开启后内容进入你自己 Apple ID 下的 iCloud，不经过本项目的服务器，应用也不上报使用数据。</p></div></div>
+            </div>
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a3">
+                <span class="faq-question" data-i18n="faq.q3">支持 Intel Mac 吗？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a3"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a3">支持。同一个 Universal DMG 同时支持 Intel 与 Apple 芯片，系统要求 macOS 14 或更新。</p></div></div>
+            </div>
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a4">
+                <span class="faq-question" data-i18n="faq.q4">怎么卸载干净？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a4"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a4">退出闪贴，把 BlinkClip.app 移到废纸篓；本地数据在 ~/Library/Application Support/BlinkClip/，需要彻底清除时一并删除。若开启过 iCloud 同步，云端数据保存在你自己的 iCloud 账户里；若开启过「登录时打开」，先在设置中关闭。</p></div></div>
+            </div>
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a5">
+                <span class="faq-question" data-i18n="faq.q5">为什么不在 Mac App Store？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a5"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a5">闪贴采用 Developer ID 签名并通过 Apple 公证，未启用 App Sandbox，直接通过 GitHub Releases 分发；安装包双击即可运行，应用内更新由 Sparkle 完成。</p></div></div>
+            </div>
+            <div class="faq-item" data-open="false">
+              <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-a6">
+                <span class="faq-question" data-i18n="faq.q6">怎么更新？</span>
+                <svg class="faq-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><line class="horizontal" x1="4" y1="12" x2="20" y2="12"/><line class="vertical" x1="12" y1="4" x2="12" y2="20"/></svg>
+              </button>
+              <div class="faq-content" id="faq-a6"><div class="faq-inner"><p class="faq-answer" data-i18n="faq.a6">「关于闪贴 → 检查更新」会对比最新正式 Release，六小时内复用检查结果；确认后应用内下载完整 Universal DMG 并校验 Ed25519 签名，保存数据后安装重启。更新后系统可能要求重新授予辅助功能权限。</p></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta" id="cta" aria-labelledby="cta-title">
+      <div class="cta-glow" aria-hidden="true"></div>
+      <div class="shell">
+        <div class="cta-grid">
+          <div class="cta-copy">
+            <p class="eyebrow" data-i18n="cta.eyebrow">现在就试</p>
+            <h2 class="cta-title js-line-reveal" id="cta-title">
+              <span class="line-wrap"><span class="line-inner" data-i18n="cta.title.one">把下一个灵感，</span></span>
+              <span class="line-wrap"><span class="line-inner accent" data-i18n="cta.title.two">留在手边。</span></span>
+            </h2>
+            <p class="cta-lede" data-i18n="cta.lede">下载最新正式版，拖进「应用程序」就能用。免费、开源、无需账号。</p>
+          </div>
+          <div class="cta-actions">
+            <a class="button" href="https://github.com/aexachao/BlinkClip/releases/latest" aria-label="下载闪贴（GitHub Releases）" data-i18n-aria-label="a11y.download"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#i-download"/></svg><span data-i18n="download.mac">下载 macOS 版</span></a>
+            <a class="cta-github" href="https://github.com/aexachao/BlinkClip"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#i-github"/></svg><span data-i18n="cta.github">查看源码与更新日志</span><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#i-external"/></svg></a>
+            <p class="cta-note" data-i18n="cta.note">macOS 14+ · Universal（Intel + Apple 芯片）· AGPL-3.0</p>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
+
+  <footer class="footer">
+    <div class="shell footer-inner">
+      <p class="footer-brand"><img src="./assets/blinkclip-icon.png" width="22" height="22" alt=""><span data-i18n="brand.name">闪贴</span></p>
+      <p class="footer-license" data-i18n="footer.license">AGPL-3.0 许可</p>
+      <p class="footer-credits" data-i18n="footer.credits">第三方致谢：capcap（MIT，截图覆盖层与标注编辑器）· Sparkle（应用内更新）</p>
+      <a class="footer-link" href="https://github.com/aexachao/BlinkClip"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#i-github"/></svg><span data-i18n="footer.repo">GitHub 仓库</span></a>
+    </div>
+  </footer>
 </body>
 </html>
