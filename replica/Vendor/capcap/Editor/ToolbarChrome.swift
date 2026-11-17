@@ -20,18 +20,25 @@ let accentGreen = NSColor(red: 0, green: 212.0 / 255.0, blue: 106.0 / 255.0, alp
 /// no literal RGB that would only read in one of light/dark.
 enum ToolbarChrome {
     /// Height of one toolbar button — also the height of a dropdown row.
-    static let rowHeight: CGFloat = 40
+    ///
+    /// macOS' own compact toolbar controls settle around a 36pt control on a
+    /// 16pt symbol, so the row is sized from the symbol instead of the other
+    /// way round: a 16pt glyph in a 40pt row reads airy, and 40pt in a bar
+    /// whose icons shrank would leave the whole strip looking unchanged.
+    /// `ToolbarView.crossPadding` adds 5pt top and bottom, so the bar's
+    /// capsule is 46pt thick.
+    static let rowHeight: CGFloat = 36
     /// Symbol size used by toolbar buttons and dropdown rows.
-    static let symbolPointSize: CGFloat = 18
+    static let symbolPointSize: CGFloat = 16
     /// Corner radius of the bar's own capsule surface.
-    static let surfaceCornerRadius: CGFloat = 8
+    static let surfaceCornerRadius: CGFloat = 7
     /// Inset of the bar's surface inside its bounds.
     static let surfaceInset: CGFloat = 2
     /// Padding around the bar's button run, reused as the dropdown's outer
     /// padding so the two surfaces keep the same rhythm.
-    static let surfacePadding: CGFloat = 6
+    static let surfacePadding: CGFloat = 5
     /// Corner radius of a button highlight (hover and selected alike).
-    static let highlightCornerRadius: CGFloat = 6
+    static let highlightCornerRadius: CGFloat = 5
     /// Inset of a button highlight inside its button.
     static let highlightInset: CGFloat = 2
     /// Gap between the bar and its dropdown panel.

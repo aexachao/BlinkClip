@@ -25,6 +25,7 @@ import AppKit
         dropdownChecks()
         localizationChecks()
         barChecks()
+        glyphChecks()
         let renders = RenderEvidence.writeIfRequested()
         let measurements = RenderEvidence.measurements()
         let json = measurements
@@ -294,7 +295,7 @@ import AppKit
         check(ToolbarLayout.default.excluding([.redo]).normalized() == withoutRedo.normalized(), "hiding redo does not disturb normalization")
 
         // The bar is measurably shorter: three separate 40pt buttons became one
-        // 56pt group button.
+        // 52pt group button.
         let plainSlots = slots.filter { $0 != .divider }.count
         check(plainSlots < ToolbarLayout.default.visibleItems.count - 2, "grouping removes slots from the bar")
 
@@ -329,17 +330,23 @@ import AppKit
 
     static func hoverChecks() {
         // One shared rule: hover weaker than selected, same radius/inset.
-        check(ToolbarChrome.rowHeight == 40, "row height matches a toolbar button")
-        check(ToolbarChrome.highlightCornerRadius == 6, "hover/selected highlight radius matches the old button background")
-        check(ToolbarChrome.highlightInset == 2, "hover/selected highlight inset matches the old button background")
-        check(ToolbarChrome.surfaceCornerRadius == 8, "panel radius matches the bar capsule")
+        check(ToolbarChrome.rowHeight == 36, "row height matches a toolbar button")
+        check(ToolbarChrome.symbolPointSize == 16, "the bar and the dropdown rows share one 16pt symbol size")
+        check(ToolbarChrome.highlightCornerRadius == 5, "hover/selected highlight radius follows the tighter row")
+        check(ToolbarChrome.highlightInset == 2, "hover/selected highlight inset stays 2pt")
+        check(ToolbarChrome.surfaceCornerRadius == 7, "panel radius matches the bar capsule")
+        // A click target must stay comfortably clickable even with a 16pt
+        // glyph: 36pt is above the 32pt floor (and above the 24pt the HIG
+        // allows for pointer targets), so the shrink costs no hit area worth
+        // worrying about.
+        check(ToolbarChrome.rowHeight >= 32, "a toolbar button keeps a >=32pt hit area")
 
         let button = ToolButton(
-            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
             symbolName: "pencil.tip",
             normalColor: .labelColor,
             selectedColor: accentGreen,
-            symbolPointSize: 18
+            symbolPointSize: ToolbarChrome.symbolPointSize
         )
         // Resting → hovered: the fill must actually change.
         let rest = RenderEvidence.sample(patch: RenderEvidence.buttonPatch, in: button, appearance: .aqua)
@@ -378,7 +385,7 @@ import AppKit
         button.setHovered(false)
 
         // The chevron carries the same hover treatment.
-        let chevron = ToolbarChevronButton(frame: NSRect(x: 0, y: 0, width: 16, height: 40), symbolPointSize: 9)
+        let chevron = ToolbarChevronButton(frame: NSRect(x: 0, y: 0, width: 16, height: ToolbarChrome.rowHeight), symbolPointSize: 9)
         let chevronRest = RenderEvidence.sample(patch: RenderEvidence.chevronPatch, in: chevron, appearance: .aqua)
         chevron.setHovered(true)
         let chevronHovered = RenderEvidence.sample(patch: RenderEvidence.chevronPatch, in: chevron, appearance: .aqua)
@@ -452,7 +459,7 @@ import AppKit
         // The bar keeps its own policy: a toolbar button still only hovers in
         // the key window.
         let buttonInPanel = ToolButton(
-            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
             symbolName: "pencil.tip",
             normalColor: .labelColor,
             selectedColor: accentGreen,
@@ -514,7 +521,7 @@ import AppKit
         // Same hover colour as a toolbar button, in both appearances: both
         // composite `AdaptiveChrome.subtleFill` over the same bar surface.
         let button = ToolButton(
-            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
             symbolName: "line.diagonal",
             normalColor: .labelColor,
             selectedColor: accentGreen,
@@ -605,7 +612,7 @@ import AppKit
     // MARK: - Whole toolbar
 
     /// The bar as the editor lays it out (real slots, real constants): no redo
-    /// slot, one 56pt brush button, the lines group showing the arrow tool, and
+    /// slot, one 52pt brush button, the lines group showing the arrow tool, and
     /// a greyed undo that is visibly dimmer than the available one.
     static func barChecks() {
         let geometry = RenderEvidence.barGeometry()
@@ -625,6 +632,13 @@ import AppKit
         check(geometry.slotCount == renderBarSlotCount, "the bar renders every visible slot exactly once")
         check(geometry.size.height == ToolbarChrome.rowHeight + HarnessBarMetrics.crossPadding * 2,
               "bar thickness is a button plus the cross padding")
+        // The macOS-standard strip this change targets: 36pt control rows, 5pt
+        // of cross padding, so 46pt of capsule instead of the old 52pt.
+        check(geometry.size.height == 46, "the bar capsule is 46pt thick (36pt row + 2 x 5pt)")
+        check(HarnessBarMetrics.crossPadding == 5, "the capsule keeps 5pt of cross padding around a 36pt button")
+        check(ToolbarChrome.rowHeight >= 32, "every bar button stays >=32pt tall so it remains easy to hit")
+        check(geometry.frames.allSatisfy { $0.height >= 32 }, "no rendered slot is shorter than a 32pt hit area")
+        check(geometry.frame(ofGroup: .brush)?.height == 36, "a grouped button is a 36pt control plus its chevron zone")
 
         guard let undoFrame = geometry.frame(of: .undo) else {
             preconditionFailure("undo has no frame")
@@ -637,6 +651,36 @@ import AppKit
         }
     }
 
+    // MARK: - Icon size
+
+    /// The glyph itself got smaller, and it did so by the ratio the 18 → 16pt
+    /// change calls for. Measured off the real drawing code: the symbol is
+    /// rendered on its own (transparent) bitmap, so the vertical ink extent is
+    /// the glyph height in device pixels.
+    static func glyphChecks() {
+        let production = ToolbarChrome.symbolPointSize
+        check(production == 16, "the toolbar draws 16pt symbols")
+
+        for id in ToolbarItemID.allCases {
+            let before = RenderEvidence.glyphInkHeight(symbolName: id.symbolName, pointSize: 18)
+            let after = RenderEvidence.glyphInkHeight(symbolName: id.symbolName, pointSize: production)
+            check(before > 0 && after > 0, "\(id.rawValue) draws a glyph at both sizes")
+            check(after < before, "\(id.rawValue) glyph is smaller at 16pt than it was at 18pt")
+            // Same symbol, same rasteriser: the ink height scales with the
+            // point size, and 2x rounding may move it by one pixel either way.
+            let expected = Double(before) * Double(production) / 18.0
+            check(abs(Double(after) - expected) <= 2.0,
+                  "\(id.rawValue) ink height \(after)px @2x tracks 16/18 of the 18pt glyph (\(before)px)")
+        }
+        // The row is 36pt with a 16pt glyph: the glyph occupies 44% of the
+        // button, so it still sits in the middle of a comfortably large target
+        // instead of floating in a 40pt row sized for an 18pt icon.
+        let tallest = ToolbarItemID.allCases
+            .map { RenderEvidence.glyphInkHeight(symbolName: $0.symbolName, pointSize: production) }
+            .max() ?? 0
+        check(tallest <= 38, "no 16pt toolbar glyph exceeds 38px @2x (the old 18pt set reached 42px)")
+    }
+
     /// `ToolbarLayout.slots` is the single source of truth; this is the count
     /// the bar must render for the persisted default minus the hidden redo.
     static var renderBarSlotCount: Int {
@@ -647,7 +691,7 @@ import AppKit
 
     static func dropdownChecks() {
         let size = ToolbarGroupMenuPanel.preferredSize(members: [.pen, .marker, .spotlight])
-        check(size.height == ToolbarChrome.surfacePadding * 2 + ToolbarChrome.rowHeight * 3, "panel height is three 40pt rows plus the bar padding")
+        check(size.height == ToolbarChrome.surfacePadding * 2 + ToolbarChrome.rowHeight * 3, "panel height is three 36pt rows plus the bar padding")
         check(size.width >= ToolbarGroupMenuPanel.minimumWidth, "panel keeps a usable minimum width")
 
         // Keyboard bindings.
@@ -676,31 +720,31 @@ import AppKit
         let visible = NSRect(x: 0, y: 0, width: 1440, height: 875)
         let panelSize = NSSize(width: 180, height: 132)
         let middle = ToolbarGroupMenuPanel.placement(
-            anchorOnScreen: NSRect(x: 600, y: 500, width: 56, height: 40),
+            anchorOnScreen: NSRect(x: 600, y: 500, width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight),
             size: panelSize,
             visibleFrame: visible
         )
         check(middle == NSPoint(x: 600, y: 500 - 132 - ToolbarChrome.dropdownGap), "panel opens below the group button")
         let nearBottom = ToolbarGroupMenuPanel.placement(
-            anchorOnScreen: NSRect(x: 600, y: 4, width: 56, height: 40),
+            anchorOnScreen: NSRect(x: 600, y: 4, width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight),
             size: panelSize,
             visibleFrame: visible
         )
-        check(nearBottom.y == 44 + ToolbarChrome.dropdownGap, "panel flips above the button near the bottom edge")
+        check(nearBottom.y == 4 + ToolbarChrome.rowHeight + ToolbarChrome.dropdownGap, "panel flips above the button near the bottom edge")
         let leftEdge = ToolbarGroupMenuPanel.placement(
-            anchorOnScreen: NSRect(x: 0, y: 500, width: 56, height: 40),
+            anchorOnScreen: NSRect(x: 0, y: 500, width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight),
             size: panelSize,
             visibleFrame: visible
         )
         check(leftEdge.x == ToolbarGroupMenuPanel.edgeInset, "panel is pushed in at the left screen edge")
         let rightEdge = ToolbarGroupMenuPanel.placement(
-            anchorOnScreen: NSRect(x: 1420, y: 500, width: 56, height: 40),
+            anchorOnScreen: NSRect(x: 1420, y: 500, width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight),
             size: panelSize,
             visibleFrame: visible
         )
         check(rightEdge.x == visible.maxX - panelSize.width - ToolbarGroupMenuPanel.edgeInset, "panel is pushed in at the right screen edge")
         let tinyScreen = ToolbarGroupMenuPanel.placement(
-            anchorOnScreen: NSRect(x: 10, y: 10, width: 56, height: 40),
+            anchorOnScreen: NSRect(x: 10, y: 10, width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight),
             size: panelSize,
             visibleFrame: NSRect(x: 0, y: 0, width: 1440, height: 100)
         )
@@ -763,14 +807,14 @@ enum RenderEvidence {
     }
 
     static let scale: CGFloat = 2
-    /// Patch of a 40pt button sampled away from the centred symbol.
+    /// Patch of a 36pt button sampled away from the centred symbol.
     static let buttonPatch = NSRect(x: 4, y: 4, width: 8, height: 8)
     /// Patch of the 16pt chevron zone.
     static let chevronPatch = NSRect(x: 3, y: 4, width: 6, height: 8)
-    /// Interior of a 40pt button: inside the hover/selected highlight, clear
-    /// of the centred symbol and of the rounded highlight corners, so a hover
-    /// fill can be compared with a dropdown row's pixel for pixel.
-    static let buttonHoverPatch = NSRect(x: 32, y: 15, width: 5, height: 10)
+    /// Interior of a 36pt button: inside the hover/selected highlight (2..34),
+    /// clear of the centred symbol and of the rounded highlight corners, so a
+    /// hover fill can be compared with a dropdown row's pixel for pixel.
+    static let buttonHoverPatch = NSRect(x: 28, y: 13, width: 5, height: 10)
     /// A row and a button composite the same fill over the same surface; the
     /// tolerance only absorbs rounding between two rasterisations.
     static let hoverColourTolerance: Double = 1.5
@@ -779,6 +823,35 @@ enum RenderEvidence {
         // Right-hand side of the row: past the icon and the name.
         let frame = content.rowFrame(at: rowIndex, count: content.rows.count)
         return NSRect(x: frame.maxX - 26, y: frame.minY + 8, width: 14, height: 10)
+    }
+
+    /// Vertical ink extent, in device pixels, of one SF Symbol drawn by the
+    /// production `ToolButton` on a transparent bitmap. Measured from the alpha
+    /// channel, so the value does not depend on light/dark appearance: it is
+    /// the glyph, not the chrome around it.
+    static func glyphInkHeight(symbolName: String, pointSize: CGFloat) -> Int {
+        let side = ToolbarChrome.rowHeight
+        let button = ToolButton(
+            frame: NSRect(x: 0, y: 0, width: side, height: side),
+            symbolName: symbolName,
+            normalColor: .labelColor,
+            selectedColor: accentGreen,
+            symbolPointSize: pointSize
+        )
+        guard let appearance = NSAppearance(named: .darkAqua),
+              let rep = render(size: NSSize(width: side, height: side), appearance: appearance, draw: { _ in
+                  button.draw(button.bounds)
+              })
+        else { preconditionFailure("could not render the \(symbolName) glyph") }
+        var top = -1
+        var bottom = -1
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) >= 0.25 {
+                if top < 0 { top = y }
+                bottom = y
+            }
+        }
+        return top < 0 ? 0 : bottom - top + 1
     }
 
     // MARK: - Bar geometry (production numbers)
@@ -1107,7 +1180,7 @@ enum RenderEvidence {
     static func measurements() -> [String: String] {
         var out: [String: String] = [:]
         let button = ToolButton(
-            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
             symbolName: "pencil.tip",
             normalColor: .labelColor,
             selectedColor: accentGreen,
@@ -1160,7 +1233,7 @@ enum RenderEvidence {
                 selection: ToolbarGroupMenuSelection(members: [.pen, .marker, .spotlight], selected: .marker)
             )
             let reference = ToolButton(
-                frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+                frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
                 symbolName: "line.diagonal",
                 normalColor: .labelColor,
                 selectedColor: accentGreen,
@@ -1185,6 +1258,10 @@ enum RenderEvidence {
             }
         }
 
+        for id in ToolbarItemID.allCases {
+            out["glyph.\(id.rawValue).px18"] = "\(glyphInkHeight(symbolName: id.symbolName, pointSize: 18))"
+            out["glyph.\(id.rawValue).px16"] = "\(glyphInkHeight(symbolName: id.symbolName, pointSize: ToolbarChrome.symbolPointSize))"
+        }
         out["panel.rowHeight"] = "\(ToolbarChrome.rowHeight)"
         out["panel.surfaceRadius"] = "\(ToolbarChrome.surfaceCornerRadius)"
         out["panel.highlightRadius"] = "\(ToolbarChrome.highlightCornerRadius)"
@@ -1237,7 +1314,7 @@ enum RenderEvidence {
         }
 
         let button = ToolButton(
-            frame: NSRect(x: 0, y: 0, width: 40, height: 40),
+            frame: NSRect(x: 0, y: 0, width: ToolbarChrome.rowHeight, height: ToolbarChrome.rowHeight),
             symbolName: "pencil.tip",
             normalColor: .labelColor,
             selectedColor: accentGreen,
@@ -1255,7 +1332,7 @@ enum RenderEvidence {
             button.isSelected = false
             button.setHovered(false)
 
-            // Grouped button: the 40pt tool half plus the 16pt chevron half,
+            // Grouped button: the 36pt tool half plus the 16pt chevron half,
             // drawn on the bar surface (the two production controls that
             // `ToolbarGroupButton` composes).
             let groupSize = NSSize(width: HarnessBarMetrics.groupButtonWidth, height: ToolbarChrome.rowHeight)

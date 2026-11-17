@@ -3258,7 +3258,7 @@ final class EditorScrollView: NSScrollView {
 /// A row (horizontal) or column (vertical) of editor buttons built from a
 /// `[ToolbarItemID]`. Both the primary toolbar and the side toolbar are
 /// instances of this class — only `orientation` and the item list differ.
-/// The editor's single horizontal toolbar: one 52pt capsule holding every
+/// The editor's single horizontal toolbar: one 46pt capsule holding every
 /// visible tool. The former primary (horizontal) and side (vertical) bars
 /// are merged into this one row; a vertical divider separates the two runs.
 /// Related tools collapse into grouped dropdown buttons (see `ToolbarGroup`).
@@ -3270,11 +3270,13 @@ class ToolbarView: NSView {
     static let buttonSpacing: CGFloat = 6
     /// Inset along the main axis at both ends of the run.
     static let endPadding: CGFloat = 15
-    /// Inset on the cross axis — keeps a 52pt-thick capsule around 40pt buttons.
-    static let crossPadding: CGFloat = 6
-    /// Width of a grouped dropdown button: a 40pt tool button plus a 16pt
+    /// Inset on the cross axis — keeps a 46pt-thick capsule around 36pt
+    /// buttons, the same 5pt step the dropdown panel uses for its outer
+    /// padding, so the bar and the menu keep one rhythm.
+    static let crossPadding: CGFloat = 5
+    /// Width of a grouped dropdown button: a 36pt tool button plus a 16pt
     /// chevron zone that opens the group's menu.
-    static let groupButtonWidth: CGFloat = 56
+    static let groupButtonWidth: CGFloat = 52
     /// Width of the divider slot: a 1pt separator with a button's spacing
     /// on each side so the gap reads evenly.
     static let dividerSlotWidth: CGFloat = 13
@@ -3572,9 +3574,9 @@ class ToolbarView: NSView {
                 buttons[member] = groupButton.button
                 addSubview(groupButton)
             case .divider:
-                // 1pt wide and 40pt tall: taller than wide, so the
+                // 1pt wide and 36pt tall: taller than wide, so the
                 // separator box draws a vertical line, centred in the
-                // 52pt capsule.
+                // 46pt capsule.
                 let box = NSBox(frame: NSRect(
                     x: x + Self.buttonSpacing,
                     y: Self.crossPadding,
@@ -3658,7 +3660,7 @@ class ToolbarView: NSView {
     }
 }
 
-/// One grouped dropdown button: a 40pt tool button showing the selected
+/// One grouped dropdown button: a 36pt tool button showing the selected
 /// member's icon, plus a 16pt chevron zone that opens the group's dropdown.
 /// Clicking the tool area triggers the selected tool; clicking the chevron
 /// opens the self-drawn panel (see `ToolbarGroupMenuPanel`) to switch members.
