@@ -73,11 +73,11 @@ checks = {
     'design-doc-size-label-visible-frame': all(fragment in design for fragment in (
         'visibleFrame', '左上外侧', '翻到下方', '左右越界平移')),
 
-    # POL/SG：吸附辅助线住在独立图层里（每屏一条，四边 + 可选中线），只在 hover
-    # 目标变化时改 layer path，不再让整屏快照重绘；旧的 draw(_:) 版贯穿辅线与
-    # 失效带必须彻底消失，否则延迟会回来。
-    'overlay-guides-live-in-layers': 'private final class SnapGuideView: NSView' in code(selection)
-                                     and 'private let snapGuide = SnapGuideView()' in code(selection)
+    # REV：贯穿辅线是两个独立图层（水平 + 垂直），随指针改 layer frame/path，
+    # 不让整屏快照重绘；旧的自绘/失效带实现必须彻底消失，否则延迟会回来。
+    'overlay-guides-live-in-layers': 'private final class CrosshairBandView: NSView' in code(selection)
+                                     and 'private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)' in code(selection)
+                                     and 'private let crosshairVertical = CrosshairBandView(axis: .vertical)' in code(selection)
                                      and 'CATransaction.setDisableActions(true)' in code(selection)
                                      and 'drawCrosshair' not in code(selection)
                                      and 'invalidateCrosshairBands' not in code(selection),
@@ -105,7 +105,7 @@ assert all(checks.values()), checks
 print(f'SEL label source gate: {len(checks)} checks passed')
 PY
 
-# --- SG 源码门：系统十字光标 + 吸附式辅助线 -----------------------------------
+# --- REV 源码门：系统十字光标 + 贯穿全屏的跟随辅线 ---------------------------
 python3 - "$replica_root" "$ARTIFACT_TASK_DIR/out" <<'PY'
 import json, pathlib, sys
 root, out = map(pathlib.Path, sys.argv[1:])
@@ -114,6 +114,7 @@ selection = (capture / 'SelectionView.swift').read_text()
 overlay = (capture / 'OverlayWindowController.swift').read_text()
 detector = (capture / 'WindowDetector.swift').read_text()
 screenshot_settings = (root / 'Vendor/capcap/Adapters/ScreenshotSettings.swift').read_text()
+copy_table = (root / 'Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift').read_text()
 aux = (root / 'Sources/BlinkClip/UI/AuxiliaryViews.swift').read_text()
 design = (root.parent / 'DESIGN.md').read_text()
 harness = (root / 'Tests/Native/CaptureChromeExclusionHarness.swift').read_text()
@@ -134,26 +135,19 @@ def body(text, signature, next_signature):
 selection_code = code(selection)
 overlay_code = code(overlay)
 detector_code = code(detector)
-band = body(selection_code, 'private final class SnapGuideView: NSView', 'class SelectionView: NSView')
-# 只取 refreshSnapGuide 本身：它后面紧跟的是选区 chrome / 拖拽吸附的刷新函数，
-# 那些函数本来就要写图层（`needsDisplay` 只在图层视图里）。
-refresh = body(selection_code, 'private func refreshSnapGuide()', 'private func refreshSelectionChrome()')
-update_hover = body(selection_code, 'func updateHover(screenPoint: NSPoint)', 'private func clearHover')
+band = body(selection_code, 'private final class CrosshairBandView: NSView', 'class SelectionView: NSView')
+guide = body(selection_code, 'private func updateCrosshairLayers()', 'private func broadcastCrosshair')
 cursor_rects = body(selection_code, 'override func resetCursorRects()', 'func refreshCursorRects')
 clear_hover = body(selection_code, 'private func clearHover()', 'override func draw(_ dirtyRect: NSRect) {')
 # `SelectionView.draw(_:)` 只画快照——选区外观在子图层里。
-# 起始锚点用 MEAS 埋点那一行（`let perfDraw = ...`）：它的 `defer` 现在在埋点之后，
-# 所以旧的 `{\n        defer {` 锚点在这版源码上取不到函数体（这是源码门自身的
-# 锚点问题，与绘制内容无关）。三种区域（hover / 选区 chrome / 快照）各有一处
-# `override func draw`，只有快照这处带 `perfDraw`，因此锚点唯一。
+# 起始锚点用 MEAS 埋点那一行（`let perfDraw = ...`）：三种区域（hover / 选区
+# chrome / 快照）各有一处 `override func draw`，只有快照这处带 `perfDraw`。
 selection_draw = body(selection_code,
                       '    override func draw(_ dirtyRect: NSRect) {\n        let perfDraw',
                       '    func drawSelectionChrome(')
+chrome_view = body(selection_code, 'private final class SelectionChromeView: NSView', 'class SelectionView: NSView')
 drag_new = body(selection_code, '        case .drawNew:', '        case .move:')
 mouse_up = body(selection_code, 'override func mouseUp(with event: NSEvent)', 'override func mouseMoved(with event: NSEvent)')
-chrome_view = body(selection_code, 'private final class SelectionChromeView: NSView', 'private final class SnapHighlightView: NSView')
-highlight_view = body(selection_code, 'private final class SnapHighlightView: NSView', 'class SelectionView: NSView')
-snap_helpers = body(selection_code, 'private func dragSnapCandidatesForCurrentDrag()', 'func updateSelectionRect')
 
 # 全仓库的 Swift 源（生产代码 + 测试工具），不是只有覆盖层。
 swift_sources = {p: p.read_text() for p in root.rglob('*.swift')}
@@ -184,71 +178,102 @@ checks = {
     ),
 
     # CUR4：指针交还系统 crosshair：覆盖层视图注册 crosshair cursor rect，
-    # 并且在覆盖层激活时主动 set 一次。
+    # 并且在覆盖层激活时主动 set 一次。任一时刻只有一个指针——系统光标。
     'pointer-is-the-system-crosshair': 'addCursorRect(bounds, cursor: .crosshair)' in cursor_rects
         and 'resetCursorRects()' in selection_code
         and 'NSCursor.crosshair.set()' in selection_code
         and 'NSCursor.crosshair.set()' in overlay_code,
 
-    # SG：辅助线仍是独立图层，但只有一条：四边 + 可选中线都画在同一个
-    # CAShapeLayer 里；指针不是这个视图的一部分。
-    'snap-guide-is-one-independent-layer': all(fragment in selection_code for fragment in (
-        'private final class SnapGuideView: NSView',
-        'private let snapGuide = SnapGuideView()',
+    # REV：两条贯穿辅线各自一个图层（水平 + 垂直），不是窗口四边描线。
+    'crosshair-guides-are-two-layers': all(fragment in selection_code for fragment in (
+        'private final class CrosshairBandView: NSView',
+        'private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)',
+        'private let crosshairVertical = CrosshairBandView(axis: .vertical)',
+        'private func installOverlayLayers()',
         'private let lineLayer = CAShapeLayer()',
-        'private func installSnapGuide()',
-    )) and 'needsDisplay' not in refresh,
+    )) and 'needsDisplay' not in guide,
 
-    # SG：线的样式只有一个来源（线型常量抽成 `dashPattern`，改回实线只改它）。
-    # 规格明确：1.5pt、systemGray 50%、虚线 6/4。SEL 门继续管选框本体（蓝色实线）。
-    'guide-style-is-dashed-6-4': all(fragment in band for fragment in (
+    # REV：线型只有一个来源：1.5pt、systemGray 50%、实线（lineDashPattern = nil）。
+    'guide-style-is-solid-1-5pt': all(fragment in band for fragment in (
         'static let lineWidth: CGFloat = 1.5',
         'static let alpha: CGFloat = 0.5',
-        'static let dashPattern: [NSNumber]? = [6, 4]',
         'NSColor.systemGray',
-        'lineLayer.lineDashPattern = Self.dashPattern',
+        'lineLayer.lineDashPattern = nil',
+        'lineLayer.lineWidth = Self.lineWidth',
     )),
 
-    # SG：线描的是 hover 窗口的四条边（+ 可选中线），不是贯穿光标的横竖线。
-    'guide-outlines-hover-window': all(fragment in band for fragment in (
-        'path.addRect(edge)',
-        'path.move(to: CGPoint(x: edge.midX, y: edge.minY))',
-        'path.move(to: CGPoint(x: edge.minX, y: edge.midY))',
-    )) and 'detector.windowAt(cgPoint: cgPoint)' in update_hover
-        and 'let viewRect = Self.viewRect(' in update_hover,
+    # REV：线跟着光标坐标，不是 hover 窗口的四边；水平线跨满屏宽、竖线跨满屏高。
+    'guide-follows-the-pointer': all(fragment in guide for fragment in (
+        'let point = crosshairLocalPoint',
+        'NSRect(x: bounds.minX, y: y - thickness / 2, width: bounds.width, height: thickness)',
+        'NSRect(x: x - thickness / 2, y: bounds.minY, width: thickness, height: bounds.height)',
+        'crosshairHorizontal.place(',
+        'crosshairVertical.place(',
+    )) and 'hoverWindowRect' not in guide
+        and 'detector.windowAt(cgPoint: cgPoint)' not in guide,
 
-    # SG：更新时机从「每个 mouseMoved」改成「hover 目标变化」。两处提前返回：
-    # 目标没变（hover guard）与几何没变（图层 guard），同窗口内零写入。
-    'guide-updates-only-on-target-change': 'guard clamped != hoverWindowRect' in update_hover
-        and 'hoverWindowID != detected.windowID else' in update_hover
-        and 'guard rect != placedTarget || centerLines != showsCenterLines else { return false }' in band
-        and 'hoverTargetChangeCount += 1' in update_hover
-        and 'snapGuide.place(' in refresh
-        and 'mouseMoved' not in refresh,
+    # REV：可见性只在 .idle / .drawing，且 .selected / 滚动截图 / 编辑器接管都隐藏。
+    'guide-visibility-contract': 'let showsGuides = state == .idle || state == .drawing' in guide
+        and '!scrollCaptureActive' in guide
+        and '!selectionLocked' in guide
+        and 'selectionInteractionEnabled' in guide,
 
-    # SG：同一关闭隐式动画的事务内更新，并对图层同步 display/displayIfNeeded，
-    # 不把位置留给下一轮 runloop。
-    'guide-updates-synchronously': all(fragment in refresh for fragment in (
+    # REV：同一个关闭隐式动画的事务内更新，并对图层同步 display/displayIfNeeded。
+    'guide-updates-synchronously': all(fragment in guide for fragment in (
         'CATransaction.begin()',
         'CATransaction.setDisableActions(true)',
         'CATransaction.commit()',
-        'snapGuide.place(',
     )) and all(fragment in band for fragment in (
         'lineLayer.setNeedsDisplay()',
         'lineLayer.displayIfNeeded()',
     )),
 
-    # SG：每屏各自吸附——点必须落在本遮罩所在屏幕；不做跨屏广播。
-    'guide-is-per-display': 'displayFrame.contains(screenPoint)' in update_hover
-        and 'primaryHeight - frame.origin.y - frame.height' in selection_code
-        and 'onCrosshairMoved' not in selection_code
-        and 'onCrosshairMoved' not in overlay_code
-        and 'broadcastCrosshair' not in overlay_code
-        and 'updateCrosshair' not in overlay_code,
+    # REV：跨屏广播——控制器把同一个屏幕坐标镜像给各屏遮罩，开场先播种一次；
+    # 每屏只写自己需要的那一轴（竖线落在 bounds 外自然隐藏）。
+    'guides-broadcast-across-displays': all(fragment in overlay_code for fragment in (
+        'selectionView.onCrosshairMoved = { [weak self] screenPoint in',
+        'view.updateCrosshair(globalPoint: screenPoint)',
+        'view.updateCrosshair(globalPoint: pointerAtPresentation)',
+    )) and 'var onCrosshairMoved: ((NSPoint) -> Void)?' in selection_code
+        and 'private func broadcastCrosshair(at point: NSPoint)' in selection_code
+        and 'broadcastCrosshair(at: point)' in body(selection_code, 'override func mouseMoved(with event: NSEvent)', 'override func mouseEntered(with event: NSEvent)')
+        and 'broadcastCrosshair(at: point)' in body(selection_code, 'override func mouseDragged(with event: NSEvent)', 'private func clampedForMove'),
+
+    # REV：窗口吸附与拖拽吸边彻底删除——没有窗口描线视图、没有吸附候选、没有
+    # 高亮图层、没有开关；拖拽分支只写选区 chrome 图层。
+    'window-snap-is-gone': all(token not in selection_code for token in (
+        'SnapGuideView',
+        'SnapHighlightView',
+        'showsGuideCenterLines',
+        'showsDragSnap',
+        'dragSnapDistance',
+        'dragSnapCandidates',
+        'dragSnappedEdges',
+        'refreshSnapGuide',
+        'refreshDragSnapHighlight',
+        'snappedDragRect',
+    )) and all(token not in overlay_code for token in (
+        'showsGuideCenterLines',
+        'snapGuidesCenterLinesEnabled',
+    )) and 'let snapped = snappedDragRect' not in drag_new
+        and 'needsDisplay' not in drag_new,
+
+    # REV：拖拽只改几何 + 写 chrome 图层，松手不残留任何吸附高亮。
+    'drag-writes-layers-not-snapshot': all(fragment in drag_new for fragment in (
+        'selectionRect = SelectionView.dragRect(',
+        'refreshSelectionChrome()',
+    )) and 'drawSelectionChrome(' not in drag_new
+        and 'refreshDragSnapHighlight' not in mouse_up,
+
+    # REV：设置页不再有「显示中线」：桥接键、三语文案、设置行与开关全部消失。
+    'center-lines-setting-is-gone': 'snapGuidesCenterLines' not in code(screenshot_settings)
+        and 'centerLinesTitle' not in code(copy_table)
+        and 'guidesSectionTitle' not in code(copy_table)
+        and 'settings.snap-guides.center-lines.toggle' not in aux
+        and 'snapGuidesCenterLines' not in aux,
 
     # SG/OPT：窗口列表开场枚举一次 + 2Hz 增量刷新（指针静止暂停、hover
-    # 未命中补采，见 `test-overlay-opt.sh`）；鼠标移动只扫缓存；计时器在
-    # tearDown 里停掉（定义 + 调用至少两处）。
+    # 未命中补采，见 `test-overlay-opt.sh`）；计时器在 tearDown 里停掉。
     'window-list-refresh-is-capped-at-2hz': all(fragment in overlay_code for fragment in (
         'windowEnumerationInterval: TimeInterval = 1.0 / 2.0',
         'DispatchSource.makeTimerSource(queue: .main)',
@@ -258,7 +283,7 @@ checks = {
     )) and overlay_code.count('stopWindowEnumerationRefresh()') >= 2,
 
     # SG：枚举时排除本产品自身浮层（本进程 HUD + 同 bundle 孪生实例的 floating+），
-    # 否则光标芯片会被吸成目标。
+    # 否则 hover 高亮会圈住自己的光标芯片。
     'hover-excludes-product-chrome': all(fragment in detector_code for fragment in (
         'let isProductChrome: Bool',
         'static func isProductChrome(',
@@ -268,86 +293,36 @@ checks = {
     )) and 'private func currentSessionChromeWindowNumbers()' in overlay_code
         and 'windows.filter { !sessionChrome.contains($0.windowID) }' in overlay_code,
 
-    # SG：中线开关读同一个键，设置页有开关和三语文案。
-    'center-lines-setting-wired': 'snapGuidesCenterLinesEnabled' in code(screenshot_settings)
-        and 'snapGuidesCenterLinesKey' in code(screenshot_settings)
-        and 'selectionView.showsGuideCenterLines = BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled' in overlay_code
-        and 'var showsGuideCenterLines = false' in selection_code
-        and 'settings.snap-guides.center-lines.toggle' in aux
-        and all(key in aux for key in (
-            'ScreenshotSettingsCopy.text(.guidesSectionTitle)',
-            'ScreenshotSettingsCopy.text(.centerLinesTitle)',
-            'ScreenshotSettingsCopy.text(.centerLinesSubtitle)',
-        )),
-
-    # harness：不是只靠文本门——吸附几何、同窗口零更新、120Hz 帧序列、跨屏 Y 翻转、
-    # 自身浮层排除都有实测断言；五轮开关期间拦截 cursor-hide 入口并断言 0 调用。
-    'harness-proves-snap-behaviour': 'hideCalls == 0 && unhideCalls == 0' in harness
+    # harness：不是只靠文本门——辅线位置、逐帧跟随、跨屏广播、.selected 隐藏、
+    # 移动期 0 次 draw(_:) 都有实测断言；五轮开关期间拦截 cursor-hide 入口。
+    'harness-proves-crosshair-behaviour': 'hideCalls == 0 && unhideCalls == 0' in harness
         and 'NSSelectorFromString("hide")' in harness
-        and 'the guide is dashed 6/4' in harness
-        and '200 moves inside one window write the guide 0 times' in harness
-        and '120Hz sweep' in harness
-        and 'the Y flip is correct on a display above the primary' in harness
-        and 'own/twin floating chrome is skipped' in harness,
+        and 'one chrome layer, one hover-highlight layer and exactly two guide bands' in harness
+        and 'both lines sit on the pointer every time' in harness
+        and '200 pointer moves call draw(_:) 0 times' in harness
+        and 'the horizontal line is continuous across displays' in harness
+        and 'the vertical line stays off the display the pointer is not on' in harness
+        and 'an established selection hides the guides' in harness
+        and 'a dragged edge 3pt from a window edge is not snapped' in harness
+        and '120 drag samples call draw(_:) 0 times' in harness
+        and '120Hz sweep' in harness,
 
-    # 文档写清新口径：系统十字光标、吸附四边、2Hz、同窗口零更新、虚线 6/4、跨屏不串位。
-    'design-doc-snap-guides': all(fragment in design for fragment in (
+    # 文档写清新口径：贯穿全屏、随指针实时更新、实线、独立图层、跨屏广播、
+    # 不做窗口吸附/拖拽吸边，窗口 hover 高亮独立存在。
+    'design-doc-crosshair-guides': all(fragment in design for fragment in (
         '系统十字光标',
         '不再自绘、不再隐藏系统光标',
-        '吸附辅助线',
-        '独立图层',
-        '同步 `displayIfNeeded()`',
+        '贯穿全屏',
+        '随指针实时更新',
         '1.5pt',
-        '虚线（6/4）',
-        '2Hz',
-        '0 次重绘',
-        '跨屏不串位',
+        '实线',
+        '独立图层',
+        '跨屏',
+        '不做窗口吸附',
+        '拖拽吸边',
+        '窗口 hover 高亮',
         '选框本体保持',
     )),
-
-    # SNAP2-1：拖拽期吸附。四条边各自找最近的**同轴**窗口边，候选来自 8Hz
-    # 缓存列表 + 拖拽起点处的 hover 窗口；距离严格 < 8pt 才吸，吸完改几何。
-    'drag-snap-is-same-axis-nearest-edge': all(fragment in snap_helpers for fragment in (
-        'detector.cachedWindows',
-        'where detected.isSelectableCaptureTarget && !detected.isProductChrome',
-        'if let hover = hoverWindowRect',
-        'candidate.minX, candidate.maxX',
-        'candidate.minY, candidate.maxY',
-        'let distance = abs(edge - value)',
-        'if distance < bestDistance',
-        'minX = target',
-        'maxX = target',
-        'minY = target',
-        'maxY = target',
-    )) and 'static let dragSnapDistance: CGFloat = 8' in selection_code
-        and 'guard showsDragSnap, aspectRatio == nil, !dragSnapCandidates.isEmpty' in snap_helpers
-        and 'dragSnapCandidates = dragSnapCandidatesForCurrentDrag()' in selection_code,
-
-    # SNAP2-1：只改几何 + 写图层。拖拽分支里没有任何 needsDisplay；高亮是独立
-    # 图层（2pt / 100%），松手清空高亮。
-    'drag-snap-writes-layers-not-snapshot': all(fragment in drag_new for fragment in (
-        'let snapped = snappedDragRect(dragged)',
-        'selectionRect = snapped.rect',
-        'refreshSelectionChrome()',
-        'refreshDragSnapHighlight()',
-    )) and 'needsDisplay' not in drag_new
-        and 'drawSelectionChrome(' not in drag_new
-        and 'dragSnappedEdges = []' in mouse_up
-        and 'refreshDragSnapHighlight()' in mouse_up,
-
-    # SNAP2-1：高亮只有被吸附的那条边，样式常量只有一个来源。
-    'drag-snap-highlight-is-its-own-layer': all(fragment in highlight_view for fragment in (
-        'private let lineLayer = CAShapeLayer()',
-        'static let lineWidth: CGFloat = 2',
-        'static let alpha: CGFloat = 1.0',
-        'lineLayer.lineDashPattern = nil',
-        'func place(_ segments: [Segment]) -> Bool',
-        'guard segments != placedSegments else { return wrote }',
-        'lineLayer.setNeedsDisplay()',
-        'lineLayer.displayIfNeeded()',
-    )) and 'snapHighlight.place(segments)' in selection_code
-        and 'let segments: [SnapHighlightView.Segment]' in selection_code
-        and 'DragSnapEdge.allCases.compactMap' in selection_code,
 
     # SNAP2-2：选区外观（暗化挖孔 + 1pt 框 + 手柄 + 标签 + 滚动红框）在子图层，
     # `draw(_:)` 只画快照。这是「拖拽期 0 次重绘」的结构性保证。
@@ -365,46 +340,13 @@ checks = {
         and 'snapshot.draw(in: bounds)' in selection_draw
         and 'needsDisplay = true' not in selection_draw,
 
-    # SNAP2-3：`clearHover()` 在没有 hover 目标时先看 guide 是否可见，隐藏时不开事务。
-    'clear-hover-short-circuits': 'guard !snapGuide.isHidden else { return }' in clear_hover
-        and clear_hover.index('guard !snapGuide.isHidden') < clear_hover.index('refreshSnapGuide()'),
+    # SNAP2-3：`clearHover()` 在没有 hover 目标且高亮已隐藏时直接返回，不开事务。
+    'clear-hover-short-circuits': 'guard hoverWindowRect != nil || !hoverHighlight.isHidden else { return }' in clear_hover,
 
     # SNAP2-4：覆盖层 `.stationary`，切 Space 时留在原位。
     'overlay-stays-put-across-spaces': '[.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]' in overlay_code,
-
-    # SNAP2-5：开关默认开。设置页「框选辅助」卡片在出货 648×600 窗口里没有
-    # 空余高度（`SettingsArchitectureHarness` 要求每张卡都能在视口内从卡顶量到
-    # 卡底），故本次不加设置行；`showsDragSnap` 是唯一开关，默认 true。
-    'drag-snap-defaults-on': 'var showsDragSnap = true' in selection_code
-        and 'showsDragSnap' in snap_helpers,
-
-    # SNAP2-6：harness 实测——3pt 吸附、7.5/8/10pt 门限、同轴、高亮出现/松手清除、
-    # 拖拽期 0 次 `draw(_:)`、成图裁剪与吸附位置一致。
-    'harness-proves-drag-snap': all(fragment in harness for fragment in (
-        'a dragged edge 3pt from a window edge snaps exactly onto it',
-        'the snapped edge is highlighted while the drag holds it',
-        'the snapped-edge highlight clears on mouse-up',
-        '120 drag samples call draw(_:) 0 times',
-        'pt from the window edge: ',
-        '(expectedSnap ? "snaps onto it" : "does not snap")',
-        '(0, 7.5, true), (1, 8, false), (2, 10, false),',
-        'a vertical selection edge does not snap to a horizontal window edge',
-        'the capture crop starts on the snapped edge',
-        'NSEvent.mouseEvent(',
-    )),
-
-    # SNAP2-7：文档写明拖拽吸附口径，并写清为什么这次没有设置开关。
-    'design-doc-drag-snap': all(fragment in design for fragment in (
-        '拖拽吸附',
-        '同轴窗口边',
-        '< 8pt',
-        '松手（`mouseUp`）清除高亮',
-        '拖拽期不重绘快照',
-        '.stationary',
-        'showsDragSnap',
-    )),
 }
-(out / 'cur-cursor-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
+(out / 'rev-crosshair-source-gate.json').write_text(json.dumps({'passed': all(checks.values()), 'checks': checks}, indent=2) + '\n')
 assert all(checks.values()), checks
-print(f'SG snap-guide source gate: {len(checks)} checks passed')
+print(f'REV crosshair source gate: {len(checks)} checks passed')
 PY

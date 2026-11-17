@@ -18,7 +18,7 @@ struct DetectedWindow: Sendable {
     /// Floating-or-above window that belongs to this product: either this
     /// process's own HUD (magnifier lens / drag hint) or a twin instance of the
     /// same bundle. Those surfaces follow the pointer and must never become the
-    /// snap-guide target, or the guide would outline its own cursor chip.
+    /// hover target, or the overlay would outline its own cursor chip.
     let isProductChrome: Bool
 
     var usesCompositedScreenBackdrop: Bool {
@@ -205,13 +205,6 @@ class WindowDetector {
         windows = detectedWindows
     }
 
-    /// The cached window list, front to back.
-    ///
-    /// Read-only: the drag snap scans this 8Hz cache for the nearest window
-    /// edge, exactly like the hover path uses `windowAt(cgPoint:)`. Nothing
-    /// here enumerates the WindowServer.
-    var cachedWindows: [DetectedWindow] { windows }
-
     /// High-layer system surfaces (menu bar, Dock, popups) are often only a
     /// translucent foreground when captured as independent windows. Capture
     /// their already-composited screen pixels instead.
@@ -244,7 +237,7 @@ class WindowDetector {
     }
 
     /// Product chrome must never be a hover target: it follows the pointer and
-    /// the guide would outline its own cursor chip.
+    /// the highlight would outline the product's own cursor chip.
     ///
     /// - This process: only screen-saver-level surfaces (the overlay panels and
     ///   the lens/chip HUD, both `.screenSaver` and above). Own popup menus sit

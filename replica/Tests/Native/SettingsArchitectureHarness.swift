@@ -626,16 +626,16 @@ import BlinkClipCapture
         cardCentringGeometry["\(appearance)-\(section.rawValue)"] = rows
     }
 
-    /// 需要逐卡达标的十三张卡（任务口径）：通用四组、剪贴板两张、截图三张
-    /// （截图后行为 / 翻译 / 框选辅助）、隐私三张、AI 一张。数量按卡片身份点名，
-    /// 同时核对实际量到的卡片数——新加一张卡不会悄悄跑出逐卡断言。
+    /// 需要逐卡达标的十二张卡（任务口径）：通用四组、剪贴板两张、截图两张、
+    /// 隐私三张、AI 一张。数量按卡片身份点名，同时核对实际量到的卡片数——
+    /// 新加一张卡不会悄悄跑出逐卡断言。
     @MainActor static var cardCentringCoverage: [(section: SettingsSection, cards: Int)] {
-        [(.general, 4), (.clipboard, 2), (.screenshot, 3), (.privacy, 3), (.ai, 1)]
+        [(.general, 4), (.clipboard, 2), (.screenshot, 2), (.privacy, 3), (.ai, 1)]
     }
 
     /// 逐卡逐行断言（新结构：卡片只给左右内边距）。
     ///
-    /// 先锁覆盖面（十三张卡一张都不能少，量到的卡片数也要对上），再逐卡量：
+    /// 先锁覆盖面（十二张卡一张都不能少，量到的卡片数也要对上），再逐卡量：
     /// - 卡级：首行的上留白、末行的下留白都必须等于该行自己的留白常量（8/9/12），
     ///   不能是「常量 + 卡片内边距」——卡片自己不加上下留白；
     /// - 卡级残差：首行留白与末行留白之差 ≤1.0pt（浅色，8 与 9 是源代码里写死的
@@ -795,9 +795,6 @@ import BlinkClipCapture
                 AlignmentRow(control: "settings.apple-translation.toggle", kind: .toggle,
                              title: ScreenshotSettingsCopy.text(.appleTranslationTitle),
                              detailIdentifier: "settings.apple-translation.subtitle"),
-                AlignmentRow(control: "settings.snap-guides.center-lines.toggle", kind: .toggle,
-                             title: ScreenshotSettingsCopy.text(.centerLinesTitle),
-                             detailIdentifier: "settings.snap-guides.center-lines.subtitle"),
             ]
         case .privacy:
             return [

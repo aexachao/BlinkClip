@@ -847,15 +847,16 @@ class OverlayWindowController {
             selectionView.mayActivateAppForCursor = !pendingFocusSensitiveForegroundClaim
             selectionView.delegate = self
             selectionView.windowDetector = windowDetector
-            // Snap guides are per-display: each overlay resolves the window
-            // under the pointer only when the pointer is on its own display.
-            // Nothing is broadcast across screens, so a guide can never land on
-            // the wrong monitor or inherit a neighbour's Y coordinate.
-            selectionView.showsGuideCenterLines = BlinkClipScreenshotSettings.snapGuidesCenterLinesEnabled
-            // Drag snapping stays on by default: `SelectionView.showsDragSnap`
-            // is the one switch, and the screenshot pane has no free height in
-            // the shipping 648×600 window for another row, so it has no
-            // preferences UI yet (see `evidence/patches/snap2-report.md`).
+            // The pointer guide is a desktop-wide reference: whichever display
+            // sees the mouse movement mirrors the screen point into every
+            // overlay, so the horizontal line continues over the neighbouring
+            // display instead of stopping at this screen's edge.
+            selectionView.onCrosshairMoved = { [weak self] screenPoint in
+                guard let self else { return }
+                for view in self.selectionViewsByDisplayID.values {
+                    view.updateCrosshair(globalPoint: screenPoint)
+                }
+            }
             selectionView.aspectRatio = usesAspectRatioSelection ? Self.persistedSelectionAspectRatio : nil
             selectionView.onFirstDrawCompleted = { [weak self] in
                 self?.recordFirstDraw(generation: generation)
@@ -908,10 +909,17 @@ class OverlayWindowController {
         triggerContext?.mark(.overlayOrderedFront)
 
         // Seed the hover target at the pointer location the overlay opened at,
-        // so the guide is already on the hovered window before the first mouse
-        // move arrives (and so a pointer resting still shows it).
+        // so the highlight is already on the hovered window before the first
+        // mouse move arrives (and so a pointer resting still shows it).
         for view in selectionViewsByDisplayID.values {
             view.refreshHoverAtCurrentMouseLocation()
+        }
+
+        // Seed the guides at the pointer location the overlay opened at, so the
+        // crosshair is there before the first mouse move arrives.
+        let pointerAtPresentation = NSEvent.mouseLocation
+        for view in selectionViewsByDisplayID.values {
+            view.updateCrosshair(globalPoint: pointerAtPresentation)
         }
 
         if shouldShowMagnifierLensPanel {

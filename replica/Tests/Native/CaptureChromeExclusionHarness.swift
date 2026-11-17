@@ -17,24 +17,25 @@ private final class SnapshotRecorder: ScreenSnapshotProviding {
     }
 }
 
-/// Reads the snap-guide geometry out of the live view/layer tree — the same
+/// Reads the pointer-guide geometry out of the live view/layer tree — the same
 /// numbers the window server receives, without a second copy of the layout
-/// maths. The overlay installs exactly one guide subview; the pointer is the
-/// system crosshair and is not part of this view at all.
-private struct SnapGuideGeometry {
-    let band: NSView?
+/// maths. The overlay installs exactly two guide bands (horizontal, vertical);
+/// the pointer itself is the system crosshair and is not part of this view.
+private struct CrosshairGeometry {
+    let horizontal: NSView?
+    let vertical: NSView?
     let subviewCount: Int
-    let layer: CAShapeLayer?
-    /// The hover highlight is a sibling layer of the guide (dimming cut-out,
+    /// The hover highlight is a sibling layer of the guides (dimming cut-out,
     /// accent frame and size label). Counting it separately keeps the "exactly
-    /// one guide layer, no self-drawn pointer" property meaningful after the
+    /// two guide layers, no self-drawn pointer" property meaningful after the
     /// hover chrome moved out of `draw(_:)`.
     let hoverLayerCount: Int
-    /// The selection chrome (dim + frame + handles + label) and the
-    /// snapped-edge highlight, one layer each — so a drag writes layers
-    /// instead of repainting the snapshot.
+    /// The selection chrome (dim + frame + handles + label) is one layer, so a
+    /// drag writes a layer instead of repainting the snapshot.
     let chromeLayerCount: Int
-    let highlightLayerCount: Int
+    let bandCount: Int
+    let horizontalLayer: CAShapeLayer?
+    let verticalLayer: CAShapeLayer?
 
     private static func typeName(_ view: NSView) -> String {
         String(describing: type(of: view))
@@ -45,20 +46,29 @@ private struct SnapGuideGeometry {
         subviewCount = subviews.count
         hoverLayerCount = subviews.filter { Self.typeName($0) == "HoverHighlightView" }.count
         chromeLayerCount = subviews.filter { Self.typeName($0) == "SelectionChromeView" }.count
-        highlightLayerCount = subviews.filter { Self.typeName($0) == "SnapHighlightView" }.count
-        let guides = subviews.filter { Self.typeName($0) == "SnapGuideView" }
-        band = guides.count == 1 ? guides[0] : nil
-        layer = band?.layer?.sublayers?.first as? CAShapeLayer
+        let bands = subviews.filter { Self.typeName($0) == "CrosshairBandView" }
+        bandCount = bands.count
+        // `installOverlayLayers` adds the horizontal band first.
+        horizontal = bands.count == 2 ? bands[0] : nil
+        vertical = bands.count == 2 ? bands[1] : nil
+        horizontalLayer = horizontal?.layer?.sublayers?.first as? CAShapeLayer
+        verticalLayer = vertical?.layer?.sublayers?.first as? CAShapeLayer
     }
 
-    var frame: NSRect { band?.frame ?? .null }
-    var isHidden: Bool { band?.isHidden ?? true }
-    var dashPattern: [CGFloat] { (layer?.lineDashPattern ?? []).map { CGFloat($0.doubleValue) } }
-    var pathBounds: CGRect? { layer?.path?.boundingBox }
+    var horizontalHidden: Bool { horizontal?.isHidden ?? true }
+    var verticalHidden: Bool { vertical?.isHidden ?? true }
 
-    /// Number of move-to elements in the drawn path: one subpath for the four
-    /// edges, three when the centre lines are enabled too.
-    var subpathCount: Int {
+    /// Centre of the horizontal line in view coordinates, or nil when hidden.
+    var lineY: CGFloat? { horizontalHidden ? nil : horizontal?.frame.midY }
+    /// Centre of the vertical line in view coordinates, or nil when hidden.
+    var lineX: CGFloat? { verticalHidden ? nil : vertical?.frame.midX }
+
+    /// One horizontal subpath and one vertical subpath: a solid line, not an
+    /// outline.
+    var horizontalSubpathCount: Int { subpathCount(in: horizontalLayer) }
+    var verticalSubpathCount: Int { subpathCount(in: verticalLayer) }
+
+    private func subpathCount(in layer: CAShapeLayer?) -> Int {
         guard let path = layer?.path else { return 0 }
         var moves = 0
         path.applyWithBlock { element in
@@ -80,7 +90,7 @@ private final class CountingSelectionView: SelectionView {
 
 /// Records the rect a drag commits, so the harness sees the exact geometry the
 /// capture path would crop.
-private final class DragSnapDelegate: NSObject, SelectionViewDelegate {
+private final class DragDelegate: NSObject, SelectionViewDelegate {
     private(set) var completed: [(rect: NSRect, isWindowSelection: Bool)] = []
     private(set) var changes: [NSRect] = []
 
@@ -94,34 +104,6 @@ private final class DragSnapDelegate: NSObject, SelectionViewDelegate {
     func selectionDidDoubleClickInsideSelection(inView view: NSView) {}
 }
 
-/// Reads the snapped-edge highlight out of the live layer tree.
-private struct SnapHighlightGeometry {
-    let layer: CAShapeLayer?
-    let isHidden: Bool
-    let lineWidth: CGFloat
-    let strokeColor: CGColor?
-    let pathBounds: CGRect?
-    let segmentCount: Int
-
-    init(view: SelectionView) {
-        let highlight = view.subviews.first { String(describing: type(of: $0)) == "SnapHighlightView" }
-        let shape = highlight?.layer?.sublayers?.first as? CAShapeLayer
-        layer = shape
-        isHidden = highlight?.isHidden ?? true
-        lineWidth = shape?.lineWidth ?? 0
-        strokeColor = shape?.strokeColor
-        pathBounds = shape?.path?.boundingBox
-        var moves = 0
-        shape?.path?.applyWithBlock { element in
-            if element.pointee.type == .moveToPoint { moves += 1 }
-        }
-        segmentCount = moves
-    }
-
-    /// True when the shape layer really paints a line.
-    var isVisible: Bool { !isHidden && segmentCount > 0 }
-}
-
 private func rgbaComponents(_ color: CGColor?) -> [CGFloat]? {
     guard let color,
           let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -132,7 +114,7 @@ private func rgbaComponents(_ color: CGColor?) -> [CGFloat]? {
 }
 
 /// One overlay-sized view plus an injected window list, so the production
-/// hover → guide path can be driven with exact screen points and no pointer
+/// hover and guide paths can be driven with exact screen points and no pointer
 /// synthesis. Writes nothing to the desktop: the window is never ordered front.
 @MainActor
 private struct HoverFixture {
@@ -172,10 +154,22 @@ private struct HoverFixture {
 
     /// Drives the production hover entry point with a CG-coordinate point.
     func hover(cgPoint: CGPoint) {
-        view.updateHover(screenPoint: NSPoint(
-            x: cgPoint.x,
-            y: (NSScreen.screens.first?.frame.height ?? 0) - cgPoint.y
-        ))
+        view.updateHover(screenPoint: screenPoint(cgPoint: cgPoint))
+    }
+
+    /// Drives the production guide entry point with a CG-coordinate point.
+    func crosshair(cgPoint: CGPoint) {
+        view.updateCrosshair(globalPoint: screenPoint(cgPoint: cgPoint))
+    }
+
+    /// CG point (top-left origin, y down) → AppKit screen point (y up).
+    func screenPoint(cgPoint: CGPoint) -> NSPoint {
+        NSPoint(x: cgPoint.x, y: (NSScreen.screens.first?.frame.height ?? 0) - cgPoint.y)
+    }
+
+    /// Expected local (view) point for a CG-coordinate point.
+    func localPoint(cgPoint: CGPoint) -> NSPoint {
+        localRect(cgFrame: CGRect(x: cgPoint.x, y: cgPoint.y, width: 0, height: 0)).origin
     }
 
     /// Expected view-space rect for a CG window frame on this fixture's display.
@@ -211,6 +205,7 @@ private struct HoverFixture {
         case .leftMouseDown: view.mouseDown(with: event)
         case .leftMouseDragged: view.mouseDragged(with: event)
         case .leftMouseUp: view.mouseUp(with: event)
+        case .mouseMoved: view.mouseMoved(with: event)
         default: return false
         }
         return true
@@ -228,14 +223,14 @@ private struct HoverFixture {
 
 /// Writes the raw 120Hz sweep (when the evidence directory is set) so the
 /// report can carry the frame sequence instead of only an assertion count.
-private func reportSnapSweep(rows: [String], measuredRate: Double,
-                             primaryHeight: CGFloat, displayFrame: NSRect) {
-    print("SNAP-SWEEP samples=\(rows.count - 1) rate=\(String(format: "%.1f", measuredRate))Hz "
+private func reportCrosshairSweep(rows: [String], measuredRate: Double,
+                                  primaryHeight: CGFloat, displayFrame: NSRect) {
+    print("CROSSHAIR-SWEEP samples=\(rows.count - 1) rate=\(String(format: "%.1f", measuredRate))Hz "
           + "primaryHeight=\(Int(primaryHeight)) display=\(Int(displayFrame.width))x\(Int(displayFrame.height))")
-    guard let directory = ProcessInfo.processInfo.environment["SG_SNAP_EVIDENCE"],
+    guard let directory = ProcessInfo.processInfo.environment["BLINKCLIP_CROSSHAIR_EVIDENCE"],
           let data = rows.joined(separator: "\n").data(using: .utf8) else { return }
     try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-    let url = URL(fileURLWithPath: directory).appendingPathComponent("snap-guide-frames-120hz.csv")
+    let url = URL(fileURLWithPath: directory).appendingPathComponent("crosshair-frames-120hz.csv")
     try? data.write(to: url)
 }
 
@@ -400,6 +395,54 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
     return (try? png.write(to: URL(fileURLWithPath: path))) != nil
 }
 
+/// Renders the overlay's guide layers to a PNG, so the report can show the
+/// guides without photographing the desktop. `SelectionView` is not itself
+/// layer-backed (the snapshot is painted in `draw(_:)`), so the two guide
+/// layers are composited from the live layer tree: their real frames, real
+/// `CAShapeLayer` paths, real stroke colour and width. Only used when
+/// BLINKCLIP_CROSSHAIR_RENDER_DIR is set.
+private func renderOverlayLayers(_ view: SelectionView, background: CGFloat, to path: String) -> Bool {
+    let bounds = view.bounds
+    guard bounds.width > 0, bounds.height > 0 else { return false }
+    let scale = 2
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let context = CGContext(
+            data: nil,
+            width: Int(bounds.width * CGFloat(scale)),
+            height: Int(bounds.height * CGFloat(scale)),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else { return false }
+    context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+    // A flat stand-in for the frozen desktop snapshot: the guides are quiet by
+    // design, so a mid-dark background is the honest way to show them.
+    context.setFillColor(NSColor(white: background, alpha: 1).cgColor)
+    context.fill(CGRect(origin: .zero, size: bounds.size))
+    for band in view.subviews where String(describing: type(of: band)) == "CrosshairBandView" {
+        guard !band.isHidden,
+              let shape = band.layer?.sublayers?.first as? CAShapeLayer,
+              let line = shape.path,
+              let stroke = shape.strokeColor else { continue }
+        context.saveGState()
+        context.translateBy(x: band.frame.minX, y: band.frame.minY)
+        context.addPath(line)
+        context.setStrokeColor(stroke)
+        context.setLineWidth(shape.lineWidth)
+        context.setLineCap(.butt)   // `CrosshairBandView` sets `.butt`
+        if let dash = shape.lineDashPattern, !dash.isEmpty {
+            context.setLineDash(phase: 0, lengths: dash.map { CGFloat($0.doubleValue) })
+        }
+        context.strokePath()
+        context.restoreGState()
+    }
+    guard let image = context.makeImage() else { return false }
+    let rep = NSBitmapImageRep(cgImage: image)
+    guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+    return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+}
+
 @main struct CaptureChromeExclusionHarness {
 
     @MainActor static func main() {
@@ -503,14 +546,13 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
         check(fronted.filter { $0 is CursorChipWindow }.count == 1, "non-snapshot path creates and shows only one hint")
         recording.cancel()
         check(recording.isCaptureSessionEnded, "non-snapshot cancellation remains intact")
-        // --- SG: snap guides follow the hovered window, not the pointer -----
-        // The guide is one layer drawn on the four edges of the window under
-        // the pointer (plus optional centre lines). The pointer is the system
-        // crosshair; nothing here draws or hides it. Moving inside one window
-        // writes nothing; crossing into another window replaces the path
-        // synchronously, so the guide jumps without a frame of lag.
+        // --- REV: full-screen guides follow the pointer, not the window -----
+        // Two bands (one per axis), each a view-backed `CAShapeLayer` spanning
+        // the whole display and centred on the pointer. The pointer itself is
+        // the system crosshair; nothing here draws or hides it. A pointer move
+        // writes the two bands and never calls `draw(_:)`.
         guard let mainScreen = NSScreen.main ?? NSScreen.screens.first else {
-            preconditionFailure("a screen is required for the snap-guide checks")
+            preconditionFailure("a screen is required for the guide checks")
         }
         let primaryHeight = mainScreen.frame.height
         let primaryFrame = mainScreen.frame
@@ -522,248 +564,245 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
             displayFrame: primaryFrame,
             windows: orderedWindows.map { ($0.0, $0.1, false) }
         )
-        let snapView = primaryFixture.view
+        let guideView = primaryFixture.view
 
-        let initialSnap = SnapGuideGeometry(view: snapView)
-        check(initialSnap.subviewCount == 4
-              && initialSnap.hoverLayerCount == 1
-              && initialSnap.chromeLayerCount == 1
-              && initialSnap.highlightLayerCount == 1,
-              "the overlay installs exactly one chrome layer, one guide layer, one hover-highlight layer, "
-              + "one snap-highlight layer and no self-drawn pointer")
-        check(initialSnap.isHidden, "no guide before the pointer is over a window")
+        let initialGuide = CrosshairGeometry(view: guideView)
+        check(initialGuide.subviewCount == 4
+              && initialGuide.hoverLayerCount == 1
+              && initialGuide.chromeLayerCount == 1
+              && initialGuide.bandCount == 2,
+              "the overlay installs one chrome layer, one hover-highlight layer and exactly two guide bands "
+              + "(got \(initialGuide.subviewCount) subviews: chrome \(initialGuide.chromeLayerCount), "
+              + "hover \(initialGuide.hoverLayerCount), bands \(initialGuide.bandCount))")
+        check(initialGuide.horizontalHidden && initialGuide.verticalHidden,
+              "no guide before the pointer position is known")
 
-        // A point inside A resolves to A's four edges in this view's coordinates.
-        primaryFixture.hover(cgPoint: CGPoint(x: 200, y: 200))
-        var snap = SnapGuideGeometry(view: snapView)
-        check(!snap.isHidden, "hovering a window shows the guide")
-        check(snap.frame == primaryFixture.localRect(cgFrame: winA),
-              "the guide sits exactly on the hovered window's rect (got \(snap.frame))")
-        if let bounds = snap.pathBounds {
-            // The 1.5pt stroke is inset by half its width so it stays on the
-            // window edge instead of spilling outside it.
-            check(abs(bounds.width - (winA.width - 1.5)) < 0.01
-                  && abs(bounds.height - (winA.height - 1.5)) < 0.01,
-                  "the path spans the window's four edges (got \(bounds.size))")
-        } else {
-            check(false, "the guide has a drawn path")
+        // Guide geometry at three horizontal positions: the crossing point is
+        // the pointer's own point in this view, and each line spans the display.
+        let guidePoints: [(name: String, cg: CGPoint)] = [
+            ("left", CGPoint(x: 80, y: 300)),
+            ("middle", CGPoint(x: primaryFrame.midX, y: 420)),
+            ("right", CGPoint(x: primaryFrame.maxX - 60, y: 260)),
+        ]
+        for point in guidePoints {
+            primaryFixture.crosshair(cgPoint: point.cg)
+            let geometry = CrosshairGeometry(view: guideView)
+            let expected = primaryFixture.localPoint(cgPoint: point.cg)
+            check(!geometry.horizontalHidden && !geometry.verticalHidden,
+                  "\(point.name): both guides are visible while aiming")
+            if let y = geometry.lineY, let x = geometry.lineX {
+                check(abs(y - expected.y) <= 1,
+                      "\(point.name): horizontal line y=\(y) equals the pointer y=\(expected.y) (±1pt)")
+                check(abs(x - expected.x) <= 1,
+                      "\(point.name): vertical line x=\(x) equals the pointer x=\(expected.x) (±1pt)")
+            } else {
+                check(false, "\(point.name): both guide lines are positioned")
+            }
+            if let band = geometry.horizontal {
+                check(band.frame.minX == guideView.bounds.minX
+                      && band.frame.width == guideView.bounds.width,
+                      "\(point.name): the horizontal line spans the whole display width")
+            }
+            if let band = geometry.vertical {
+                check(band.frame.minY == guideView.bounds.minY
+                      && band.frame.height == guideView.bounds.height,
+                      "\(point.name): the vertical line spans the whole display height")
+            }
+            check(geometry.horizontalSubpathCount == 1 && geometry.verticalSubpathCount == 1,
+                  "\(point.name): each band draws exactly one line segment")
         }
-        check(snap.subpathCount == 1, "four edges are one closed subpath; no centre lines by default")
 
-        // Style: dashed 6/4, 1.5pt, systemGray at 50%.
-        guard let guideLayer = snap.layer else {
-            preconditionFailure("the snap guide is one shape layer")
+        // Style: solid, 1.5pt, systemGray at 50%. A dashed or thin guide was
+        // the rejected snap-window shape; this pins the 1.0.25 one.
+        guard let horizontalLayer = CrosshairGeometry(view: guideView).horizontalLayer,
+              let verticalLayer = CrosshairGeometry(view: guideView).verticalLayer else {
+            preconditionFailure("each guide band owns one shape layer")
         }
-        check(abs(guideLayer.lineWidth - 1.5) < 0.001, "the guide is 1.5pt")
-        check(guideLayer.lineDashPattern?.map(\.doubleValue) == [6, 4],
-              "the guide is dashed 6/4 (pattern \(String(describing: guideLayer.lineDashPattern)))")
-        let expectedGray = NSColor.systemGray.withAlphaComponent(0.5)
-        if let components = rgbaComponents(guideLayer.strokeColor),
-           let expected = rgbaComponents(expectedGray.cgColor),
-           components.count == 4, expected.count == 4 {
-            check(zip(components, expected).allSatisfy { abs($0 - $1) < 0.02 },
-                  "the guide is systemGray at 50%")
-        } else {
-            check(false, "the guide has an sRGB stroke colour")
+        for (name, layer) in [("horizontal", horizontalLayer), ("vertical", verticalLayer)] {
+            check(abs(layer.lineWidth - 1.5) < 0.001, "\(name) guide is 1.5pt")
+            check(layer.lineDashPattern == nil || layer.lineDashPattern?.isEmpty == true,
+                  "\(name) guide is solid")
+            let expectedGray = NSColor.systemGray.withAlphaComponent(0.5)
+            if let components = rgbaComponents(layer.strokeColor),
+               let expected = rgbaComponents(expectedGray.cgColor),
+               components.count == 4, expected.count == 4 {
+                check(zip(components, expected).allSatisfy { abs($0 - $1) < 0.02 },
+                      "\(name) guide is systemGray at 50%")
+            } else {
+                check(false, "\(name) guide has an sRGB stroke colour")
+            }
         }
 
-        // Centre lines are optional and off by default; turning them on writes
-        // once and adds two subpaths to the same four-edge frame.
-        snapView.showsGuideCenterLines = true
-        snap = SnapGuideGeometry(view: snapView)
-        check(snap.subpathCount == 3, "centre lines add exactly one horizontal and one vertical line")
-        check(snap.frame == primaryFixture.localRect(cgFrame: winA),
-              "centre lines do not move the four-edge rect")
-        snapView.showsGuideCenterLines = false
-        check(SnapGuideGeometry(view: snapView).subpathCount == 1, "turning centre lines off removes them again")
+        // Evidence renders: the same three pointer positions, offscreen, from
+        // the live layer tree. The overlay is never ordered front.
+        if let renderDirectory = ProcessInfo.processInfo.environment["BLINKCLIP_CROSSHAIR_RENDER_DIR"] {
+            try? FileManager.default.createDirectory(atPath: renderDirectory, withIntermediateDirectories: true)
+            for point in guidePoints {
+                primaryFixture.crosshair(cgPoint: point.cg)
+                let path = (renderDirectory as NSString)
+                    .appendingPathComponent("crosshair-\(point.name).png")
+                if renderOverlayLayers(guideView, background: 0.22, to: path) {
+                    print("CROSSHAIR-RENDER \(point.name) \(path)")
+                } else {
+                    check(false, "\(point.name): the overlay renders to a PNG")
+                }
+            }
+            primaryFixture.crosshair(cgPoint: guidePoints[1].cg)
+        }
 
-        // Same window, 200 points on a fast circle: zero repaint, zero guide
-        // writes, zero hover-target changes, and the guide never moves.
-        snapView.display()
-        snapView.needsDisplay = false
-        let drawBeforeCircle = snapView.drawCount
-        let changesBeforeCircle = snapView.hoverTargetChangeCount
-        let writesBeforeCircle = snapView.snapGuideWriteCount
+        // 200 pointer moves: the guides track every one of them, the frozen
+        // snapshot is never repainted, and nothing schedules a repaint.
+        guideView.display()
+        guideView.needsDisplay = false
+        let drawsBeforeMoves = guideView.drawCount
+        let writesBeforeMoves = guideView.crosshairWriteCount
+        var moveMismatches = 0
         for step in 0..<200 {
-            let angle = Double(step) / 200.0 * 2.0 * Double.pi
-            primaryFixture.hover(cgPoint: CGPoint(
-                x: 300 + 120 * cos(angle),
-                y: 250 + 90 * sin(angle)
-            ))
-        }
-        check(snapView.hoverTargetChangeCount == changesBeforeCircle,
-              "200 moves inside one window change the hover target 0 times")
-        check(snapView.snapGuideWriteCount == writesBeforeCircle,
-              "200 moves inside one window write the guide 0 times")
-        check(snapView.drawCount == drawBeforeCircle,
-              "200 moves inside one window call draw(_:) 0 times")
-        check(!snapView.needsDisplay, "200 moves inside one window schedule no repaint")
-        check(SnapGuideGeometry(view: snapView).frame == primaryFixture.localRect(cgFrame: winA),
-              "the guide is completely static while the pointer circles inside A")
-
-        // Blank desktop hides the guide; coming back to a window shows it again.
-        primaryFixture.hover(cgPoint: CGPoint(x: 1300, y: 900))
-        check(SnapGuideGeometry(view: snapView).isHidden, "the guide disappears over blank desktop")
-        check(primaryFixture.expectedTarget(CGPoint(x: 1300, y: 900)) == nil,
-              "the blank point really is outside every test window")
-        primaryFixture.hover(cgPoint: CGPoint(x: 560, y: 300))
-        check(!SnapGuideGeometry(view: snapView).isHidden, "moving back onto a window shows the guide")
-        check(SnapGuideGeometry(view: snapView).frame == primaryFixture.localRect(cgFrame: winB),
-              "the guide jumps straight to the new window")
-
-        // Frame-sequence evidence: 240 samples paced at 120Hz across three
-        // overlapping windows + blank desktop. Every sample must be on the
-        // correct window in the very same call (no interpolation, no lag).
-        func sequencePoint(_ index: Int) -> CGPoint {
-            let phase = index % 5
-            switch phase {
-            case 0: return CGPoint(x: 120, y: 120)   // A only
-            case 1: return CGPoint(x: 300, y: 250)   // A on top of B (front-to-back)
-            case 2: return CGPoint(x: 560, y: 300)   // B only
-            case 3: return CGPoint(x: 700, y: 500)   // C only
-            default: return CGPoint(x: 1300, y: 900) // blank desktop
+            let angle = CGFloat(Double(step) / 200.0 * 2.0 * Double.pi)
+            let cgPoint = CGPoint(x: 300 + 120 * cos(angle), y: 250 + 90 * sin(angle))
+            primaryFixture.crosshair(cgPoint: cgPoint)
+            let geometry = CrosshairGeometry(view: guideView)
+            let expected = primaryFixture.localPoint(cgPoint: cgPoint)
+            guard let y = geometry.lineY, let x = geometry.lineX else {
+                moveMismatches += 1
+                continue
+            }
+            if abs(y - expected.y) > 1 || abs(x - expected.x) > 1 {
+                moveMismatches += 1
             }
         }
+        check(moveMismatches == 0,
+              "200 pointer moves: both lines sit on the pointer every time (±1pt, mismatches \(moveMismatches))")
+        check(guideView.drawCount == drawsBeforeMoves,
+              "200 pointer moves call draw(_:) 0 times (got \(guideView.drawCount - drawsBeforeMoves))")
+        check(!guideView.needsDisplay, "200 pointer moves schedule no snapshot repaint")
+        let moveWrites = guideView.crosshairWriteCount - writesBeforeMoves
+        check(moveWrites >= 200 && moveWrites <= 400,
+              "200 pointer moves write the bands at most once per axis (no redundant writes) "
+              + "(got \(moveWrites), expected 200…400)")
 
-        // Start from "no target" so the first sample is a real transition.
-        primaryFixture.hover(cgPoint: CGPoint(x: 1300, y: 900))
-        let changesBeforeSweep = snapView.hoverTargetChangeCount
-        let writesBeforeSweep = snapView.snapGuideWriteCount
-        var expectedTargetChanges = 0
-        var expectedGuideWrites = 0
-        var previousTarget: CGWindowID?
-        var sweepMismatches = 0
-        var csvRows = ["index,timestamp_s,interval_ms,cg_x,cg_y,expected_window,guide_x,guide_y,guide_w,guide_h,hidden"]
-        let sweepStart = ProcessInfo.processInfo.systemUptime
-        var previousSampleTime = sweepStart
-        for index in 0..<240 {
-            let targetTime = sweepStart + Double(index) / 120.0
-            let now = ProcessInfo.processInfo.systemUptime
-            if targetTime > now {
-                Thread.sleep(forTimeInterval: targetTime - now)
-            }
-            let cgPoint = sequencePoint(index)
-            let expected = primaryFixture.expectedTarget(cgPoint)
-            if expected != previousTarget {
-                expectedGuideWrites += 1
-                if expected != nil { expectedTargetChanges += 1 }
-                previousTarget = expected
-            }
-            primaryFixture.hover(cgPoint: cgPoint)
-            let geometry = SnapGuideGeometry(view: snapView)
-            let hidden = geometry.isHidden
-            let expectedHidden = expected == nil
-            var matched = hidden == expectedHidden
-            if let expected, !hidden {
-                matched = matched && geometry.frame == primaryFixture.localRect(cgFrame: primaryFixture.windowFrame(expected)!)
-            }
-            if !matched { sweepMismatches += 1 }
-            let sampledAt = ProcessInfo.processInfo.systemUptime
-            let interval = (sampledAt - previousSampleTime) * 1000
-            previousSampleTime = sampledAt
-            csvRows.append(String(
-                format: "%d,%.6f,%.3f,%.1f,%.1f,%@,%.1f,%.1f,%.1f,%.1f,%@",
-                index,
-                sampledAt - sweepStart,
-                interval,
-                cgPoint.x,
-                cgPoint.y,
-                expected.map(String.init) ?? "blank",
-                geometry.frame.origin.x,
-                geometry.frame.origin.y,
-                geometry.frame.width,
-                geometry.frame.height,
-                hidden ? "yes" : "no"
-            ))
-        }
-        let sweepElapsed = ProcessInfo.processInfo.systemUptime - sweepStart
-        check(sweepMismatches == 0,
-              "120Hz sweep: every one of 240 samples is on the correct window in the same call (mismatches \(sweepMismatches))")
-        let measuredRate = 240.0 / max(sweepElapsed, 0.000_001)
-        check(measuredRate >= 100,
-              "the sweep ran at \(Int(measuredRate)) samples/s (target 120Hz)")
-        check(snapView.hoverTargetChangeCount - changesBeforeSweep == expectedTargetChanges,
-              "the hover target changed exactly \(expectedTargetChanges) times during the sweep "
-              + "(actual \(snapView.hoverTargetChangeCount - changesBeforeSweep))")
-        check(snapView.snapGuideWriteCount - writesBeforeSweep == expectedGuideWrites,
-              "the guide was written exactly once per visibility/target change "
-              + "(\(expectedGuideWrites), actual \(snapView.snapGuideWriteCount - writesBeforeSweep))")
+        // Visibility contract: only `.idle` / `.drawing` own the guides.
+        primaryFixture.crosshair(cgPoint: CGPoint(x: 200, y: 200))
+        check(!CrosshairGeometry(view: guideView).horizontalHidden,
+              "idle shows the guides")
+        guideView.selectionLocked = true
+        check(CrosshairGeometry(view: guideView).horizontalHidden
+              && CrosshairGeometry(view: guideView).verticalHidden,
+              "a locked selection hides the guides")
+        guideView.selectionLocked = false
+        guideView.scrollCaptureActive = true
+        check(CrosshairGeometry(view: guideView).horizontalHidden,
+              "scroll capture hides the guides")
+        guideView.scrollCaptureActive = false
+        guideView.selectionInteractionEnabled = false
+        check(CrosshairGeometry(view: guideView).horizontalHidden,
+              "editor hand-off hides the guides")
+        guideView.selectionInteractionEnabled = true
+        primaryFixture.crosshair(cgPoint: CGPoint(x: 200, y: 200))
+        check(!CrosshairGeometry(view: guideView).horizontalHidden,
+              "resuming the overlay shows the guides again")
+        guideView.updateSelectionRect(NSRect(x: 100, y: 100, width: 200, height: 160))
+        check(CrosshairGeometry(view: guideView).horizontalHidden
+              && CrosshairGeometry(view: guideView).verticalHidden,
+              "an established selection hides the guides")
 
-        // Burst sweep: 1000 samples with no pacing. Still zero stale frames,
-        // and still exactly one write per target change.
-        let changesBeforeBurst = snapView.hoverTargetChangeCount
-        let writesBeforeBurst = snapView.snapGuideWriteCount
-        var burstMismatches = 0
-        var burstExpectedTargetChanges = 0
-        var burstExpectedWrites = 0
-        var burstPrevious: CGWindowID?
-        for index in 0..<1000 {
-            let cgPoint = sequencePoint(index)
-            let expected = primaryFixture.expectedTarget(cgPoint)
-            if expected != burstPrevious {
-                burstExpectedWrites += 1
-                if expected != nil { burstExpectedTargetChanges += 1 }
-                burstPrevious = expected
-            }
-            primaryFixture.hover(cgPoint: cgPoint)
-            let geometry = SnapGuideGeometry(view: snapView)
-            var matched = geometry.isHidden == (expected == nil)
-            if let expected, !geometry.isHidden {
-                matched = matched && geometry.frame == primaryFixture.localRect(cgFrame: primaryFixture.windowFrame(expected)!)
-            }
-            if !matched { burstMismatches += 1 }
-        }
-        check(burstMismatches == 0, "burst sweep: 1000 samples, 0 stale frames")
-        check(snapView.hoverTargetChangeCount - changesBeforeBurst == burstExpectedTargetChanges,
-              "burst sweep: \(burstExpectedTargetChanges) target changes, nothing else")
-        check(snapView.snapGuideWriteCount - writesBeforeBurst == burstExpectedWrites,
-              "burst sweep: exactly one guide write per visibility/target change")
-
-        // Per-display snapping: a point on another display never targets this
-        // overlay, and each display resolves its own window in its own space.
+        // A single pointer position is mirrored to every display, exactly like
+        // `OverlayWindowController` does: the horizontal line continues onto
+        // the neighbouring screen, the vertical line only lands on the
+        // pointer's own screen. Driven by real `mouseMoved` events.
+        let crossFixture = HoverFixture(
+            displayFrame: primaryFrame,
+            windows: orderedWindows.map { ($0.0, $0.1, false) }
+        )
+        let crossView = crossFixture.view
         let rightFrame = NSRect(x: primaryFrame.maxX, y: primaryFrame.minY, width: 1200, height: 900)
         let rightWindowCG = CGRect(x: primaryFrame.maxX + 100, y: 300, width: 300, height: 200)
         let rightFixture = HoverFixture(
             displayFrame: rightFrame,
             windows: [(7101, rightWindowCG, false)]
         )
-        let rightPoint = CGPoint(x: rightWindowCG.midX, y: rightWindowCG.midY)
-        let primaryHoverBefore = SnapGuideGeometry(view: snapView)
-        primaryFixture.hover(cgPoint: rightPoint)
-        let primaryAfterCross = SnapGuideGeometry(view: snapView)
-        check(primaryAfterCross.isHidden,
-              "a pointer on another display does not target this screen's guide")
-        check(primaryHoverBefore.frame != primaryAfterCross.frame || primaryAfterCross.isHidden,
-              "the cross-display point had no stale local target")
-        rightFixture.hover(cgPoint: rightPoint)
+        let mirrored: (NSPoint) -> Void = { screenPoint in
+            crossView.updateCrosshair(globalPoint: screenPoint)
+            rightFixture.view.updateCrosshair(globalPoint: screenPoint)
+        }
+        crossView.onCrosshairMoved = mirrored
+        rightFixture.view.onCrosshairMoved = mirrored
+
+        // The pointer sits on the right-hand display.
+        let onRightCG = CGPoint(x: rightWindowCG.midX, y: 400)
+        let rightLocal = rightFixture.localPoint(cgPoint: onRightCG)
+        check(rightFixture.mouse(.mouseMoved, at: rightLocal),
+              "the harness can synthesise a real pointer move")
+        let rightGeometry = CrosshairGeometry(view: rightFixture.view)
+        let primaryGeometry = CrosshairGeometry(view: crossView)
         check(rightFixture.window.frame == rightFrame,
               "off-screen fixture window keeps its requested frame (got \(rightFixture.window.frame))")
-        check(!SnapGuideGeometry(view: rightFixture.view).isHidden,
-              "the second display snaps to its own window")
-        check(SnapGuideGeometry(view: rightFixture.view).frame == rightFixture.localRect(cgFrame: rightWindowCG),
-              "the second display's guide uses its own origin (got \(SnapGuideGeometry(view: rightFixture.view).frame), "
-              + "expected \(rightFixture.localRect(cgFrame: rightWindowCG)))")
-        check(SnapGuideGeometry(view: snapView).isHidden,
-              "updating the second display writes nothing on the first (no cross-screen bleed)")
+        if let rightY = rightGeometry.lineY, let primaryY = primaryGeometry.lineY {
+            check(abs(rightY - rightLocal.y) <= 1,
+                  "the pointer's own display draws the horizontal line through the pointer "
+                  + "(got \(rightY), expected \(rightLocal.y))")
+            check(abs(primaryY - rightY) <= 1,
+                  "the horizontal line is continuous across displays (primary \(primaryY), right \(rightY))")
+        } else {
+            check(false, "both displays draw the horizontal guide for a shared pointer")
+        }
+        check(primaryGeometry.verticalHidden,
+              "the vertical line stays off the display the pointer is not on")
+        if let rightX = rightGeometry.lineX {
+            check(abs(rightX - rightLocal.x) <= 1,
+                  "the pointer's own display draws the vertical line through the pointer")
+        } else {
+            check(false, "the pointer's own display shows the vertical line")
+        }
+
+        // The pointer moves back onto the primary display: the vertical line
+        // is now there and gone from the right-hand display.
+        let onPrimary = NSPoint(x: crossView.bounds.midX, y: 300)
+        check(crossFixture.mouse(.mouseMoved, at: onPrimary),
+              "the harness can synthesise a pointer move on the primary display")
+        check(!CrosshairGeometry(view: crossView).verticalHidden,
+              "the vertical line appears on the display the pointer is on")
+        if let x = CrosshairGeometry(view: crossView).lineX {
+            check(abs(x - onPrimary.x) <= 1,
+                  "the vertical line follows the pointer on the primary display")
+        }
+        check(CrosshairGeometry(view: rightFixture.view).verticalHidden,
+              "the vertical line disappears from the display the pointer left")
+        check(!CrosshairGeometry(view: rightFixture.view).horizontalHidden,
+              "the horizontal line still spans the display the pointer left")
+        if let renderDirectory = ProcessInfo.processInfo.environment["BLINKCLIP_CROSSHAIR_RENDER_DIR"] {
+            let path = (renderDirectory as NSString)
+                .appendingPathComponent("crosshair-second-display-horizontal-only.png")
+            if renderOverlayLayers(rightFixture.view, background: 0.22, to: path) {
+                print("CROSSHAIR-RENDER second-display \(path)")
+            } else {
+                check(false, "the second display's guide renders to a PNG")
+            }
+        }
+        crossView.onCrosshairMoved = nil
+        rightFixture.view.onCrosshairMoved = nil
 
         // A display above the primary exercises the CG → AppKit Y flip. The
         // flip must use the primary display's height (the shared origin), not
         // the secondary display's own height.
         let aboveHeight: CGFloat = 900
         let aboveFrame = NSRect(x: 0, y: primaryHeight, width: 1200, height: aboveHeight)
-        let aboveWindowCG = CGRect(x: 100, y: -aboveHeight, width: 300, height: 200)
-        let aboveFixture = HoverFixture(
-            displayFrame: aboveFrame,
-            windows: [(7102, aboveWindowCG, false)]
-        )
-        aboveFixture.hover(cgPoint: CGPoint(x: aboveWindowCG.midX, y: aboveWindowCG.midY))
-        let aboveSnap = SnapGuideGeometry(view: aboveFixture.view)
-        check(!aboveSnap.isHidden, "a display above the primary snaps too")
-        let expectedAbove = aboveFixture.localRect(cgFrame: aboveWindowCG)
-        check(aboveSnap.frame == expectedAbove,
-              "the Y flip is correct on a display above the primary (got \(aboveSnap.frame), expected \(expectedAbove))")
-        let localHeightFlip = aboveHeight - aboveWindowCG.minY - aboveWindowCG.height
-        check(abs(aboveSnap.frame.minY - localHeightFlip) > 1,
+        let aboveFixture = HoverFixture(displayFrame: aboveFrame, windows: [])
+        let aboveCG = CGPoint(x: 400, y: -150)
+        aboveFixture.crosshair(cgPoint: aboveCG)
+        let aboveGeometry = CrosshairGeometry(view: aboveFixture.view)
+        let expectedAbove = aboveFixture.localPoint(cgPoint: aboveCG)
+        if let y = aboveGeometry.lineY, let x = aboveGeometry.lineX {
+            check(abs(y - expectedAbove.y) <= 1,
+                  "the Y flip is correct on a display above the primary "
+                  + "(got \(y), expected \(expectedAbove.y))")
+            check(abs(x - expectedAbove.x) <= 1,
+                  "the vertical line is correct on a display above the primary")
+        } else {
+            check(false, "a display above the primary shows both guides")
+        }
+        let localHeightFlip = aboveHeight + aboveCG.y
+        check(abs((aboveGeometry.lineY ?? .nan) - localHeightFlip) > 1,
               "the flip is not computed against the secondary display's own height")
 
         // Own/twin product chrome is never a hover target.
@@ -818,223 +857,127 @@ private func writePNG(_ image: CGImage, sourceSize: NSSize, crop: NSRect, scale:
                 ownerBundleID: "com.example.app", ownBundleID: "com.example.app"),
               "a twin instance's normal window is still capturable")
 
-        // Visibility contract: the guide follows the idle hover, and every
-        // state that takes the overlay out of aiming hides it immediately.
-        primaryFixture.hover(cgPoint: CGPoint(x: 200, y: 200))
-        check(!SnapGuideGeometry(view: snapView).isHidden, "idle over a window shows the guide")
-        snapView.selectionLocked = true
-        check(SnapGuideGeometry(view: snapView).isHidden, "a committed/locked selection hides the guide")
-        snapView.selectionLocked = false
-        snapView.scrollCaptureActive = true
-        check(SnapGuideGeometry(view: snapView).isHidden, "scroll capture hides the guide")
-        snapView.scrollCaptureActive = false
-        snapView.selectionInteractionEnabled = false
-        check(SnapGuideGeometry(view: snapView).isHidden, "editor hand-off hides the guide")
-        snapView.selectionInteractionEnabled = true
-        primaryFixture.hover(cgPoint: CGPoint(x: 200, y: 200))
-        check(!SnapGuideGeometry(view: snapView).isHidden, "resuming the overlay shows the guide again")
-        snapView.updateSelectionRect(NSRect(x: 100, y: 100, width: 200, height: 160))
-        check(SnapGuideGeometry(view: snapView).isHidden, "an established selection shows no guide")
+        // Frame-sequence evidence: 240 samples paced at 120Hz with the pointer
+        // sweeping the display. Every sample must put both lines on the pointer
+        // in the very same call, and `draw(_:)` must stay at zero throughout.
+        // A fresh fixture: the view above was deliberately committed to
+        // `.selected` to prove the guides hide there.
+        let sweepFixture = HoverFixture(
+            displayFrame: primaryFrame,
+            windows: orderedWindows.map { ($0.0, $0.1, false) }
+        )
+        let sweepView = sweepFixture.view
+        sweepView.display()
+        sweepView.needsDisplay = false
+        let sweepStart = ProcessInfo.processInfo.systemUptime
+        let drawsBeforeSweep = sweepView.drawCount
+        var sweepMismatches = 0
+        var csvRows = ["index,timestamp_s,interval_ms,cg_x,cg_y,local_x,local_y,guide_x,guide_y"]
+        var previousSampleTime = sweepStart
+        for index in 0..<240 {
+            let targetTime = sweepStart + Double(index) / 120.0
+            let now = ProcessInfo.processInfo.systemUptime
+            if targetTime > now {
+                Thread.sleep(forTimeInterval: targetTime - now)
+            }
+            let phase = CGFloat(Double(index) / 240.0 * 2.0 * Double.pi)
+            let cgPoint = CGPoint(
+                x: primaryFrame.midX + 0.4 * primaryFrame.width * cos(phase),
+                y: primaryFrame.midY + 0.4 * primaryFrame.height * sin(phase)
+            )
+            sweepFixture.crosshair(cgPoint: cgPoint)
+            let sampledAt = ProcessInfo.processInfo.systemUptime
+            let geometry = CrosshairGeometry(view: sweepView)
+            let expected = sweepFixture.localPoint(cgPoint: cgPoint)
+            guard let y = geometry.lineY, let x = geometry.lineX,
+                  abs(y - expected.y) <= 1, abs(x - expected.x) <= 1 else {
+                sweepMismatches += 1
+                previousSampleTime = sampledAt
+                continue
+            }
+            csvRows.append(String(
+                format: "%d,%.6f,%.3f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
+                index,
+                sampledAt - sweepStart,
+                (sampledAt - previousSampleTime) * 1000,
+                cgPoint.x,
+                cgPoint.y,
+                expected.x,
+                expected.y,
+                x,
+                y
+            ))
+            previousSampleTime = sampledAt
+        }
+        let sweepElapsed = ProcessInfo.processInfo.systemUptime - sweepStart
+        let measuredRate = 240.0 / max(sweepElapsed, 0.000_001)
+        check(sweepMismatches == 0,
+              "120Hz sweep: every one of 240 samples has both lines on the pointer (±1pt, mismatches \(sweepMismatches))")
+        check(measuredRate >= 100,
+              "the sweep ran at \(Int(measuredRate)) samples/s (target 120Hz)")
+        let drawsDuringSweep = sweepView.drawCount - drawsBeforeSweep
+        check(drawsDuringSweep == 0,
+              "240 pointer samples call draw(_:) 0 times (got \(drawsDuringSweep))")
+        check(!sweepView.needsDisplay, "240 pointer samples schedule no snapshot repaint")
 
-
-        // --- SNAP2: dragging snaps a selection edge to a window edge --------
-        // A dragged edge glues to the nearest *same-axis* window edge closer
-        // than 8pt, the glued edge is highlighted while it holds, the
-        // highlight clears on mouse-up — and none of it repaints the frozen
-        // snapshot: a drag writes the chrome layer and the highlight path
-        // only, so `draw(_:)` stays at zero.
+        // Dragging is back to plain geometry: the box follows the pointer, no
+        // edge is glued to a window, and the snapshot is never repainted.
         let dragWindowCG = CGRect(x: 100, y: 100, width: 400, height: 300)
         let dragWindow = primaryFixture.localRect(cgFrame: dragWindowCG)
-
-        func dragFixture(_ id: CGWindowID) -> HoverFixture {
-            HoverFixture(displayFrame: primaryFrame, windows: [(id, dragWindowCG, false)])
-        }
-
-        let snappedFixture = dragFixture(7301)
-        let snappedView = snappedFixture.view
-        let snappedDelegate = DragSnapDelegate()
-        snappedView.delegate = snappedDelegate
+        let dragFixture = HoverFixture(displayFrame: primaryFrame, windows: [(7301, dragWindowCG, false)])
+        let dragView = dragFixture.view
+        let dragDelegate = DragDelegate()
+        dragView.delegate = dragDelegate
         let start = NSPoint(x: dragWindow.minX + 60, y: dragWindow.minY + 60)
 
-        // One real draw establishes the baseline; nothing below may extend it.
-        snappedView.display()
-        snappedView.needsDisplay = false
-        let drawsBeforeDrag = snappedView.drawCount
-        let chromeWritesBeforeDrag = snappedView.selectionChromeWriteCount
-        let highlightWritesBeforeDrag = snappedView.snapHighlightWriteCount
+        dragView.display()
+        dragView.needsDisplay = false
+        let drawsBeforeDrag = dragView.drawCount
+        let chromeWritesBeforeDrag = dragView.selectionChromeWriteCount
 
-        // 3pt from the window's right edge → that edge snaps onto it.
-        snappedFixture.mouse(.leftMouseDown, at: start)
-        snappedFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
-        let snappedRect = snappedView.currentSelectionRect
-        check(snappedRect?.maxX == dragWindow.maxX,
-              "a dragged edge 3pt from a window edge snaps exactly onto it "
-              + "(got \(String(describing: snappedRect?.maxX)), expected \(dragWindow.maxX))")
-        check(abs((snappedRect?.width ?? 0) - (dragWindow.maxX - start.x)) < 0.0001,
-              "only the dragged edge moves: the width ends exactly on the window edge")
-        let edgeHighlight = SnapHighlightGeometry(view: snappedView)
-        check(edgeHighlight.isVisible, "the snapped edge is highlighted while the drag holds it")
-        check(edgeHighlight.segmentCount == 1,
-              "the highlight draws exactly one edge (got \(edgeHighlight.segmentCount))")
-        check(abs(edgeHighlight.lineWidth - 2) < 0.001, "the highlight is 2pt")
-        if let highlightBounds = edgeHighlight.pathBounds {
-            check(abs(highlightBounds.minX - dragWindow.maxX) < 0.01
-                  && abs(highlightBounds.maxX - dragWindow.maxX) < 0.01,
-                  "the highlight sits on the snapped edge (got \(highlightBounds))")
-            check(abs(highlightBounds.minY - (start.y)) < 0.01
-                  && abs(highlightBounds.maxY - (start.y + 140)) < 0.01,
-                  "the highlight spans the snapped selection edge (got \(highlightBounds))")
-        } else {
-            check(false, "the snapped edge has a drawn highlight path")
-        }
-        check(edgeHighlight.strokeColor != nil, "the highlight has a stroke colour")
-
-        // Repeating the identical drag point is zero work (geometry unchanged).
-        let highlightWritesAfterSnap = snappedView.snapHighlightWriteCount
-        snappedFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
-        check(snappedView.snapHighlightWriteCount == highlightWritesAfterSnap,
-              "repeating the same snapped drag point writes the highlight 0 times")
-
-        // A full circle that keeps crossing the 8pt zone: layers only.
+        dragFixture.mouse(.leftMouseDown, at: start)
+        dragFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        check(dragView.currentSelectionRect?.maxX == dragWindow.maxX + 3,
+              "a dragged edge 3pt from a window edge is not snapped "
+              + "(got \(String(describing: dragView.currentSelectionRect?.maxX)), "
+              + "expected \(dragWindow.maxX + 3))")
+        check(dragView.currentSelectionRect?.maxY == start.y + 140,
+              "the dragged box ends exactly at the pointer on both axes")
         for step in 0..<120 {
-            let angle = Double(step) / 120.0 * 2.0 * Double.pi
-            snappedFixture.mouse(.leftMouseDragged, at: NSPoint(
+            let angle = CGFloat(Double(step) / 120.0 * 2.0 * Double.pi)
+            dragFixture.mouse(.leftMouseDragged, at: NSPoint(
                 x: dragWindow.maxX + 3 * cos(angle),
                 y: start.y + 140 + 2 * sin(angle)
             ))
         }
-        let drawsDuringDrag = snappedView.drawCount - drawsBeforeDrag
-        let chromeWritesDuringDrag = snappedView.selectionChromeWriteCount - chromeWritesBeforeDrag
-        let highlightWritesDuringDrag = snappedView.snapHighlightWriteCount - highlightWritesBeforeDrag
-        let repaintScheduled = snappedView.needsDisplay
+        let drawsDuringDrag = dragView.drawCount - drawsBeforeDrag
+        let chromeWritesDuringDrag = dragView.selectionChromeWriteCount - chromeWritesBeforeDrag
+        let repaintScheduled = dragView.needsDisplay
         check(drawsDuringDrag == 0,
               "120 drag samples call draw(_:) 0 times (got \(drawsDuringDrag))")
         check(!repaintScheduled, "120 drag samples schedule no snapshot repaint")
         check(chromeWritesDuringDrag > 0,
               "a drag writes the chrome layer instead of the snapshot")
-        check(highlightWritesDuringDrag > 0,
-              "a snapping drag writes the highlight path")
-
-        // Mouse-up clears the highlight and keeps the snapped geometry.
-        snappedFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
-        check(SnapHighlightGeometry(view: snappedView).isHidden,
-              "the snapped-edge highlight clears on mouse-up")
-        let committed = snappedDelegate.completed.last?.rect
-        check(committed?.maxX == dragWindow.maxX,
-              "the committed capture rect keeps the snapped edge "
+        // Settle on a known point before the mouse-up commits the rect.
+        dragFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        dragFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        let committed = dragDelegate.completed.last?.rect
+        check(committed?.maxX == dragWindow.maxX + 3,
+              "the committed capture rect is the raw pointer rect "
               + "(got \(String(describing: committed?.maxX)))")
-        check(committed.map { abs($0.width - (dragWindow.maxX - start.x)) < 0.0001 } == true,
-              "the committed width matches the snapped geometry")
+        check(CrosshairGeometry(view: dragView).horizontalHidden,
+              "the guides stay hidden once the selection is committed")
 
-        // Threshold: 7.5pt snaps, 8pt (and 10pt) does not — strictly `< 8`.
-        let thresholds: [(index: CGWindowID, distance: CGFloat, snaps: Bool)] = [
-            (0, 7.5, true), (1, 8, false), (2, 10, false),
-        ]
-        var thresholdEdges: [String] = []
-        for (index, distance, expectedSnap) in thresholds {
-            let probeFixture = dragFixture(7400 + index)
-            let probeView = probeFixture.view
-            probeFixture.mouse(.leftMouseDown, at: start)
-            probeFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + distance, y: start.y + 140))
-            let rightEdge = probeView.currentSelectionRect?.maxX
-            let expected = expectedSnap ? dragWindow.maxX : dragWindow.maxX + distance
-            check(rightEdge == expected,
-                  "\(distance)pt from the window edge: "
-                  + (expectedSnap ? "snaps onto it" : "does not snap")
-                  + " (got \(String(describing: rightEdge)), expected \(expected))")
-            check(SnapHighlightGeometry(view: probeView).isHidden == !expectedSnap,
-                  "\(distance)pt from the window edge: highlight \(expectedSnap ? "shown" : "hidden")")
-            thresholdEdges.append("\(distance)pt.maxX=\(rightEdge.map(String.init(describing:)) ?? "nil")")
-            probeFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + distance, y: start.y + 140))
-        }
+        print("REV-CROSSHAIR bands=2 lineWidth=1.5 solid=yes "
+              + "sweepSamples=240 sweepRate=\(String(format: "%.1f", measuredRate))Hz "
+              + "sweepMismatches=\(sweepMismatches) sweepDraws=\(drawsDuringSweep) "
+              + "moveWrites=\(moveWrites) "
+              + "dragDraws=\(drawsDuringDrag) dragChromeWrites=\(chromeWritesDuringDrag) "
+              + "repaintScheduled=\(repaintScheduled) committedMaxX=\(committed?.maxX ?? .nan)")
 
-        // The one switch: off keeps the raw pointer geometry, no highlight.
-        let offFixture = dragFixture(7601)
-        offFixture.view.showsDragSnap = false
-        offFixture.mouse(.leftMouseDown, at: start)
-        offFixture.mouse(.leftMouseDragged, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
-        check(offFixture.view.currentSelectionRect?.maxX == dragWindow.maxX + 3,
-              "showsDragSnap = false keeps the raw pointer geometry")
-        check(SnapHighlightGeometry(view: offFixture.view).isHidden,
-              "showsDragSnap = false shows no highlight")
-        offFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 3, y: start.y + 140))
+        reportCrosshairSweep(rows: csvRows, measuredRate: measuredRate,
+                             primaryHeight: primaryHeight, displayFrame: primaryFrame)
 
-        // Same axis only: a horizontal window edge never grabs a vertical
-        // selection edge. The top edge of the box sits 3pt above the window's
-        // bottom edge's *x* — different axis, no snap.
-        let axisFixture = dragFixture(7501)
-        let axisView = axisFixture.view
-        axisFixture.mouse(.leftMouseDown, at: start)
-        axisFixture.mouse(.leftMouseDragged, at: NSPoint(
-            x: dragWindow.maxX + 40,          // 40pt away from any vertical edge
-            y: dragWindow.maxY + 3            // 3pt above the window's top edge
-        ))
-        let axisRect = axisView.currentSelectionRect
-        check(axisRect?.maxX == dragWindow.maxX + 40,
-              "a vertical selection edge does not snap to a horizontal window edge "
-              + "(got \(String(describing: axisRect?.maxX)))")
-        check(axisRect?.maxY == dragWindow.maxY,
-              "a horizontal selection edge 3pt from a window edge snaps onto it "
-              + "(got \(String(describing: axisRect?.maxY)), expected \(dragWindow.maxY))")
-        let axisHighlight = SnapHighlightGeometry(view: axisView)
-        check(axisHighlight.segmentCount == 1 && axisHighlight.isVisible,
-              "only the snapped horizontal edge is highlighted (got \(axisHighlight.segmentCount) segments)")
-        axisFixture.mouse(.leftMouseUp, at: NSPoint(x: dragWindow.maxX + 40, y: dragWindow.maxY + 3))
-
-        // The snapped geometry is what gets cropped: run the committed rect
-        // through the production crop on a synthetic full-display snapshot and
-        // read the pixel back.
-        var cropEvidence = "crop=not-measured"
-        if let screen = NSScreen.main ?? NSScreen.screens.first,
-           let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
-           let committed {
-            let displayBounds = CGDisplayBounds(displayID)
-            let pixelWidth = Int(displayBounds.width.rounded())
-            let pixelHeight = Int(displayBounds.height.rounded())
-            let captureRect = CGRect(
-                x: committed.minX + primaryFrame.minX,
-                y: primaryHeight - primaryFrame.minY - committed.maxY,
-                width: committed.width,
-                height: committed.height
-            )
-            if let snapshot = gradientSnapshot(width: pixelWidth, height: pixelHeight),
-               let cropped = ScreenCapturer.crop(from: snapshot, captureRect: captureRect, screen: screen) {
-                var proposed = NSRect(origin: .zero, size: cropped.size)
-                if let cg = cropped.cgImage(forProposedRect: &proposed, context: nil, hints: nil),
-                   let first = firstPixel(of: cg) {
-                    let scaleX = displayBounds.width > 0 ? CGFloat(pixelWidth) / displayBounds.width : 1
-                    let expectedX = Int(((captureRect.minX - displayBounds.minX) * scaleX).rounded())
-                    let expectedRed = expectedX * 255 / max(pixelWidth - 1, 1)
-                    check(abs(first.0 - expectedRed) <= 2,
-                          "the capture crop starts on the snapped edge "
-                          + "(red \(first.0), expected \(expectedRed) for x=\(expectedX))")
-                    check(abs(cropped.size.width - committed.width) < 0.01
-                          && abs(cropped.size.height - committed.height) < 0.01,
-                          "the capture crop is exactly the snapped selection size "
-                          + "(got \(cropped.size), expected \(committed.size))")
-                    cropEvidence = "cropSize=\(cropped.size) cropFirstRed=\(first.0) "
-                        + "expectedRed=\(expectedRed) cropX=\(expectedX)" 
-                } else {
-                    check(false, "the capture crop can be read back as pixels")
-                }
-            } else {
-                check(false, "the synthetic desktop snapshot can be cropped")
-            }
-        }
-
-        print("SNAP2-DRAG windowRight=\(dragWindow.maxX) startX=\(start.x) "
-              + "snappedMaxX=\(snappedRect?.maxX ?? .nan) "
-              + "committedMaxX=\(committed?.maxX ?? .nan) "
-              + "\(thresholdEdges.joined(separator: " ")) "
-              + "draws=\(drawsDuringDrag) repaintScheduled=\(repaintScheduled) "
-              + "chromeWrites=\(chromeWritesDuringDrag) highlightWrites=\(highlightWritesDuringDrag) "
-              + "highlightSegments=\(edgeHighlight.segmentCount) "
-              + "highlightWidth=\(edgeHighlight.lineWidth) "
-              + "axisMaxX=\(axisRect?.maxX ?? .nan) axisMaxY=\(axisRect?.maxY ?? .nan) "
-              + cropEvidence)
-
-        reportSnapSweep(rows: csvRows, measuredRate: measuredRate,
-                        primaryHeight: primaryHeight, displayFrame: primaryFrame)
 
         // --- CL: the size label never leaves the screen's visibleFrame ------
         // The capsule is chrome and stays outside the selection whenever it

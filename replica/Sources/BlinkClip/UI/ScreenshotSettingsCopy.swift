@@ -27,10 +27,6 @@ enum ScreenshotSettingsCopy {
         case appleTranslationTitle = "screenshot.translation.apple.title"
         case appleTranslationSubtitle = "screenshot.translation.apple.subtitle"
         case appleTranslationUnavailable = "screenshot.translation.apple.unavailable"
-        // 框选吸附辅助线：四边描线始终显示，「显示中线」只控制可选的十字中线。
-        case guidesSectionTitle = "screenshot.guides.section-title"
-        case centerLinesTitle = "screenshot.guides.center-lines.title"
-        case centerLinesSubtitle = "screenshot.guides.center-lines.subtitle"
         // B 档：两个截图热键可改（卡片标题、两行标题、注册失败、恢复默认、重复提示）
         case applicationShortcutsTitle = "shortcuts.application.title"
         case groupShortcutsTitle = "shortcuts.groups.title"
@@ -137,11 +133,6 @@ enum ScreenshotSettingsCopy {
         .appleTranslationUnavailable: Entry("Requires macOS 15 or later.",
                                             "需要 macOS 15 或更新版本。",
                                             "需要 macOS 15 或更新版本。"),
-        .guidesSectionTitle: Entry("Aim guides", "框选辅助", "框選輔助"),
-        .centerLinesTitle: Entry("Show centre lines", "显示中线", "顯示中線"),
-        .centerLinesSubtitle: Entry("Adds horizontal and vertical centre lines to the window outline while aiming.",
-                                    "瞄准窗口时，在窗口四边描线之外叠加水平与垂直中线。",
-                                    "瞄準視窗時，在視窗四邊描線之外疊加水平與垂直中線。"),
         .applicationShortcutsTitle: Entry("Open app", "应用唤起", "啟動應用程式"),
         .groupShortcutsTitle: Entry("Switch groups", "分组切换", "分組切換"),
         .pasteShortcutsTitle: Entry("Paste actions", "粘贴操作", "貼上操作"),
