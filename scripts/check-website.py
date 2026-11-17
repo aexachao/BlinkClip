@@ -131,9 +131,23 @@ def main():
             if path.parent == ASSETS and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".ico"}:
                 assert path.name in ALLOWED_IMAGES, f"Unreviewed image in assets: {path.name}"
 
-    css = (SITE / "style.css").read_text().lower()
-    assert "#ffffff" not in css and "#6366f1" not in css, "Forbidden pure white or indigo design token"
-    assert "clip-" in css and "texture-seoul" in css, "Citycraft clip-path and texture utilities are missing"
+    css = (SITE / "style.css").read_text()
+    lower = css.lower()
+    assert "#ffffff" not in lower and "#6366f1" not in lower, "Forbidden pure white or indigo design token"
+    # The landing page keeps one calm, upright product frame: no tilted colour blocks,
+    # no decorative section clip-paths and no warm wash textures.
+    assert "clip-path:" not in lower, "Decorative clip-path section edges must not return"
+    assert "texture-seoul" not in lower, "Decorative wash textures must not return"
+    assert not re.search(r"rotate\(-", lower), "Product screenshots must stay upright (no negative rotation)"
+    frame = re.search(r"\.shot,\s*\n\.hero-shot\s*\{([^}]*)\}", css)
+    assert frame, "Reviewed screenshots must share one frame rule"
+    for token in ("border: 1px solid", "border-radius: 14px", "box-shadow: 0 24px 60px rgba(25, 25, 23, 0.1)"):
+        assert token in frame.group(1), f"Screenshot frame is missing {token!r}"
+    assert re.search(r"\.hero-shot\s*\{\s*width:\s*min\(1180px, 100%\)", css), \
+        "The hero product shot must stay centred at min(1180px, 100%)"
+
+    html = (SITE / "index.html").read_text()
+    assert not re.search(r"data-count=|class=\"stat-row", html), "The filled-out statistic rows must not return"
 
     print(json.dumps({
         "passed": True,

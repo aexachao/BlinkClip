@@ -271,7 +271,8 @@ check('language control reports current language and closes after selection', ()
 check('FAQ accordion opens, closes and stays exclusive', () => {
   const app = runtime(['zh-CN']); const doc = app.document;
   const items = doc.querySelectorAll('.faq-item');
-  assert.equal(items.length, 6);
+  assert.equal(items.length, 4);
+  assert.equal(doc.querySelectorAll('.faq-trigger').length, 4);
   const first = items[0].querySelector('.faq-trigger');
   const second = items[1].querySelector('.faq-trigger');
   first.emit('click');
@@ -292,11 +293,19 @@ check('switching language preserves FAQ state and copy updates in place', () => 
   assert.equal(doc.querySelector('.faq-question').textContent, messages.en['faq.q1']);
   assert.equal(doc.querySelector('.faq-answer').textContent, messages.en['faq.a1']);
 });
-check('counts and measure words are expressed naturally in each language', () => {
-  assert.equal(messages.en['stats.installer.title'], 'universal installer');
-  assert.equal(messages.en['stats.types.title'], 'item types');
-  assert.ok(messages['zh-Hans']['stats.installer.title'].includes('个'));
-  assert.ok(messages['zh-Hans']['stats.types.title'].includes('类'));
+// The statistic strip is gone; the agreed copy budget replaces it as a regression guard:
+// a one-sentence hero lede, a four-part meta line, and a compact Chinese catalog.
+const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/g;
+const countCJK = (text) => (text.match(CJK) || []).length;
+check('hero copy stays inside the agreed length and wording budget', () => {
+  const zhLede = messages['zh-Hans']['hero.lede'].replace(/\s+/g, '');
+  const enLede = messages.en['hero.lede'];
+  assert.ok(countCJK(zhLede) <= 40, `Chinese hero lede has ${countCJK(zhLede)} CJK characters (limit 40)`);
+  assert.ok(enLede.length <= 90, `English hero lede has ${enLede.length} characters (limit 90)`);
+  assert.ok(['macOS 14+', 'Universal', '本地优先', '无需账号'].every((part) => messages['zh-Hans']['hero.meta'].includes(part)));
+  assert.ok(['macOS 14+', 'Universal', 'Local first', 'No account'].every((part) => messages.en['hero.meta'].includes(part)));
+  const zhTotal = countCJK(Object.values(messages['zh-Hans']).join(''));
+  assert.ok(zhTotal <= 1400, `Chinese catalog holds ${zhTotal} CJK characters (limit 1400)`);
   const app = runtime(['en-US']);
   assert.equal(app.api.t('language.trigger', { language: 'English' }), 'Change language: English');
   const zh = runtime(['zh-CN']);
