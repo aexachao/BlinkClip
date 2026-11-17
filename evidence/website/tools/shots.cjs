@@ -69,7 +69,24 @@ async function main() {
     await loaded;
     await sleep(1600);
     await send('Runtime.evaluate', { expression: 'document.fonts && document.fonts.ready', awaitPromise: true }, sessionId);
-    await sleep(400);
+    await sleep(300);
+    await send('Runtime.evaluate', {
+      expression: `(async () => {
+        const root = document.documentElement;
+        const previous = root.style.scrollBehavior;
+        root.style.scrollBehavior = 'auto';
+        const step = Math.round(window.innerHeight * 0.75);
+        for (let y = 0; y < root.scrollHeight; y += step) {
+          window.scrollTo(0, y);
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+        window.scrollTo(0, root.scrollHeight);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        window.scrollTo(0, 0);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        root.style.scrollBehavior = previous;
+      })()`, awaitPromise: true
+    }, sessionId);
 
     const metrics = await send('Runtime.evaluate', {
       expression: `(() => {

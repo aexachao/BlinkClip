@@ -50,6 +50,9 @@ async function main() {
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
   await send('Page.enable', {}, sessionId);
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `window.__errors = []; window.addEventListener('error', (event) => window.__errors.push(String(event.message))); window.addEventListener('unhandledrejection', (event) => window.__errors.push(String(event.reason)));`
+  }, sessionId);
   const loaded = once('Page.loadEventFired');
   await send('Page.navigate', { url: baseUrl }, sessionId);
   await loaded;
@@ -96,10 +99,19 @@ async function main() {
   })()`);
 
   const zh = await snapshot();
+  const errors = await evaluate('window.__errors');
+  const motion = await evaluate(`(() => ({
+    gsap: Boolean(window.gsap),
+    scrollTrigger: Boolean(window.ScrollTrigger),
+    heroInlineStyle: document.querySelector('.hero-copy')?.children[0]?.getAttribute('style'),
+    shotInlineStyle: document.querySelector('.hero-shot')?.getAttribute('style'),
+    reduced: matchMedia('(prefers-reduced-motion: reduce)').matches
+  }))()`);
   await evaluate(`document.querySelector('[data-language="en"]').click()`);
   await sleep(500);
   await scrollThrough();
   const en = await snapshot();
+  const stats = await evaluate(`[...document.querySelectorAll('.stat-value')].map((el) => el.textContent)`);
   const enViewport = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   fs.writeFileSync(path.join(outDir, 'en-1440x900.png'), Buffer.from(enViewport.data, 'base64'));
   const layout = await send('Page.getLayoutMetrics', {}, sessionId);
@@ -154,7 +166,19 @@ async function main() {
   const faqShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   fs.writeFileSync(path.join(outDir, 'faq-open-390x844.png'), Buffer.from(faqShot.data, 'base64'));
 
-  const report = { zh, en, mobileEn, system, faq, faqHeight };
+  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }, sessionId);
+  const reducedLoaded = once('Page.loadEventFired');
+  await send('Page.reload', {}, sessionId);
+  await reducedLoaded;
+  await sleep(900);
+  const reduced = await evaluate(`({
+    media: matchMedia('(prefers-reduced-motion: reduce)').matches,
+    shotInlineStyle: document.querySelector('.hero-shot').getAttribute('style'),
+    gsap: Boolean(window.gsap)
+  })`);
+  await send('Emulation.setEmulatedMedia', { features: [] }, sessionId);
+
+  const report = { zh, en, errors, motion, stats, reduced, mobileEn, system, faq, faqHeight };
   fs.writeFileSync(path.join(outDir, 'verify.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   await send('Target.closeTarget', { targetId });

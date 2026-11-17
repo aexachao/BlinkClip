@@ -6,45 +6,164 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'website/index.html'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'website/i18n.js'), 'utf8');
-const demo = fs.readFileSync(path.join(root, 'website/site.js'), 'utf8');
+const site = fs.readFileSync(path.join(root, 'website/site.js'), 'utf8');
 const storageKey = 'blinkclip.website.language';
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 let checks = 0;
 function check(name, operation) { operation(); checks++; }
 
 class Element {
-  constructor(tag, attrs) {
-    this.tag = tag; this.attrs = attrs; this.textContent = ''; this.value = ''; this.hidden = false;
-    this.dataset = Object.fromEntries(Object.entries(attrs).filter(([key]) => key.startsWith('data-'))
-      .map(([key, value]) => [key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase()), value]));
+  constructor(tag, attrs = {}) {
+    this.tag = tag;
+    this.attrs = attrs;
+    this.children = [];
+    this.parent = null;
+    this.ownerDocument = null;
     this.events = new Map();
+    this.hidden = false;
+    this.open = false;
+    this.text = '';
+    this.classList = {
+      contains: (name) => (this.attrs.class || '').split(/\s+/).includes(name),
+      add: (name) => { if (!this.classList.contains(name)) this.attrs.class = `${this.attrs.class || ''} ${name}`.trim(); },
+      remove: (name) => { this.attrs.class = (this.attrs.class || '').split(/\s+/).filter((item) => item && item !== name).join(' '); },
+      toggle: (name, force) => {
+        const next = force === undefined ? !this.classList.contains(name) : force;
+        if (next) this.classList.add(name); else this.classList.remove(name);
+        return next;
+      }
+    };
+  }
+  get dataset() {
+    if (!this.datasetCache) {
+      const attrs = this.attrs;
+      const attributeName = (key) => `data-${String(key).replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
+      this.datasetCache = new Proxy({}, {
+        get: (_, key) => attrs[attributeName(key)],
+        set: (_, key, value) => { attrs[attributeName(key)] = String(value); return true; },
+        has: (_, key) => Object.hasOwn(attrs, attributeName(key)),
+        ownKeys: () => Object.keys(attrs).filter((name) => name.startsWith('data-'))
+          .map((name) => name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())),
+        getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true })
+      });
+    }
+    return this.datasetCache;
+  }
+  get textContent() {
+    return this.text + this.children.map((child) => child.textContent).join('');
+  }
+  set textContent(value) {
+    this.text = String(value);
+    this.children = [];
   }
   getAttribute(name) { return this.attrs[name] ?? null; }
-  setAttribute(name, value) { this.attrs[name] = value; }
-  addEventListener(name, callback) { this.events.set(name, callback); }
-  emit(name) { this.events.get(name)?.({ target: this }); }
-  focus() { this.ownerDocument.activeElement = this; }
-}
-function runtime(languages, saved = null, blocked = false) {
-  const elements = [...html.matchAll(/<([a-z][\w-]*)\b([^>]*)>/gi)].map(([, tag, raw]) => {
-    const attrs = Object.fromEntries([...raw.matchAll(/([\w:-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
-    return new Element(tag.toLowerCase(), attrs);
-  });
-  function matches(element, selector) {
-    if (selector.startsWith('#')) return element.attrs.id === selector.slice(1);
-    if (selector.startsWith('.')) return (element.attrs.class || '').split(/\s+/).includes(selector.slice(1));
-    const attribute = selector.match(/^(?:([\w-]+))?\[([\w-]+)(?:="([^"]*)")?\]$/);
-    return attribute && (!attribute[1] || attribute[1] === element.tag) &&
-      Object.hasOwn(element.attrs, attribute[2]) && (attribute[3] === undefined || element.attrs[attribute[2]] === attribute[3]);
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  removeAttribute(name) { delete this.attrs[name]; }
+  append(child) { child.parent = this; child.ownerDocument = this.ownerDocument; this.children.push(child); }
+  contains(node) {
+    if (node === this) return true;
+    return this.children.some((child) => child.contains(node));
   }
+  querySelectorAll(selector) {
+    const groups = selector.trim().split(/\s+/);
+    const last = groups[groups.length - 1];
+    const found = [];
+    const visit = (element) => {
+      for (const child of element.children) {
+        if (matchesSimple(child, last) && matchesAncestors(child, groups.slice(0, -1))) found.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return found;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  addEventListener(name, callback) { this.events.set(name, callback); }
+  emit(name, event = {}) { this.events.get(name)?.({ target: this, ...event }); }
+  focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
+}
+
+function matchesSimple(element, selector) {
+  const parsed = selector.match(/^([a-z][\w-]*)?((?:[#.][\w-]+|\[[\w:-]+(?:=(?:"[^"]*"|'[^']*'|[^\]]*))?\])*)$/i);
+  if (!parsed) return false;
+  if (parsed[1] && element.tag !== parsed[1].toLowerCase()) return false;
+  for (const token of parsed[2].matchAll(/([#.])([\w-]+)|\[([\w:-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]*)))?\]/g)) {
+    if (token[1] === '#') {
+      if (element.attrs.id !== token[2]) return false;
+    } else if (token[1] === '.') {
+      if (!element.classList.contains(token[2])) return false;
+    } else {
+      const name = token[3];
+      const expected = token[4] ?? token[5] ?? token[6];
+      if (!Object.hasOwn(element.attrs, name)) return false;
+      if (expected !== undefined && element.attrs[name] !== expected) return false;
+    }
+  }
+  return true;
+}
+
+function matchesAncestors(element, groups) {
+  let current = element.parent;
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    while (current && !matchesSimple(current, groups[index])) current = current.parent;
+    if (!current) return false;
+    current = current.parent;
+  }
+  return true;
+}
+
+function parseAttributes(raw) {
+  const attrs = {};
+  for (const match of raw.matchAll(/([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>`=]+)))?/g)) {
+    attrs[match[1]] = match[2] ?? match[3] ?? match[4] ?? '';
+  }
+  return attrs;
+}
+
+function parseHTML(source) {
+  const wrapper = new Element('#document');
+  const stack = [wrapper];
+  const token = /<!--[\s\S]*?-->|<!doctype[^>]*>|<(\/?)([a-z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/gi;
+  let cursor = 0;
+  for (const match of source.matchAll(token)) {
+    const text = source.slice(cursor, match.index);
+    if (text.trim()) stack[stack.length - 1].text += text;
+    cursor = match.index + match[0].length;
+    if (match[0].startsWith('<!--') || /^<!doctype/i.test(match[0])) continue;
+    const [, closing, tag, rawAttrs, selfClosing] = match;
+    const name = tag.toLowerCase();
+    if (closing) {
+      for (let index = stack.length - 1; index > 0; index -= 1) {
+        if (stack[index].tag === name) { stack.length = index; break; }
+      }
+      continue;
+    }
+    const element = new Element(name, parseAttributes(rawAttrs));
+    stack[stack.length - 1].append(element);
+    if (!selfClosing && !VOID.has(name)) stack.push(element);
+  }
+  return wrapper;
+}
+
+function runtime(languages, saved = null, blocked = false) {
+  const tree = parseHTML(html);
+  const documentElement = tree.querySelector('html');
   const events = new Map();
   const document = {
-    documentElement: { lang: 'zh-CN' },
-    querySelectorAll: selector => elements.filter(el => matches(el, selector)),
-    querySelector: selector => elements.find(el => matches(el, selector)),
+    documentElement,
+    title: '',
+    activeElement: null,
+    querySelectorAll: (selector) => documentElement.querySelectorAll(selector),
+    querySelector: (selector) => documentElement.querySelector(selector),
     addEventListener: (name, callback) => events.set(name, callback),
-    dispatchEvent: event => events.get(event.type)?.(event)
+    dispatchEvent: (event) => events.get(event.type)?.(event)
   };
-  for (const element of elements) element.ownerDocument = document;
+  documentElement.ownerDocument = document;
+  const assignDocument = (element) => {
+    element.ownerDocument = document;
+    for (const child of element.children) assignDocument(child);
+  };
+  assignDocument(documentElement);
   const storage = new Map(saved === null ? [] : [[storageKey, saved]]);
   const storageAPI = {
     getItem(key) { if (blocked) throw new Error('storage blocked'); return storage.get(key) ?? null; },
@@ -54,31 +173,39 @@ function runtime(languages, saved = null, blocked = false) {
   const windowEvents = new Map();
   const window = { addEventListener: (name, callback) => windowEvents.set(name, callback) };
   const navigator = { languages, language: languages[0] };
-  const context = vm.createContext({ document, window, navigator, localStorage: storageAPI,
-    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } } });
+  const context = vm.createContext({
+    document, window, navigator, localStorage: storageAPI,
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } }
+  });
   vm.runInContext(i18n, context, { filename: 'website/i18n.js' });
-  vm.runInContext(demo, context, { filename: 'website/site.js' });
-  return { document, storage, navigator, api: window.BlinkClipI18n,
+  vm.runInContext(site, context, { filename: 'website/site.js' });
+  return {
+    document,
+    storage,
+    navigator,
+    api: window.BlinkClipI18n,
     choose(value) { document.querySelector(`[data-language="${value}"]`).emit('click'); },
-    systemChanges(languages) { navigator.languages = languages; navigator.language = languages[0]; windowEvents.get('languagechange')(); } };
+    systemChanges(next) { navigator.languages = next; navigator.language = next[0]; windowEvents.get('languagechange')(); }
+  };
 }
 
-const messages = JSON.parse(i18n.match(/const messages = (\{[\s\S]*?\n\});/)[1]);
+const messages = JSON.parse(i18n.match(/const messages = (\{[\s\S]*?\n  \});/)[1]);
+
 check('catalogs have identical keys and placeholders', () => {
-  assert.deepEqual(Object.keys(messages.en).sort(), Object.keys(messages['zh-CN']).sort());
+  assert.deepEqual(Object.keys(messages.en).sort(), Object.keys(messages['zh-Hans']).sort());
   for (const key of Object.keys(messages.en)) {
-    assert.ok(messages.en[key] && messages['zh-CN'][key], key);
-    assert.deepEqual(messages.en[key].match(/\{\w+\}/g), messages['zh-CN'][key].match(/\{\w+\}/g), key);
+    assert.ok(messages.en[key] && messages['zh-Hans'][key], key);
+    assert.deepEqual(messages.en[key].match(/\{\w+\}/g), messages['zh-Hans'][key].match(/\{\w+\}/g), key);
   }
 });
 check('all HTML translation bindings exist in both catalogs', () => {
-  for (const [, key] of html.matchAll(/data-i18n(?:-(?:alt|aria-label|placeholder|content|search))?="([^"]+)"/g)) {
-    assert.ok(Object.hasOwn(messages.en, key) && Object.hasOwn(messages['zh-CN'], key), key);
+  for (const [, key] of html.matchAll(/data-i18n(?:-(?:alt|aria-label|placeholder|content|title))?="([^"]+)"/g)) {
+    assert.ok(Object.hasOwn(messages.en, key) && Object.hasOwn(messages['zh-Hans'], key), key);
   }
 });
 for (const [languages, expected] of [
-  [['zh-CN', 'en'], 'zh-CN'], [['zh-TW'], 'zh-CN'], [['en-US'], 'en'],
-  [['ja-JP', 'fr-FR'], 'en'], [['fr-FR', 'zh-CN'], 'zh-CN'], [[], 'en']
+  [['zh-CN', 'en'], 'zh-Hans'], [['zh-TW'], 'zh-Hans'], [['en-US'], 'en'],
+  [['ja-JP', 'fr-FR'], 'en'], [['fr-FR', 'zh-CN'], 'zh-Hans'], [[], 'en']
 ]) check(`system negotiation ${languages.join(',') || 'missing'}`, () => {
   const app = runtime(languages);
   assert.equal(app.api.language, expected);
@@ -91,12 +218,17 @@ check('manual preference wins over system and persists across visits', () => {
   assert.equal(app.storage.get(storageKey), 'en');
   assert.equal(runtime(['zh-CN'], app.storage.get(storageKey)).api.language, 'en');
 });
+check('legacy zh-CN preference is migrated to zh-Hans', () => {
+  const app = runtime(['en-US'], 'zh-CN');
+  assert.equal(app.api.language, 'zh-Hans');
+  assert.equal(app.document.documentElement.lang, 'zh-Hans');
+});
 check('returning to system removes manual override', () => {
   const app = runtime(['zh-CN'], 'en'); app.choose('system');
-  assert.equal(app.api.language, 'zh-CN'); assert.equal(app.storage.has(storageKey), false);
+  assert.equal(app.api.language, 'zh-Hans'); assert.equal(app.storage.has(storageKey), false);
 });
 check('invalid saved preference falls back to system', () => {
-  assert.equal(runtime(['zh-CN'], 'not-a-supported-language').api.language, 'zh-CN');
+  assert.equal(runtime(['zh-CN'], 'not-a-supported-language').api.language, 'zh-Hans');
 });
 check('storage denial preserves usable language switching', () => {
   const app = runtime(['zh-CN'], null, true); app.choose('en');
@@ -106,39 +238,24 @@ check('system language changes are observed in automatic mode', () => {
   const app = runtime(['zh-CN']); app.systemChanges(['en-GB']); assert.equal(app.api.language, 'en');
 });
 check('system changes do not override manual choice', () => {
-  const app = runtime(['en-US'], 'zh-CN'); app.systemChanges(['en-GB']); assert.equal(app.api.language, 'zh-CN');
+  const app = runtime(['en-US'], 'zh-Hans'); app.systemChanges(['en-GB']); assert.equal(app.api.language, 'zh-Hans');
 });
-check('metadata, accessible labels, placeholder and image alt are localized', () => {
+check('metadata, document title, accessible labels and image alt are localized', () => {
   const app = runtime(['en-US']);
   assert.equal(app.document.querySelector('meta[property="og:locale"]').content, 'en_US');
-  assert.equal(app.document.querySelector('#demo-search').getAttribute('placeholder'), 'Search clipboard history…');
-  assert.equal(app.document.querySelector('#demo-search').getAttribute('aria-label'), 'Search sample items');
-  assert.ok(app.document.querySelector('.actual-panel').getAttribute('alt').includes('in Chinese'));
+  assert.ok(app.document.querySelector('meta[name="description"]').getAttribute('content').includes('local-first'));
+  assert.ok(app.document.querySelector('title').textContent.startsWith('BlinkClip'));
+  assert.ok(app.document.title.startsWith('BlinkClip'));
+  assert.ok(app.document.querySelector('.hero-shot img').getAttribute('alt').includes('clipboard panel'));
+  assert.equal(app.document.querySelector('#language-trigger').getAttribute('title'), 'Change language: English');
+  assert.equal(app.document.querySelector('#language-trigger').getAttribute('aria-label'), 'Change language: English');
 });
-check('English count uses singular and plural forms', () => {
-  const app = runtime(['en-US']); const doc = app.document;
-  assert.equal(doc.querySelector('.demo-result').textContent, '3 sample items');
-  doc.querySelector('#demo-search').value = 'blinkclip'; doc.querySelector('#demo-search').emit('input');
-  assert.equal(doc.querySelector('.demo-result').textContent, '2 sample items');
-  doc.querySelector('[data-filter="link"]').emit('click');
-  assert.equal(doc.querySelector('.demo-result').textContent, '1 sample item');
-});
-check('switching language preserves query, filter, and visible results', () => {
-  const app = runtime(['en-US']); const doc = app.document;
-  doc.querySelector('#demo-search').value = 'blinkclip'; doc.querySelector('#demo-search').emit('input');
-  doc.querySelector('[data-filter="link"]').emit('click'); app.choose('zh-CN');
-  assert.equal(doc.querySelector('#demo-search').value, 'blinkclip');
-  assert.equal(doc.querySelector('[data-filter="link"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(doc.querySelector('.demo-result').textContent, '1 条演示记录');
-});
-check('English keyword search and empty/reset states remain functional', () => {
-  const app = runtime(['en-US']); const doc = app.document; const input = doc.querySelector('#demo-search');
-  input.value = 'inspiration'; input.emit('input');
-  assert.equal(doc.querySelector('.demo-result').textContent, '1 sample item');
-  input.value = 'no matching fixture'; input.emit('input'); assert.equal(doc.querySelector('.demo-empty').hidden, false);
-  doc.querySelector('.demo-reset').emit('click');
-  assert.equal(doc.querySelector('.demo-result').textContent, '3 sample items');
-  assert.equal(doc.querySelector('.demo-empty').hidden, true); assert.equal(doc.activeElement, input);
+check('Chinese copy and document language are applied by default', () => {
+  const app = runtime(['zh-CN']);
+  assert.equal(app.document.documentElement.lang, 'zh-Hans');
+  assert.equal(app.document.querySelector('#hero-title').textContent.replace(/\s+/g, ''), '复制过的，都找得回来。');
+  assert.equal(app.document.title, messages['zh-Hans']['meta.title']);
+  assert.equal(app.document.querySelector('#language-trigger').getAttribute('aria-label'), '切换语言：简体中文');
 });
 check('language control reports current language and closes after selection', () => {
   const app = runtime(['zh-CN']); const doc = app.document;
@@ -150,5 +267,45 @@ check('language control reports current language and closes after selection', ()
   assert.equal(doc.querySelector('#language-trigger').getAttribute('aria-label'), 'Change language: English');
   assert.equal(doc.querySelector('.language-switch').open, false);
   assert.equal(doc.activeElement, doc.querySelector('#language-trigger'));
+});
+check('FAQ accordion opens, closes and stays exclusive', () => {
+  const app = runtime(['zh-CN']); const doc = app.document;
+  const items = doc.querySelectorAll('.faq-item');
+  assert.equal(items.length, 6);
+  const first = items[0].querySelector('.faq-trigger');
+  const second = items[1].querySelector('.faq-trigger');
+  first.emit('click');
+  assert.equal(items[0].dataset.open, 'true');
+  assert.equal(first.getAttribute('aria-expanded'), 'true');
+  second.emit('click');
+  assert.equal(items[0].dataset.open, 'false');
+  assert.equal(items[1].dataset.open, 'true');
+  assert.equal(first.getAttribute('aria-expanded'), 'false');
+  second.emit('click');
+  assert.equal(items[1].dataset.open, 'false');
+});
+check('switching language preserves FAQ state and copy updates in place', () => {
+  const app = runtime(['zh-CN']); const doc = app.document;
+  doc.querySelector('.faq-trigger').emit('click');
+  app.choose('en');
+  assert.equal(doc.querySelector('.faq-item').dataset.open, 'true');
+  assert.equal(doc.querySelector('.faq-question').textContent, messages.en['faq.q1']);
+  assert.equal(doc.querySelector('.faq-answer').textContent, messages.en['faq.a1']);
+});
+check('counts and measure words are expressed naturally in each language', () => {
+  assert.equal(messages.en['stats.installer.title'], 'universal installer');
+  assert.equal(messages.en['stats.types.title'], 'item types');
+  assert.ok(messages['zh-Hans']['stats.installer.title'].includes('个'));
+  assert.ok(messages['zh-Hans']['stats.types.title'].includes('类'));
+  const app = runtime(['en-US']);
+  assert.equal(app.api.t('language.trigger', { language: 'English' }), 'Change language: English');
+  const zh = runtime(['zh-CN']);
+  assert.equal(zh.api.t('language.trigger', { language: '简体中文' }), '切换语言：简体中文');
+});
+check('hero and CTA download links target the latest release without a pinned version', () => {
+  const links = [...html.matchAll(/class="button" href="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(links.length, 2);
+  for (const link of links) assert.equal(link, 'https://github.com/aexachao/BlinkClip/releases/latest');
+  assert.ok(!/BlinkClip-\d+\.\d+\.\d+-macos-universal\.dmg/.test(html));
 });
 console.log(JSON.stringify({ passed: true, checks, translation_keys: Object.keys(messages.en).length }));
