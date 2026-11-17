@@ -27,6 +27,9 @@ enum ScreenshotSettingsCopy {
         case appleTranslationTitle = "screenshot.translation.apple.title"
         case appleTranslationSubtitle = "screenshot.translation.apple.subtitle"
         case appleTranslationUnavailable = "screenshot.translation.apple.unavailable"
+        // 「框选覆盖层」组：十字辅助线开关（默认开，关闭只影响两条贯穿辅线）。
+        case overlaySectionTitle = "screenshot.overlay.section-title"
+        case crosshairGuidesTitle = "screenshot.overlay.crosshair-guides.title"
         // B 档：两个截图热键可改（卡片标题、两行标题、注册失败、恢复默认、重复提示）
         case applicationShortcutsTitle = "shortcuts.application.title"
         case groupShortcutsTitle = "shortcuts.groups.title"
@@ -133,6 +136,8 @@ enum ScreenshotSettingsCopy {
         .appleTranslationUnavailable: Entry("Requires macOS 15 or later.",
                                             "需要 macOS 15 或更新版本。",
                                             "需要 macOS 15 或更新版本。"),
+        .overlaySectionTitle: Entry("Capture overlay", "框选覆盖层", "框選覆蓋層"),
+        .crosshairGuidesTitle: Entry("Show crosshair guides", "显示十字辅助线", "顯示十字輔助線"),
         .applicationShortcutsTitle: Entry("Open app", "应用唤起", "啟動應用程式"),
         .groupShortcutsTitle: Entry("Switch groups", "分组切换", "分組切換"),
         .pasteShortcutsTitle: Entry("Paste actions", "粘贴操作", "貼上操作"),

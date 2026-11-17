@@ -6,7 +6,7 @@ import BlinkClipCore
 //
 // Three providers are covered here, and all three are trilingual:
 //  * `SettingsCopy` — the settings chrome's own trilingual table.
-//  * `ScreenshotSettingsCopy` — its own 32-key table, also three languages, and
+//  * `ScreenshotSettingsCopy` — its own 34-key table, also three languages, and
 //    it takes the current language from the same `SettingsLanguage` resolver, so
 //    the screenshot pane and the rest of the settings page can never disagree.
 //  * `ReplicaToastCopy` — the toast lines (copied / paused / resumed / screenshot
@@ -75,7 +75,7 @@ struct SettingsLocalizationHarness {
             record("settings.\(key)", !value.isEmpty && value != key, value)
         }
 
-        // --- screenshot provider: 32 keys, one table per language ------------
+        // --- screenshot provider: 34 keys, one table per language ------------
         let expectedTable: String
         let expectedTitle: String
         let expectedRegionLabel: String

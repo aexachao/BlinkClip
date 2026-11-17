@@ -90,6 +90,32 @@ public enum BlinkClipScreenshotSettings {
         }
     }
 
+    // MARK: - 框选覆盖层：十字辅助线
+
+    /// 设置 →「截图」→「框选覆盖层」→「显示十字辅助线」的键。
+    /// 与 `Sources/BlinkClip/UI/` 侧读写的字符串必须一致（同一存储，两个 module）。
+    public static let showCrosshairGuidesKey = "blinkclip.screenshot.showCrosshairGuides"
+
+    /// **默认开**：没有存过值（含从旧版本升级上来）时，框选期间照旧画两条贯穿全屏的
+    /// 横竖辅助线。关掉只影响这两条线——选框本体、尺寸标签、暗化、窗口 hover 高亮、
+    /// 放大镜和系统十字光标都不变（唯一的读点在 `SelectionView.updateCrosshairLayers`）。
+    ///
+    /// 不发通知：覆盖层是短命的，每次拉起时读一次就够了；设置窗口开着的时候不可能有
+    /// 正在框选的遮罩。因此这里也不需要「值没变就不写」的判定。
+    public static var showCrosshairGuides: Bool {
+        get {
+            // 缺键必须当成「开」：`bool(forKey:)` 对缺键返回 false，会把默认值读反。
+            guard let stored = UserDefaults.standard.object(forKey: showCrosshairGuidesKey) else { return true }
+            // `defaults write … -string NO` 这类外部写入不是布尔值：按「没存过」处理，
+            // 不把随手写坏的字符串解释成关。
+            guard let number = stored as? NSNumber else { return true }
+            return number.boolValue
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: showCrosshairGuidesKey)
+        }
+    }
+
     // MARK: - 两个截图热键（B 档：可在设置里改）
 
     /// 键名与 `Sources/BlinkClip/UI/` 侧读写的字符串必须一致（同一存储，两个 module）。

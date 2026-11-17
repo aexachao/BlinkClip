@@ -566,6 +566,19 @@ class SelectionView: NSView {
     private let crosshairHorizontal = CrosshairBandView(axis: .horizontal)
     private let crosshairVertical = CrosshairBandView(axis: .vertical)
 
+    /// 设置 →「截图」→「框选覆盖层」→「显示十字辅助线」。
+    ///
+    /// 默认值是偏好里的同一个键（缺键 = 开，`BlinkClipScreenshotSettings` 一处定义），
+    /// 让「升级上来的用户」和「用过设置页的用户」看到同一条线。关闭只让这两条贯穿辅线
+    /// 不出现：选框本体、尺寸标签、暗化、hover 高亮、放大镜、`selectionLocked` 等其它
+    /// 可见性条件与系统十字光标都不动（验收 harness 逐项断言）。
+    var crosshairGuidesEnabled = BlinkClipScreenshotSettings.showCrosshairGuides {
+        didSet {
+            guard crosshairGuidesEnabled != oldValue else { return }
+            updateCrosshairLayers()
+        }
+    }
+
     /// The hover dimming/border/label, in its own layer so a window crossing
     /// never repaints the frozen snapshot (see `HoverHighlightView`).
     private lazy var hoverHighlight = HoverHighlightView(
@@ -738,6 +751,7 @@ class SelectionView: NSView {
         defer { OverlayPerfSignpost.end("crosshair-guide", perfGuide) }
         let showsGuides = state == .idle || state == .drawing
         guard showsGuides,
+              crosshairGuidesEnabled,
               selectionInteractionEnabled,
               !scrollCaptureActive,
               !selectionLocked,

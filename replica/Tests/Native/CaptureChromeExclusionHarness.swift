@@ -706,6 +706,68 @@ private func renderOverlayLayers(_ view: SelectionView, background: CGFloat, to 
               && CrosshairGeometry(view: guideView).verticalHidden,
               "an established selection hides the guides")
 
+        // --- 设置开关：关闭「显示十字辅助线」只摘掉两条辅线 --------------
+        // 偏好缺键 = 开（升级上来的用户与之前完全一致）；关掉后同一个指针位置也不再
+        // 出现辅线，选框本体 / 尺寸标签 / hover 高亮 / 两个 band 视图一律照旧。
+        let toggleFixture = HoverFixture(
+            displayFrame: primaryFrame,
+            windows: orderedWindows.map { ($0.0, $0.1, false) }
+        )
+        let toggleView = toggleFixture.view
+        let storedGuidePreference = UserDefaults.standard.object(forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+        defer {
+            if let storedGuidePreference {
+                UserDefaults.standard.set(storedGuidePreference, forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+        check(BlinkClipScreenshotSettings.showCrosshairGuides, "an unset preference reads as on")
+        check(toggleView.crosshairGuidesEnabled, "a fresh overlay starts with the guides on")
+        toggleFixture.crosshair(cgPoint: CGPoint(x: 200, y: 200))
+        check(!CrosshairGeometry(view: toggleView).horizontalHidden
+              && !CrosshairGeometry(view: toggleView).verticalHidden,
+              "the toggle is on: both guides are visible")
+        toggleView.crosshairGuidesEnabled = false
+        check(CrosshairGeometry(view: toggleView).horizontalHidden
+              && CrosshairGeometry(view: toggleView).verticalHidden,
+              "the toggle is off: both guides are hidden at the same pointer position")
+        toggleFixture.crosshair(cgPoint: CGPoint(x: 260, y: 240))
+        let guidesOffGeometry = CrosshairGeometry(view: toggleView)
+        check(guidesOffGeometry.horizontalHidden && guidesOffGeometry.verticalHidden,
+              "the toggle is off: moving the pointer does not bring the guides back")
+        check(guidesOffGeometry.bandCount == 2
+              && guidesOffGeometry.chromeLayerCount == 1
+              && guidesOffGeometry.hoverLayerCount == 1,
+              "the toggle only hides the two guides: chrome, hover highlight and both band views stay installed")
+        // 选框本体仍在：建立选区照样写 chrome 图层，尺寸标签也照旧有值。
+        let chromeWritesBeforeSelection = toggleView.selectionChromeWriteCount
+        toggleView.updateSelectionRect(NSRect(x: 100, y: 100, width: 200, height: 160))
+        check(toggleView.selectionChromeWriteCount > chromeWritesBeforeSelection,
+              "the selection chrome still writes its layer with the guides off")
+        check(toggleView.currentSelectionRect == NSRect(x: 100, y: 100, width: 200, height: 160),
+              "the selection rect is unchanged with the guides off")
+        UserDefaults.standard.set(false, forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+        check(!BlinkClipScreenshotSettings.showCrosshairGuides, "a stored false reads back as off")
+        let reopenedView = HoverFixture(
+            displayFrame: primaryFrame,
+            windows: orderedWindows.map { ($0.0, $0.1, false) }
+        )
+        check(!reopenedView.view.crosshairGuidesEnabled,
+              "a new overlay honours the stored off preference")
+        UserDefaults.standard.set(true, forKey: BlinkClipScreenshotSettings.showCrosshairGuidesKey)
+        let reopenedOnView = HoverFixture(
+            displayFrame: primaryFrame,
+            windows: orderedWindows.map { ($0.0, $0.1, false) }
+        )
+        reopenedOnView.crosshair(cgPoint: CGPoint(x: 200, y: 200))
+        check(reopenedOnView.view.crosshairGuidesEnabled,
+              "a new overlay honours the stored on preference")
+        check(!CrosshairGeometry(view: reopenedOnView.view).horizontalHidden
+              && !CrosshairGeometry(view: reopenedOnView.view).verticalHidden,
+              "the toggle is on again: both guides are visible")
+
         // A single pointer position is mirrored to every display, exactly like
         // `OverlayWindowController` does: the horizontal line continues onto
         // the neighbouring screen, the vertical line only lands on the

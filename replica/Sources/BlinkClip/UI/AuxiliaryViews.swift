@@ -314,6 +314,7 @@ struct ReplicaSettingsView: View {
     // 初值在根视图构造时读一次（与 `initialTab` 同一时机），写入同时落到桥接层。
     @State private var screenshotPostCaptureAction = BlinkClipScreenshotSettings.postCaptureAction
     @State private var appleTranslationEnabled = TranslationSettingsBridge.appleTranslationEnabled
+    @State private var crosshairGuidesEnabled = BlinkClipScreenshotSettings.showCrosshairGuides
     // 「键盘快捷键 → 截图」：录制器要显示当前组合，靠这两份 @State + 通知回填；
     // 注册失败状态同理（改键后立刻显示，不必重开窗口）。
     @State private var screenshotRegionShortcut = BlinkClipScreenshotSettings.effectiveShortcut(for: .region)
@@ -861,7 +862,8 @@ struct ReplicaSettingsView: View {
 
     /// 「截图」分区（侧栏 index 2）。
     ///
-    /// 截图后行为和翻译开关；所有快捷键统一位于「键盘快捷键」分区。
+    /// 三组：截图后行为、框选覆盖层（十字辅助线开关）、截图翻译；
+    /// 所有快捷键统一位于「键盘快捷键」分区。
     private var screenshot: some View {
         SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
@@ -878,6 +880,12 @@ struct ReplicaSettingsView: View {
                             .font(.caption).settingsSecondaryText()
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.vertical, SettingsRowMetrics.singleLine)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(ScreenshotSettingsCopy.text(.overlaySectionTitle))
+                    settingsCard {
+                        screenshotCrosshairGuidesRow
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -916,6 +924,29 @@ struct ReplicaSettingsView: View {
             // 写的是 capcap 侧那一个键（`blinkclip.screenshot.postCaptureAction`），
             // 区域截图入口 `CaptureEntry.presentRegionEditor` 下次触发时读它。
             BlinkClipScreenshotSettings.postCaptureAction = action
+        })
+    }
+
+    /// 「显示十字辅助线」：只控制框选时那两条贯穿全屏的横竖辅线，默认开。
+    ///
+    /// 单行行（`SettingsRowMetrics.singleLine`）：与「通用」页的单行开关同一套行留白，
+    /// 卡片因此与既有两张一样首末留白对称。开关中心对齐文字块中心，由 `settingsRow` 负责。
+    private var screenshotCrosshairGuidesRow: some View {
+        let title = ScreenshotSettingsCopy.text(.crosshairGuidesTitle)
+        return settingsRow(verticalPadding: SettingsRowMetrics.singleLine) {
+            Text(title)
+        } trailing: {
+            settingsRowSwitch(title: title, isOn: crosshairGuidesBinding,
+                              identifier: "settings.crosshair-guides.toggle")
+        }
+    }
+
+    /// 写入 capcap 侧那一个键（`blinkclip.screenshot.showCrosshairGuides`）；
+    /// 框选覆盖层拉起时读它，关掉后只是不画辅线。
+    private var crosshairGuidesBinding: Binding<Bool> {
+        Binding(get: { crosshairGuidesEnabled }, set: { enabled in
+            crosshairGuidesEnabled = enabled
+            BlinkClipScreenshotSettings.showCrosshairGuides = enabled
         })
     }
 

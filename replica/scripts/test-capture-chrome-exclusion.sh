@@ -107,7 +107,7 @@ PY
 
 # --- REV 源码门：系统十字光标 + 贯穿全屏的跟随辅线 ---------------------------
 python3 - "$replica_root" "$ARTIFACT_TASK_DIR/out" <<'PY'
-import json, pathlib, sys
+import json, pathlib, re, sys
 root, out = map(pathlib.Path, sys.argv[1:])
 capture = root / 'Vendor/capcap/Capture'
 selection = (capture / 'SelectionView.swift').read_text()
@@ -265,6 +265,33 @@ checks = {
     )) and 'drawSelectionChrome(' not in drag_new
         and 'refreshDragSnapHighlight' not in mouse_up,
 
+    # A（1.0.31）：设置 →「截图」→「框选覆盖层」→「显示十字辅助线」。
+    # 键定义在适配层（默认开，缺键 = 开），读点是覆盖层那一个属性，
+    # 关掉时「只」让两条贯穿辅线不出现——选框本体、尺寸标签、暗化、hover 高亮、
+    # 放大镜与系统十字光标都不受影响。
+    'guide-toggle-is-one-setting': all(fragment in code(screenshot_settings) for fragment in (
+        'public static let showCrosshairGuidesKey = "blinkclip.screenshot.showCrosshairGuides"',
+        'public static var showCrosshairGuides: Bool',
+        'guard let stored = UserDefaults.standard.object(forKey: showCrosshairGuidesKey) else { return true }',
+    )) and 'var crosshairGuidesEnabled = BlinkClipScreenshotSettings.showCrosshairGuides' in selection_code
+        and re.search(r'guard showsGuides,\s+crosshairGuidesEnabled,', guide) is not None,
+    'guide-toggle-has-a-settings-row': "screenshotCrosshairGuidesRow" in aux
+        and 'identifier: "settings.crosshair-guides.toggle"' in aux
+        and "ScreenshotSettingsCopy.text(.crosshairGuidesTitle)" in aux
+        and "ScreenshotSettingsCopy.text(.overlaySectionTitle)" in aux,
+    'guide-toggle-copy-is-trilingual': all(fragment in copy_table for fragment in (
+        'case crosshairGuidesTitle = "screenshot.overlay.crosshair-guides.title"',
+        'Entry("Show crosshair guides", "显示十字辅助线", "顯示十字輔助線")',
+        'Entry("Capture overlay", "框选覆盖层", "框選覆蓋層")',
+    )),
+    'harness-proves-guide-toggle': all(fragment in harness for fragment in (
+        'the toggle is off: both guides are hidden at the same pointer position',
+        'the toggle only hides the two guides: chrome, hover highlight and both band views stay installed',
+        "the toggle is off: moving the pointer does not bring the guides back",
+        'a new overlay honours the stored off preference',
+        'the toggle is on again: both guides are visible',
+    )),
+
     # REV：设置页不再有「显示中线」：桥接键、三语文案、设置行与开关全部消失。
     'center-lines-setting-is-gone': 'snapGuidesCenterLines' not in code(screenshot_settings)
         and 'centerLinesTitle' not in code(copy_table)
@@ -322,6 +349,12 @@ checks = {
         '拖拽吸边',
         '窗口 hover 高亮',
         '选框本体保持',
+    )),
+    # A（1.0.31）：文档写清「辅线可通过设置关闭」，以及关闭时哪些东西不变。
+    'design-doc-guide-toggle': all(fragment in design for fragment in (
+        '显示十字辅助线',
+        '可通过设置关闭',
+        'blinkclip.screenshot.showCrosshairGuides',
     )),
 
     # SNAP2-2：选区外观（暗化挖孔 + 1pt 框 + 手柄 + 标签 + 滚动红框）在子图层，

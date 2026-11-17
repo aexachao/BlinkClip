@@ -74,12 +74,12 @@ assert all(run['passed'] for run in runs.values()), {k: v['passed'] for k, v in 
 # 每种语言至少 100 条检查：进程语言 + 语言判定 + 三语查表 + 6 个分区标题 +
 # 52 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题、Z3b 新增
 # 「外观与语言」组的 8 条）+ 截图表的 copy-table/title/2 个无障碍标签/停用提示 +
-# 32 条截图文案 + 6 条 toast 文案（T2：截图成功 toast 从设置表移到 toast 表，
+# 34 条截图文案 + 6 条 toast 文案（T2：截图成功 toast 从设置表移到 toast 表，
 # 复制/暂停/继续/截图四条 toast 的文案现在只有一个来源）。
 assert all(len(run['cases']) >= 100 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
 
 def resolved(run):
-    """32 条截图文案：resolved.<key>。"""
+    """34 条截图文案：resolved.<key>。"""
     return {case['case']: case['value'] for case in run['cases'] if str(case['case']).startswith('resolved.')}
 
 def toast_copy(run):
@@ -93,18 +93,18 @@ def values(run, prefixes):
 
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
-# 52 条设置文案 + 32 条截图文案 + 5 条 toast 文案，三语同键集。
-assert len(keys['en']) == 89, f'unexpected key count: {len(keys["en"])}'
+# 52 条设置文案 + 34 条截图文案 + 5 条 toast 文案，三语同键集。
+assert len(keys['en']) == 91, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
     assert runs[language]['settingsKeyCount'] == 52, (language, runs[language]['settingsKeyCount'])
-    assert runs[language]['screenshotKeyCount'] == 32, (language, runs[language]['screenshotKeyCount'])
+    assert runs[language]['screenshotKeyCount'] == 34, (language, runs[language]['screenshotKeyCount'])
     assert runs[language]['toastKeyCount'] == 5, (language, runs[language]['toastKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
 assert resolved_cases['en'] == resolved_cases['zh-Hans'] == resolved_cases['zh-Hant'], 'resolved case set differs per language'
 # 每个键在每种语言下都必须解析出真实文案，不能回落成 key 本身，也不能缺值。
 for language in languages:
     vals = resolved(runs[language])
-    assert len(vals) == 32, f'{language}: {len(vals)} screenshot keys resolved'
+    assert len(vals) == 34, f'{language}: {len(vals)} screenshot keys resolved'
     assert len(set(vals.values())) > 1, f'{language}: copy collapsed'
     for name, value in vals.items():
         assert value and not value.startswith('screenshot.') and not value.startswith('shortcuts.'), f'{language}: {name} fell back to its raw key'
@@ -175,7 +175,7 @@ for language in languages:
 # 截图表不再是“只有一张中文表”的已知差距。
 assert not runs['zh-Hant']['knownGaps'], runs['zh-Hant']['knownGaps']
 
-# --- 截图表 35 键：简繁必须真的不同，且繁中不得残留简体写法 -------------------
+# --- 截图表 34 键：简繁必须真的不同，且繁中不得残留简体写法 -------------------
 hans, hant = resolved(runs['zh-Hans']), resolved(runs['zh-Hant'])
 assert hant != hans, 'zh-Hant screenshot copy is identical to zh-Hans'
 differing = sorted(name for name in hant if hant[name] != hans[name])
@@ -305,7 +305,7 @@ raw = (root / 'Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift').read_text()
 source = '\n'.join(line.split('//', 1)[0] for line in raw.splitlines())
 checks = {
     # 三语写在同一个 Entry 里：结构上不可能出现「某语言缺键」再回落英文的分支。
-    'single-three-language-entry-table': raw.count(': Entry(') == 32 and 'private struct Entry' in source,
+    'single-three-language-entry-table': raw.count(': Entry(') == 34 and 'private struct Entry' in source,
     'no-per-language-key-fallback': 'english[' not in source and '?? english' not in source,
     'traditional-table-present': 'case zhHant = "zh-Hant"' in source and 'tableIdentifier' in source,
     # 语言判定收敛：本文件不再自己读偏好、扫首选语言，只调用 Core 的同一份判定。

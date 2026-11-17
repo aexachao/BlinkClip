@@ -200,7 +200,7 @@ checks = {
                                  and 'static var cardCentringCoverage' in harness
                                  and '(.general, 4)' in harness
                                  and '(.clipboard, 2)' in harness
-                                 and '(.screenshot, 2)' in harness
+                                 and '(.screenshot, 3)' in harness
                                  and '(.privacy, 3)' in harness
                                  and '(.ai, 1)' in harness
                                  and 'try check(bandDelta <= 0.5' in harness
