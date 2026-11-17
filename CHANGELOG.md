@@ -1,5 +1,23 @@
 # 更新日志
 
+## 1.0.32 · 2026-11-17（GitHub Releases）
+
+截图编辑器下方的浮动工具栏按 **macOS 标准工具栏尺寸**收紧：图标 **18pt → 16pt**、按钮行高 **40pt → 36pt**、工具条 **52pt → 46pt**，圆角与下拉菜单行高同步调整，按钮命中区仍是 **36×36pt**。只改几何：工具集合、顺序、图标字形、快捷键与全部行为一律不变；CloudKit、签名与更新通道均无变更。
+
+### 界面
+
+- **编辑器浮动工具栏：16pt 图标 / 36pt 行高 / 46pt 条高。** 几何只有一处来源 `ToolbarChrome`：`symbolPointSize` 18 → **16**（weight 仍是 `.medium`）、`rowHeight` 40 → **36**、`surfacePadding` 6 → 5、`surfaceCornerRadius` 8 → 7、`highlightCornerRadius` 6 → 5；条高 = 行高 + 上下各 5pt 的 `crossPadding`（6 → 5），即 36 + 10 = **46pt**（改前 40 + 12 = 52pt）。分组按钮按比例 56 → **52pt**（36pt 工具区 + 16pt 下拉箭头区），按钮间距 6pt 与两端 15pt 不变。**按钮命中区仍是完整的 36×36pt**（≥32pt 可点性下限）。改前 18pt 图标压在 40pt 行里行高偏松、整条 52pt 比系统工具栏厚。
+
+- **工具条与下拉菜单共用同一批常量，不是各走一套。** `ToolbarGroupMenuRow` 的图标取自 `symbolPointSize`，行高 / 内边距取自 `rowHeight` / `surfacePadding`，面板高度 = `surfacePadding × 2 + rowHeight × 行数`，三行面板 132 → **118pt**（5×2 + 36×3）。出现「工具条 36 / 下拉 40」即判失败。图标观感按实测口径：2x 离屏渲染量单个字形墨迹高度（alpha ≥ 25% 的纵向范围），18pt 时 27–42px（常见 33–38px），16pt 后 24–38px（常见 29–34px），每个字形都按 16/18 等比缩小（±2px 内）。
+
+### 测试
+
+- **`test-toolbar-upload-removal.sh`：414 checks / 34 renders**（315 → 414）。新增条高 46pt、命中区 ≥32pt、逐字形墨迹高度（18pt vs 16pt 等比缩小）断言；`rowHeight` 36、半径 7 / 5 的期望值同步更新。
+
+- **`test-editor-chrome-parity.sh`**：编辑器 live 选框与框选覆盖层仍是同一套 chrome——强调色像素集合逐位相等、1pt 实线、横条 20×4pt、L 角标 12×2pt、22×22pt 命中区全过。
+
+- **回归**：`test-ui-interaction.sh` 通过；`python3 -m unittest discover -s scripts/tests` 通过；`blinkclip-core-tests` **29 / 0 / 0**。
+
 ## 1.0.31 · 2026-11-17（GitHub Releases）
 
 两处用户反馈的收尾：框选的十字辅助线**可以关掉**了——设置 →「截图」→「框选覆盖层」→「显示十字辅助线」，**默认开**，关掉只让那两条贯穿全屏的横竖辅线消失，框选本身的其它一切（选框、尺寸标签、暗化、放大镜、窗口高亮、系统十字光标）都不动；退出二次确认弹窗的「退出」按钮从「浅底红字」改成**强调色实心 + 白字**，白字对比度浅色 **5.18:1**、深色 **4.97:1**，结构、文案、按钮顺序与尺寸一律不变。CloudKit、签名与更新通道均无变更。
