@@ -1,5 +1,21 @@
 # 更新日志
 
+## 1.0.36 · 2026-11-18（GitHub Releases）
+
+统一所有粘贴路径的置顶行为：**双击、⌘+数字快捷粘贴、右键「粘贴」、Stack 粘贴**都把被粘贴项移到首位，四条路径行为一致；粘贴不再产生重复的历史条目。CloudKit、签名与更新通道均无变更。
+
+### 界面
+
+- **所有粘贴路径统一把被粘贴项移到首位。** 双击卡片、⌘+数字快捷粘贴、右键菜单「粘贴」、Stack 粘贴以及回车 / ⌘V 粘贴都汇入同一个粘贴入口（`ReplicaUIController.paste`），在该入口的成功分支上统一调用 `movePastedItemsToFront`。分组条目走持久化的 `pinboardOrder` 重排（与拖拽重排同一入口，重开面板仍在首位）；历史列表按恢复时间戳倒序，写回即刷新该条排序位置，因此不需额外重排。排序是显式的，不再依赖剪贴板自捕获的副作用。
+
+- **粘贴不产生重复历史条目。** 覆写剪贴板时写入 `com.chrisli.blinkclip.generated` 生成标记，自身的剪贴板监听识别该标记后跳过，粘贴回填不会被自捕获成一条新的历史记录。
+
+### 测试
+
+- **新增 `test-quick-paste.sh`**：编译真实 `ReplicaUIController` / `ClipboardStore` / `ClipboardMonitor`，用私有具名剪贴板与独立数据目录跑三条面板粘贴路径（双击 / ⌘1–9 / 右键「粘贴」），断言粘贴不新增历史条目、粘贴后该条在历史与分组列表均位于首位、数字键路径的置顶来自共享粘贴成功分支。
+
+- **门禁全过**：`test-quick-paste.sh`、`test-ui-interaction.sh`、`test-copy-restore.sh`、`test-panel-menu.sh` 均 `"passed":true`；`python3 -m unittest discover -s scripts/tests` → 29 tests OK；`swift run --package-path replica blinkclip-core-tests` → `test_count` 29、`failure_count` 0。
+
 ## 1.0.35 · 2026-11-18（GitHub Releases）
 
 面板卡片交互调整：**单击只选中**（面板不再自动收起，右键菜单可以正常使用）；**双击粘贴到当前应用并收起面板，同时把该条移动到首位**。数字键 1–9 快捷粘贴、⌘/⇧ 多选、拖拽排序行为不变；CloudKit、签名与更新通道均无变更。
