@@ -15,9 +15,9 @@
 </p>
 
 <!-- blinkclip-download:start -->
-Current stable version: **1.0.33**. One installer supports Intel and Apple silicon:
+Current stable version: **1.0.34**. One installer supports Intel and Apple silicon:
 
-[Download BlinkClip-1.0.33-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.33/BlinkClip-1.0.33-macos-universal.dmg)
+[Download BlinkClip-1.0.34-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.34/BlinkClip-1.0.34-macos-universal.dmg)
 <!-- blinkclip-download:end -->
 
 ## Screenshots
