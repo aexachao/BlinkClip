@@ -344,9 +344,8 @@ struct ReplicaClipboardCard: View {
         .modifier(ReplicaCardTapHandlers(enabled: !nativeInteractions,
             single: { state.select(item, modifiers: NSEvent.modifierFlags) },
             double: {
-                state.select(item)
                 let plainModifiers = NSEvent.ModifierFlags(rawValue: state.store.preferences.plainTextModifierRawValue)
-                state.controller?.paste(item: item, plainTextOnly: NSEvent.modifierFlags.isSuperset(of: plainModifiers))
+                pasteToFront(plainTextOnly: NSEvent.modifierFlags.isSuperset(of: plainModifiers))
             }))
         .background(ReplicaCardContextSelection(onContextMenu: {
             state.selectForContextMenu(item)
@@ -361,7 +360,18 @@ struct ReplicaClipboardCard: View {
         .accessibilityLabel("\(item.kind.displayName)，\(item.sourceName)，\(item.title)，\(item.plainText.map { String($0.prefix(160)) } ?? "")")
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
         .accessibilityAction { state.select(item) }
+        .accessibilityAction(named: "粘贴") { pasteToFront(plainTextOnly: false) }
         .accessibilityIdentifier("clipboard-card-\(item.id.uuidString)")
+    }
+
+    /// 双击（以及读屏的「粘贴」动作）= 选中该条 → 粘贴到当前应用 → 把该条挪到所在列表
+    /// 第一位。粘贴成功后由粘贴路径（`AppMain.paste`）沿用同一条 hide 路径收起面板；
+    /// 重排只在分组视图生效（历史列表按捕获时间排序，没有手工顺序字段）。
+    private func pasteToFront(plainTextOnly: Bool) {
+        state.select(item)
+        if state.controller?.paste(item: item, plainTextOnly: plainTextOnly) == true {
+            state.movePastedItemToFront(item.id)
+        }
     }
 
     private func cardDragProvider() -> NSItemProvider {

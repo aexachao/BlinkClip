@@ -981,12 +981,10 @@ struct UIInteractionHarness {
             try require(board.string(forType: .string) == store.items.first { $0.id == first }!.plainText)
         }
         try require(pasteCalls == 2)
-        var panelVisibleWhenCopiedToastShown = false
         ui.copiedItemsHandler = {
             copyCalls.append("copy")
             // 与 `AppMain.ui.copiedItemsHandler` 同一条接线：先弹 toast，再由 `performCopy` 收起面板。
             ReplicaCopiedOSD.showCopied()
-            panelVisibleWhenCopiedToastShown = ui.panel.isVisible
         }
         let panel = ui.panel as! ReplicaPanel
         func cardEvent(_ type: NSEvent.EventType, cell: NSView, point: NSPoint, clicks: Int = 1,
@@ -1011,7 +1009,7 @@ struct UIInteractionHarness {
             return (host, cell)
         }
         func item(_ id: UUID) -> ClipboardItem { store.items.first { $0.id == id }! }
-        // ① 单击（无拖动、无修饰键）= 复制该条目 + 收起面板，Toast 在收起之后仍然可见。
+        // ① 单击（无拖动、无修饰键）= 只选中该条，面板保持打开；不复制、不收起、不弹复制 toast。
         board.clearContents()
         copyCalls.removeAll()
         pasteCalls = 0
@@ -1021,16 +1019,13 @@ struct UIInteractionHarness {
         clickHost.mouseDown(with: cardEvent(.leftMouseDown, cell: clickCell, point: clickPoint))
         try require(state.selection == [second])
         clickHost.mouseUp(with: cardEvent(.leftMouseUp, cell: clickCell, point: clickPoint))
-        try await waitForVisibility(false)
-        try require(!ui.panel.isVisible)
-        try require(board.string(forType: .string) == item(second).plainText)
-        try require(copyCalls.count == 1 && pasteCalls == 0)
+        // 越过 `NSEvent.doubleClickInterval` 再等一轮：确认没有延迟的复制/收起落下来。
+        try await Task.sleep(for: .milliseconds(700))
+        try require(ui.panel.isVisible)
         try require(state.selection == [second])
-        // 先复制后收起：复制发生时面板还可见；收起完成后 toast 窗口仍然在屏上。
-        try require(panelVisibleWhenCopiedToastShown)
-        try require(ReplicaToast.shared.presentationCount == toastBeforeSingleClick + 1)
-        try require(ReplicaToast.shared.isVisible && ReplicaToast.shared.currentSymbolName == "checkmark")
-        ReplicaCopiedOSD.hideToast()
+        try require(copyCalls.isEmpty && pasteCalls == 0)
+        try require(board.string(forType: .string) == nil)
+        try require(ReplicaToast.shared.presentationCount == toastBeforeSingleClick)
         // ② 双击（物理事件序列 down1/up1/down2/up2）= 只粘贴一次，不叠一次复制。
         copyCalls.removeAll()
         pasteCalls = 0
@@ -1045,19 +1040,29 @@ struct UIInteractionHarness {
         try await Task.sleep(for: .milliseconds(700))
         try require(pasteCalls == 1 && copyCalls.isEmpty)
         try require(board.string(forType: .string) == item(first).plainText)
+        // 历史列表没有手工顺序字段，按现有粘贴语义处理：恢复会刷新捕获时间，
+        // 所以粘贴过的条目本来就落在历史首位（不另写一套重排）。
+        try require(store.search(query: "", pinboardID: nil).first?.id == first)
         // ③ ⌘/⇧ 单击 = 多选：选区变化，但既不复制也不收起。
+        // ⇧ 扩展的锚点取可见顺序里紧邻 `first` 的那一张，区间恰好是两张，不依赖其它用例
+        // 把某一张先顶到首位（单击不再复制/粘贴，历史顺序不会被本用例间接改写）。
         copyCalls.removeAll()
         pasteCalls = 0
         board.clearContents()
-        let (modifierHost, modifierCell) = try await collectionAndCell(second, expectedItemCount: state.visibleItems.count)
+        let historyOrder = state.visibleItems.map(\.id)
+        guard let firstPosition = historyOrder.firstIndex(of: first), historyOrder.count > 1 else {
+            throw Failure(description: "Missing history fixture \(first) in visible order \(historyOrder)")
+        }
+        let neighborID = historyOrder[firstPosition == historyOrder.count - 1 ? firstPosition - 1 : firstPosition + 1]
+        let (modifierHost, modifierCell) = try await collectionAndCell(neighborID, expectedItemCount: historyOrder.count)
         state.select(item(first))
         let modifierPoint = cardPoint(modifierCell)
         modifierHost.mouseDown(with: cardEvent(.leftMouseDown, cell: modifierCell, point: modifierPoint, flags: .shift))
-        try require(state.selection == Set([first, second]))
+        try require(state.selection == Set([first, neighborID]))
         modifierHost.mouseUp(with: cardEvent(.leftMouseUp, cell: modifierCell, point: modifierPoint, flags: .shift))
         try await Task.sleep(for: .milliseconds(700))
         try require(ui.panel.isVisible && copyCalls.isEmpty && pasteCalls == 0)
-        try require(board.string(forType: .string) == nil && state.selection == Set([first, second]))
+        try require(board.string(forType: .string) == nil && state.selection == Set([first, neighborID]))
         modifierHost.mouseDown(with: cardEvent(.leftMouseDown, cell: modifierCell, point: modifierPoint, flags: .command))
         try require(state.selection == [first])
         modifierHost.mouseUp(with: cardEvent(.leftMouseUp, cell: modifierCell, point: modifierPoint, flags: .command))
@@ -1079,24 +1084,24 @@ struct UIInteractionHarness {
         try await Task.sleep(for: .milliseconds(700))
         try require(ui.panel.isVisible && copyCalls.isEmpty && pasteCalls == 0)
         try require(board.string(forType: .string) == nil)
-        // ⑤ 多选里单击其中一张 = 只复制被点的那一张（不是整组聚合），并收起面板。
-        // 这条同时覆盖「按下时已选中 → 0.45s 延迟收拢」：mouseUp 必须取消那个计时器再复制。
+        // ⑤ 多选里单击其中一张 = 只收拢选区到被点的那一张，面板保持打开；不复制、不收起。
+        // 这条同时覆盖「按下时已选中 → 0.45s 延迟收拢」：mouseUp 必须取消那个计时器再收拢。
         copyCalls.removeAll()
         pasteCalls = 0
         board.clearContents()
-        let (collapseHost, collapseCell) = try await collectionAndCell(second, expectedItemCount: state.visibleItems.count)
+        let (collapseHost, collapseCell) = try await collectionAndCell(neighborID, expectedItemCount: historyOrder.count)
         state.select(item(first))
-        state.select(item(second), modifiers: .shift)
-        try require(state.selection == Set([first, second]))
+        state.select(item(neighborID), modifiers: .shift)
+        try require(state.selection == Set([first, neighborID]))
         let collapsePoint = cardPoint(collapseCell)
         collapseHost.mouseDown(with: cardEvent(.leftMouseDown, cell: collapseCell, point: collapsePoint))
         // 按下已选中时产品只挂 0.45s 的延迟收拢，不立即改选区。
-        try require(state.selection == Set([first, second]))
+        try require(state.selection == Set([first, neighborID]))
         collapseHost.mouseUp(with: cardEvent(.leftMouseUp, cell: collapseCell, point: collapsePoint))
-        try await waitForVisibility(false)
-        try require(copyCalls.count == 1 && pasteCalls == 0)
-        try require(state.selection == [second])
-        try require(board.string(forType: .string) == item(second).plainText)
+        try require(state.selection == [neighborID])
+        try await Task.sleep(for: .milliseconds(700))
+        try require(ui.panel.isVisible && copyCalls.isEmpty && pasteCalls == 0)
+        try require(board.string(forType: .string) == nil)
         // ⑥ 右键 = 卡片菜单（含「拷贝」），不复制、不收起。
         copyCalls.removeAll()
         board.clearContents()
@@ -1116,6 +1121,52 @@ struct UIInteractionHarness {
         try await Task.sleep(for: .milliseconds(200))
         try require(ui.panel.isVisible && copyCalls.isEmpty && menuHost.window?.isVisible == true)
         try require(board.string(forType: .string) == nil)
+        // ⑦ 双击语义（分组列表）= 粘贴 + 收起 + 该条移到分组首位（持久化）；右键菜单照常弹出。
+        copyCalls.removeAll()
+        pasteCalls = 0
+        board.clearContents()
+        let clickBoard = try store.createPinboard(name: "click semantics", colorHex: "#5575D9")
+        let promoteTarget = try store.add(ClipboardItem(plainText: "PROMOTE target fixture"))
+        let clickHead = try store.add(ClipboardItem(plainText: "PROMOTE head fixture"))
+        // assign 会按现有排序语义重写 `pinboardOrder`：目标先入组、另一条后入组插到组首，
+        // 所以双击前顺序是 [head, target]，双击后必须是 [target, head]。
+        try store.assign(ids: [promoteTarget], to: clickBoard.id)
+        try store.assign(ids: [clickHead], to: clickBoard.id)
+        try require(store.items(in: clickBoard.id).map(\.id) == [clickHead, promoteTarget])
+        try await presentOffscreen()
+        state.chooseBoard(clickBoard.id)
+        try await waitForCollectionReady(ui, state, expectedItemCount: 2)
+        guard let promoteHost = panel.collectionFocusTarget as? ReplicaNativeCollectionHost,
+              let promoteCell = promoteHost.previewAnchor(for: promoteTarget) else {
+            throw Failure(description: "Missing group card for the double-click promotion fixture")
+        }
+        let promotePoint = cardPoint(promoteCell)
+        promoteHost.mouseDown(with: cardEvent(.leftMouseDown, cell: promoteCell, point: promotePoint, clicks: 1))
+        promoteHost.mouseUp(with: cardEvent(.leftMouseUp, cell: promoteCell, point: promotePoint, clicks: 1))
+        try require(ui.panel.isVisible && state.selection == [promoteTarget])
+        promoteHost.mouseDown(with: cardEvent(.leftMouseDown, cell: promoteCell, point: promotePoint, clicks: 2))
+        promoteHost.mouseUp(with: cardEvent(.leftMouseUp, cell: promoteCell, point: promotePoint, clicks: 2))
+        try await waitForVisibility(false)
+        try require(copyCalls.isEmpty && pasteCalls == 1)
+        try require(board.string(forType: .string) == store.items.first { $0.id == promoteTarget }!.plainText)
+        try await Task.sleep(for: .milliseconds(150))
+        try require(store.items(in: clickBoard.id).map(\.id) == [promoteTarget, clickHead])
+        // 重新打开同一分组：右键仍能取出卡片菜单，且不触发复制/粘贴、不收起。
+        try await presentOffscreen()
+        state.chooseBoard(clickBoard.id)
+        try await waitForCollectionReady(ui, state, expectedItemCount: 2)
+        guard let groupMenuHost = panel.collectionFocusTarget as? ReplicaNativeCollectionHost,
+              let groupMenuCell = groupMenuHost.previewAnchor(for: promoteTarget) else {
+            throw Failure(description: "Missing promoted card for the context-menu check")
+        }
+        let groupRightClick = cardEvent(.rightMouseDown, cell: groupMenuCell, point: cardPoint(groupMenuCell))
+        guard let groupMenu = findMenu(groupMenuCell, groupRightClick) else {
+            throw Failure(description: "Native card in a group has no context menu")
+        }
+        try require(groupMenu.items.contains { $0.title == "拷贝" })
+        try await Task.sleep(for: .milliseconds(200))
+        try require(ui.panel.isVisible && copyCalls.isEmpty && pasteCalls == 1)
+        try require(board.string(forType: .string) == store.items.first { $0.id == promoteTarget }!.plainText)
         // 后续焦点/展示断言以「面板已收起」为前置，收尾时恢复成进入本块之前的可见性。
         ui.hidePanel()
         try await waitForVisibility(false)
@@ -1175,6 +1226,6 @@ struct UIInteractionHarness {
         }
         ui.panel.orderOut(nil)
         try await assertCardContentOverflow()
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"card content overflow: header band [0, headerHeight] never intersects body content, body stays inside the card, and long text renders at most maxLineCount lines ending in … (2000-char shell one-liner, no-space token, 40-line text, long URL link, image; panel heights 332/420)\",\"panel card matrix: a plain click copies that card, hides the panel and leaves the Copied toast on screen (toast shown before the hide); a click inside a multi-selection copies only the clicked card; a double click pastes once without a copy; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"card content overflow: header band [0, headerHeight] never intersects body content, body stays inside the card, and long text renders at most maxLineCount lines ending in … (2000-char shell one-liner, no-space token, 40-line text, long URL link, image; panel heights 332/420)\",\"panel card matrix: a plain click only selects that card and leaves the panel open (no copy, no hide, no Copied toast, even past the double-click interval); a click inside a multi-selection collapses the selection to the clicked card without copying or hiding; a double click pastes once without a copy and hides the panel; in a group list a double click also moves that item to the first position through the persisted pinboard order (verified against the store); in the history list the existing restore-timestamp semantics already put the pasted item first, and it is asserted there too; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu while the panel stays open\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }

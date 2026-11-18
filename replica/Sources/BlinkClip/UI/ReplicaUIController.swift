@@ -467,14 +467,16 @@ final class ReplicaUIState: ObservableObject {
         return collectionOwner.appliedItems(for: self) ?? []
     }
 
-    // f228a50's double-click path sets the singleton directly, without a reveal/delegate callback.
-    func selectForDoubleClick(at index: Int) {
-        cancelPendingNeighborSelection()
-        let items = pointerSelectionItems
-        guard items.indices.contains(index) else { return }
-        let id = items[index].id
-        allowsEmptySelection = false
-        applyOrderedSelection([id], anchor: id, primary: id)
+    /// 双击粘贴成功后把该条挪到所在分组/列表的第一位。
+    ///
+    /// 只有分组（pinboard）条目带手工排序字段 `pinboardOrder`，`reorderItems` 与拖拽重排
+    /// 是同一个可持久化入口；历史列表按捕获时间（`createdAt`）倒序、没有手工顺序字段，
+    /// 搜索与回收站视图也不改顺序，因此这三类视图保持现有排序语义、不做重排。
+    /// 双击的粘贴与面板收起仍走既有粘贴路径，这里只补排序；数字键快捷粘贴不经过这里。
+    func movePastedItemToFront(_ itemID: UUID) {
+        guard let boardID = pinboardID, isCollectionSearchQueryEmpty, !showDeleted,
+              store.items(in: boardID).contains(where: { $0.id == itemID }) else { return }
+        perform { try store.reorderItems(ids: [itemID], in: boardID, toOffset: 0) }
     }
 
     func select(_ item: ClipboardItem, modifiers: NSEvent.ModifierFlags = []) {
