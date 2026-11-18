@@ -29,15 +29,36 @@ struct ReplicaCardContextSelection: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+        /// 右键是否落在**这张卡自己的 bounds** 内。
+        ///
+        /// 不能用 `visibleRect`：卡片背景挂在 `NSHostingView` 里，SwiftUI 的宿主层级没有
+        /// 裁剪视图，`visibleRect` 会返回“整条卡片行在卡片坐标系里的投影”（实测 1680×272，
+        /// 远大于卡片自己的 240×240），于是同一行每张卡的后台监视器都会命中同一个点。
+        /// 多个监视器依次执行时，最后一张卡决定选区——右键目标因此不确定（U25：
+        /// 右键一张未选中的空文本卡，菜单「拷贝」复制出的是另一条 `OTHER 222`；
+        /// 另一次右键选区跳到第三张卡）。这里只认自己的 bounds，一张卡最多命中一次。
+        func ownsContextEvent(_ event: NSEvent) -> Bool {
+            guard !isHiddenOrHasHiddenAncestor, let window, event.window === window,
+                  event.type == .rightMouseDown || event.modifierFlags.contains(.control) else {
+                return false
+            }
+            return bounds.contains(convert(event.locationInWindow, from: nil))
+        }
+
+        /// 命中本卡时先把光标下的条目设为选中，再由 AppKit 弹出菜单。
+        /// 返回 true 表示这次右键属于本卡（同一行其它卡不会重复处理）。
+        @discardableResult
+        func handleContextEvent(_ event: NSEvent) -> Bool {
+            guard ownsContextEvent(event) else { return false }
+            onContextMenu?()
+            return true
+        }
+
         func installMonitor() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self] event in
                 MainActor.assumeIsolated {
-                    guard let self, !self.isHiddenOrHasHiddenAncestor,
-                          let window = self.window, event.window === window,
-                          event.type == .rightMouseDown || event.modifierFlags.contains(.control),
-                          self.visibleRect.contains(self.convert(event.locationInWindow, from: nil)) else { return event }
-                    self.onContextMenu?()
+                    _ = self?.handleContextEvent(event)
                     return event
                 }
             }

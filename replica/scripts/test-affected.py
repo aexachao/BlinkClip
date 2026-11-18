@@ -575,6 +575,13 @@ RULES = [
                 "ui-interaction"),
          why="面板视图被菜单结构、卡片图标、顶角几何与交互测试分别编译/断言；"
              "quick-paste 按 UI/ 全量编译并断言双击/右键粘贴入口"),
+    dict(id="ui-card-context-selection",
+         globs=["replica/Sources/BlinkClip/UI/ReplicaCardContextSelection.swift",
+                "replica/Sources/BlinkClip/UI/ReplicaNativeCardCollection.swift"],
+         tests=("ui-interaction", "copy-restore"),
+         why="卡片右键的命中判定与「先选中再弹菜单」入口：ui-interaction 直接断言右键先选中被点卡片、"
+             "菜单「拷贝」写入被点卡片的内容、多选集合内右键保留集合；copy-restore 编译 UI/ 全量并"
+             "覆盖同一条复制写入路径"),
     dict(id="ui-panel-glass", globs=["replica/Sources/BlinkClip/UI/ReplicaPanelGlassBackground.swift"],
          tests=("panel-top-corners", "ui-interaction"),
          why="顶角玻璃绘制与面板 :: 由 panel-top-corners 专门断言"),

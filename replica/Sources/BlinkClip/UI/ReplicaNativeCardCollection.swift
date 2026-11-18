@@ -592,6 +592,14 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
         // 右键（含 ⌃ 单击）菜单优先：只作废这一次按下的拖拽参照点。
         // 单击不再复制/收起，所以没有待决动作要撤销，菜单弹出时面板保持打开。
         initialDragLocation = nil
+        // 菜单弹出前先把光标下的那张卡设为选中，菜单动作才作用于它。
+        // SwiftUI 的上下文菜单由卡片自带的监视器（`ReplicaCardContextSelection`）负责选中；
+        // 事件如果先落到原生集合（例如卡片没有自己的菜单命中区），这里用同一套
+        // `index(at:)` 布局命中补一次，保证两条入口的语义一致、可重复调用（幂等）。
+        if let state, let index = index(at: convert(event.locationInWindow, from: nil)),
+           items.indices.contains(index) {
+            state.selectForContextMenu(renderedItem(at: index))
+        }
         super.rightMouseDown(with: event)
     }
 

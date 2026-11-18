@@ -1102,7 +1102,8 @@ struct UIInteractionHarness {
         try await Task.sleep(for: .milliseconds(700))
         try require(ui.panel.isVisible && copyCalls.isEmpty && pasteCalls == 0)
         try require(board.string(forType: .string) == nil)
-        // ⑥ 右键 = 卡片菜单（含「拷贝」），不复制、不收起。
+        // ⑥ 右键 = 卡片菜单（含「拷贝」）：先把光标下的那张卡设为选中，菜单动作作用于它；
+        //    右键本身不复制、不收起。
         copyCalls.removeAll()
         board.clearContents()
         let (menuHost, menuCell) = try await collectionAndCell(second, expectedItemCount: state.visibleItems.count)
@@ -1113,13 +1114,100 @@ struct UIInteractionHarness {
             }
             return nil
         }
-        let rightClick = cardEvent(.rightMouseDown, cell: menuCell, point: cardPoint(menuCell))
-        guard let cardMenu = findMenu(menuCell, rightClick) else {
-            throw Failure(description: "Native card has no context menu")
+        func eventViews(_ view: NSView) -> [ReplicaCardContextSelection.EventView] {
+            var result = view.subviews.compactMap { $0 as? ReplicaCardContextSelection.EventView }
+            for subview in view.subviews { result += eventViews(subview) }
+            return result
         }
-        try require(cardMenu.items.contains { $0.title == "拷贝" })
+        func isDescendant(_ view: NSView, of ancestor: NSView) -> Bool {
+            var current: NSView? = view
+            while let candidate = current {
+                if candidate === ancestor { return true }
+                current = candidate.superview
+            }
+            return false
+        }
+        func copyItemIndex(_ menu: NSMenu) -> Int? {
+            menu.items.firstIndex { $0.title == "拷贝" }
+        }
+        guard let panelRoot: NSView = panel.contentView else {
+            throw Failure(description: "Panel has no content view")
+        }
+        let rightClick = cardEvent(.rightMouseDown, cell: menuCell, point: cardPoint(menuCell))
+        guard let cardMenu = findMenu(menuCell, rightClick), let cardCopyIndex = copyItemIndex(cardMenu) else {
+            throw Failure(description: "Native card has no context menu with 拷贝")
+        }
+        // ⑥-a 右键未选中卡片：同一行每张卡都装了监视器，只有光标下那张可以认领这次右键；
+        // 认领后选区 = 被点的那一张（U25 缺陷：命中判定用 `visibleRect`，整行卡片都会命中，
+        // 最后执行的那张决定选区，于是「拷贝」复制的是另一条）。
+        state.select(item(first))
+        try require(state.selection == [first])
+        let allEventViews = eventViews(panelRoot)
+        try require(allEventViews.count >= 2)
+        let claimers = allEventViews.filter { $0.ownsContextEvent(rightClick) }
+        try require(claimers.count == 1)
+        try require(isDescendant(claimers[0], of: menuCell))
+        // 按层次顺序让每个监视器都处理一次（等价于真实的多监视器派发），最终选区必须是被点的卡。
+        for view in allEventViews { view.handleContextEvent(rightClick) }
+        try require(state.selection == [second])
         try await Task.sleep(for: .milliseconds(200))
         try require(ui.panel.isVisible && copyCalls.isEmpty && menuHost.window?.isVisible == true)
+        try require(board.string(forType: .string) == nil)
+        // ⑥-b 菜单「拷贝」写回的内容 = 被点的那张卡的内容（不是上一张选中的）。
+        cardMenu.performActionForItem(at: cardCopyIndex)
+        try await Task.sleep(for: .milliseconds(250))
+        try require(copyCalls.count == 1)
+        try require(board.string(forType: .string) == item(second).plainText)
+        try require(!ui.panel.isVisible)
+        // ⑥-c 右键多选集合内的成员：保留多选集合，菜单动作作用于整组（文本按显示顺序换行拼接）。
+        copyCalls.removeAll()
+        board.clearContents()
+        try await presentOffscreen()
+        state.chooseBoard(nil)
+        try await waitForCollectionReady(ui, state, expectedItemCount: state.visibleItems.count)
+        guard let multiHost = panel.collectionFocusTarget as? ReplicaNativeCollectionHost,
+              let multiCell = multiHost.previewAnchor(for: second) else {
+            throw Failure(description: "Missing native card cell for the multi-selection right click")
+        }
+        state.select(item(first))
+        // ⌘ 单击 = 追加多选（与真实鼠标路径同一个入口），选区顺序 [first, second]。
+        state.select(item(second), modifiers: .command)
+        try require(state.selection == Set([first, second]))
+        let orderedIDs = state.collectionSelectionSnapshot().orderedIDs
+        try require(Set(orderedIDs) == Set([first, second]))
+        let multiClick = cardEvent(.rightMouseDown, cell: multiCell, point: cardPoint(multiCell))
+        let multiEventViews = eventViews(panelRoot)
+        try require(multiEventViews.filter { $0.ownsContextEvent(multiClick) }.count == 1)
+        for view in multiEventViews { view.handleContextEvent(multiClick) }
+        try require(state.selection == Set([first, second]))
+        guard let multiMenu = findMenu(multiCell, multiClick), let multiCopyIndex = copyItemIndex(multiMenu) else {
+            throw Failure(description: "Native card in a multi-selection has no context menu with 拷贝")
+        }
+        multiMenu.performActionForItem(at: multiCopyIndex)
+        try await Task.sleep(for: .milliseconds(250))
+        try require(copyCalls.count == 1)
+        let multiText = orderedIDs.compactMap { id in item(id).plainText }.joined(separator: "\n")
+        try require(!multiText.isEmpty)
+        try require(board.string(forType: .string) == multiText)
+        // ⑥-d ⌃ 单击走同一入口（原生集合的 mouseDown → rightMouseDown）：先选中被点的卡，
+        //      再交给菜单；不复制、不收起。
+        copyCalls.removeAll()
+        board.clearContents()
+        try await presentOffscreen()
+        state.chooseBoard(nil)
+        try await waitForCollectionReady(ui, state, expectedItemCount: state.visibleItems.count)
+        guard let controlHost = panel.collectionFocusTarget as? ReplicaNativeCollectionHost,
+              let controlCell = controlHost.previewAnchor(for: first) else {
+            throw Failure(description: "Missing native card cell for the control-click check")
+        }
+        state.select(item(second))
+        try require(state.selection == [second])
+        let controlPoint = cardPoint(controlCell)
+        controlHost.mouseDown(with: cardEvent(.leftMouseDown, cell: controlCell, point: controlPoint, flags: .control))
+        try require(state.selection == [first])
+        controlHost.mouseUp(with: cardEvent(.leftMouseUp, cell: controlCell, point: controlPoint, flags: .control))
+        try await Task.sleep(for: .milliseconds(250))
+        try require(ui.panel.isVisible && copyCalls.isEmpty)
         try require(board.string(forType: .string) == nil)
         // ⑦ 双击语义（分组列表）= 粘贴 + 收起 + 该条移到分组首位（持久化）；右键菜单照常弹出。
         copyCalls.removeAll()
@@ -1226,6 +1314,6 @@ struct UIInteractionHarness {
         }
         ui.panel.orderOut(nil)
         try await assertCardContentOverflow()
-        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"card content overflow: header band [0, headerHeight] never intersects body content, body stays inside the card, and long text renders at most maxLineCount lines ending in … (2000-char shell one-liner, no-space token, 40-line text, long URL link, image; panel heights 332/420)\",\"panel card matrix: a plain click only selects that card and leaves the panel open (no copy, no hide, no Copied toast, even past the double-click interval); a click inside a multi-selection collapses the selection to the clicked card without copying or hiding; a double click pastes once without a copy and hides the panel; in a group list a double click also moves that item to the first position through the persisted pinboard order (verified against the store); in the history list the existing restore-timestamp semantics already put the pasted item first, and it is asserted there too; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu while the panel stays open\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
+        print("{\"status\":\"passed\",\"passed\":true,\"checks\":[\"panel select/copy/deselect and original multi-text RTF/plain aggregation\",\"ordered multi-selection paste and custom quick/plain modifiers\",\"board navigation and original prepend/reverse Stack consumption with duplicates retained (CHANGELOG 81/114/147: no dedupe, queue not persisted)\",\"pause/resume and native Stack rows\",\"NSItemProvider binary/HTML/Unicode and file paths; internal OCR excluded\",\"22 hosted tab hit points including icon/gaps/edges; release outside cancels; label-only double-click editing\",\"hover bitmap changes/restores; inline create/select-all/rename; native retention anchors and intermediate day/week/month mapping\",\"search layout centers the mask at max(400, toolbarWidth*0.25) with the in-field filters button; a non-empty-query Escape returns to the list, an empty-query Escape hides; offscreen ordered panel visible before Escape\",\"group deletion clamps to the adjacent surviving list (03a538); a failed delete keeps its inline confirmation, error and selection; legacy owner-less multi-group items survive a group delete\",\"local outside-window click closes panel\",\"About is a settings page: .blinkClipOpenAbout opens the settings window on the About page, the seventh sidebar row selects that same page, the page content lives in the right content area and no independent About window exists\",\"old closing completion cannot close a reopened panel\",\"⌘F/Escape stay panel-local while the global hot keys remain registered (StackHotKeyRouting)\",\"card content overflow: header band [0, headerHeight] never intersects body content, body stays inside the card, and long text renders at most maxLineCount lines ending in … (2000-char shell one-liner, no-space token, 40-line text, long URL link, image; panel heights 332/420)\",\"panel card matrix: a plain click only selects that card and leaves the panel open (no copy, no hide, no Copied toast, even past the double-click interval); a click inside a multi-selection collapses the selection to the clicked card without copying or hiding; a double click pastes once without a copy and hides the panel; in a group list a double click also moves that item to the first position through the persisted pinboard order (verified against the store); in the history list the existing restore-timestamp semantics already put the pasted item first, and it is asserted there too; ⌘/⇧ clicks change the selection without copying or hiding; a >3pt drag starts a native drag session without copying; the right click still offers the card menu while the panel stays open; a right click first selects the card under the cursor (exactly one card monitor claims the event, so the selection is the clicked card, not the last card in the row), 拷贝 from that menu writes the clicked card's own text, and a right click on a card inside a multi-selection keeps the whole selection and 拷贝 writes the aggregated text in display order\"],\"scope\":\"Isolated app ID/store/private pasteboard. Native offscreen windows and synthetic local events; no system keyboard posting, real cross-app paste or physical external-app click claim.\"}")
     }
 }
