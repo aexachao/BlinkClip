@@ -364,14 +364,12 @@ struct ReplicaClipboardCard: View {
         .accessibilityIdentifier("clipboard-card-\(item.id.uuidString)")
     }
 
-    /// 双击（以及读屏的「粘贴」动作）= 选中该条 → 粘贴到当前应用 → 把该条挪到所在列表
-    /// 第一位。粘贴成功后由粘贴路径（`AppMain.paste`）沿用同一条 hide 路径收起面板；
-    /// 重排只在分组视图生效（历史列表按捕获时间排序，没有手工顺序字段）。
+    /// 双击（以及读屏的「粘贴」动作）= 选中该条 → 粘贴到当前应用 → 面板收起。
+    /// 粘贴成功后的「移到首位」由 `ReplicaUIController.paste` 的统一成功分支完成，
+    /// 双击 / ⌘1–9 / 右键粘贴 / Stack 菜单共用同一条路径。
     private func pasteToFront(plainTextOnly: Bool) {
         state.select(item)
-        if state.controller?.paste(item: item, plainTextOnly: plainTextOnly) == true {
-            state.movePastedItemToFront(item.id)
-        }
+        _ = state.controller?.paste(item: item, plainTextOnly: plainTextOnly)
     }
 
     private func cardDragProvider() -> NSItemProvider {

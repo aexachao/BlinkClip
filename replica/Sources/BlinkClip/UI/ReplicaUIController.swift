@@ -467,16 +467,25 @@ final class ReplicaUIState: ObservableObject {
         return collectionOwner.appliedItems(for: self) ?? []
     }
 
-    /// 双击粘贴成功后把该条挪到所在分组/列表的第一位。
+    /// 粘贴成功后把粘贴到的条目挪到所在分组的第一位。
     ///
+    /// 双击、⌘1–9 快捷粘贴、右键「粘贴」、回车粘贴、⌘V 与 Stack 菜单粘贴都汇入
+    /// `ReplicaUIController.paste`，由同一条成功分支调用这里，不再各自补一次排序。
     /// 只有分组（pinboard）条目带手工排序字段 `pinboardOrder`，`reorderItems` 与拖拽重排
     /// 是同一个可持久化入口；历史列表按捕获时间（`createdAt`）倒序、没有手工顺序字段，
-    /// 搜索与回收站视图也不改顺序，因此这三类视图保持现有排序语义、不做重排。
-    /// 双击的粘贴与面板收起仍走既有粘贴路径，这里只补排序；数字键快捷粘贴不经过这里。
+    /// 恢复写回会刷新该条的 `createdAt`，因此历史列表按既有排序语义自然置顶，这里不重排；
+    /// 搜索与回收站视图也不改顺序。排序是显式的，不依赖剪贴板自捕获。
+    func movePastedItemsToFront(_ itemIDs: [UUID]) {
+        guard let boardID = pinboardID, isCollectionSearchQueryEmpty, !showDeleted, !itemIDs.isEmpty else { return }
+        let available = Set(store.items(in: boardID).map(\.id))
+        let targets = itemIDs.filter { available.contains($0) }
+        guard !targets.isEmpty else { return }
+        perform { try store.reorderItems(ids: targets, in: boardID, toOffset: 0) }
+    }
+
+    /// 单条粘贴的便捷入口（Stack 全局热键等非面板路径沿用）。
     func movePastedItemToFront(_ itemID: UUID) {
-        guard let boardID = pinboardID, isCollectionSearchQueryEmpty, !showDeleted,
-              store.items(in: boardID).contains(where: { $0.id == itemID }) else { return }
-        perform { try store.reorderItems(ids: [itemID], in: boardID, toOffset: 0) }
+        movePastedItemsToFront([itemID])
     }
 
     func select(_ item: ClipboardItem, modifiers: NSEvent.ModifierFlags = []) {
@@ -1626,38 +1635,45 @@ final class ReplicaUIController {
     @discardableResult
     private func paste(restoreItems: [ClipboardRestoreItem], plainTextOnly: Bool, forceDirect: Bool = false) -> Bool {
         guard !restoreItems.isEmpty else { return false }
+        let ids = restoreItems.map(\.id)
         // 音效：粘贴（含直接粘贴到前台应用与 Stack 粘贴）→ PasteSound。动作在调用点
         // 声明；恢复失败时 DidRestore 不会触发，因此不会播放成功提示音。
+        let succeeded: Bool
         if let pasteRestoreItemsHandler {
-            return SoundEffects.withFeedback(.paste) {
+            succeeded = SoundEffects.withFeedback(.paste) {
                 pasteRestoreItemsHandler(restoreItems, plainTextOnly, forceDirect)
             }
-        }
-        let ids = restoreItems.map(\.id)
-        if forceDirect {
-            if let directPasteItemsHandler {
-                return SoundEffects.withFeedback(.paste) { directPasteItemsHandler(ids, plainTextOnly) }
+        } else if forceDirect {
+            guard let directPasteItemsHandler else {
+                presentError(NSError(domain: "BlinkClip", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "粘贴服务尚未就绪，请使用“拷贝”后粘贴。 "]))
+                return false
             }
-            presentError(NSError(domain: "BlinkClip", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "粘贴服务尚未就绪，请使用“拷贝”后粘贴。 "]))
-            return false
+            succeeded = SoundEffects.withFeedback(.paste) { directPasteItemsHandler(ids, plainTextOnly) }
+        } else {
+            // `paste(ids:)` 自己的成功分支负责置顶，避免同一组 id 重排两次。
+            return paste(ids: ids, plainTextOnly: plainTextOnly)
         }
-        return paste(ids: ids, plainTextOnly: plainTextOnly)
+        if succeeded { state.movePastedItemsToFront(ids) }
+        return succeeded
     }
 
     @discardableResult
     func paste(ids: [UUID], plainTextOnly: Bool) -> Bool {
         guard !ids.isEmpty else { return false }
+        let succeeded: Bool
         if let pasteItemsHandler {
             // 真实写剪贴板发生在 handler 内的同步调用里，音效意图必须包住它才看得到。
-            return SoundEffects.withFeedback(.paste) { pasteItemsHandler(ids, plainTextOnly) }
-        }
-        guard ids.count == 1, let id = ids.first, let pasteHandler else {
+            succeeded = SoundEffects.withFeedback(.paste) { pasteItemsHandler(ids, plainTextOnly) }
+        } else if ids.count == 1, let id = ids.first, let pasteHandler {
+            succeeded = SoundEffects.withFeedback(.paste) { pasteHandler(id, plainTextOnly) }
+        } else {
             presentError(NSError(domain: "BlinkClip", code: 1,
                                  userInfo: [NSLocalizedDescriptionKey: "粘贴服务尚未就绪，请使用“拷贝”后粘贴。 "]))
             return false
         }
-        return SoundEffects.withFeedback(.paste) { pasteHandler(id, plainTextOnly) }
+        if succeeded { state.movePastedItemsToFront(ids) }
+        return succeeded
     }
 
     private func previewSelection() {

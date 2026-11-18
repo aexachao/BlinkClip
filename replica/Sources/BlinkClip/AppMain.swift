@@ -186,9 +186,11 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
                 // Stack 粘贴走的是 `AppMain.paste` 这条直连路径，不经过
                 // `ReplicaUIController.paste`（那里由 UI 层声明 `.paste`），所以动作必须
                 // 在调用点自己声明，否则这次写入会被当成未分类成功，回落到系统 Purr。
-                _ = SoundEffects.withFeedback(.paste) {
+                // 粘贴成功同样补一次「置顶」，与面板内所有粘贴路径的约定一致。
+                let pasted = SoundEffects.withFeedback(.paste) {
                     self.paste(ids: [first], plain: false, forceDirect: true, restoreItems: input.map { [$0] })
                 }
+                if pasted { self.ui.state.movePastedItemToFront(first) }
                 if self.ui.state.stackItemIDs.isEmpty { self.ui.hideStack() }
             }
             configureGlobalHotKeys(force: true)

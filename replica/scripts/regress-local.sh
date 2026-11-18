@@ -64,6 +64,7 @@ if run('build', ['bash', str(replica / 'scripts/build-app.sh')], timeout=300) ==
             ('shortcut', ['bash', str(replica / 'scripts/test-shortcut-model.sh')]),
             ('window', ['bash', str(replica / 'scripts/test-window-policy.sh')]),
             ('ui', ['bash', str(replica / 'scripts/test-ui-interaction.sh')]),
+            ('quick-paste', ['bash', str(replica / 'scripts/test-quick-paste.sh')]),
             ('copy-restore', ['bash', str(replica / 'scripts/test-copy-restore.sh')]),
             ('accessibility-modal', ['bash', str(replica / 'scripts/test-accessibility-modal.sh')]),
             ('packaged-resources', ['bash', str(replica / 'scripts/test-packaged-resources.sh')]),

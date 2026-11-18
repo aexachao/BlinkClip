@@ -614,8 +614,9 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
         window?.makeFirstResponder(self)
         if event.clickCount == 2 {
             dragWaitTimer?.invalidate()
-            // 双击 = 选中该条 → 粘贴到当前应用（粘贴成功沿用同一条 hide 路径收起面板）
-            // → 在收起动画结束前把该条挪到其所在分组的第一位。单次按下只选中、不复制，
+            // 双击 = 选中该条 → 粘贴到当前应用（粘贴成功沿用同一条 hide 路径收起面板）。
+            // 「移到所在分组第一位」由 `ReplicaUIController.paste` 的统一成功分支完成，
+            // 与 ⌘1–9、右键粘贴、Stack 菜单共用同一函数。单次按下只选中、不复制，
             // 所以这里不会叠出「复制 + 粘贴」两个动作。
             let item = renderedItem(at: index)
             state.select(item)
@@ -623,9 +624,8 @@ final class ReplicaNativeCollectionHost: NSView, NSDraggingSource {
             needsPrimaryReveal = false
             refreshCellRoots()
             let plain = NSEvent.ModifierFlags(rawValue: state.store.preferences.plainTextModifierRawValue)
-            let pasted = state.controller?.paste(item: item,
-                plainTextOnly: event.modifierFlags.isSuperset(of: plain)) ?? false
-            if pasted { state.movePastedItemToFront(item.id) }
+            _ = state.controller?.paste(item: item,
+                plainTextOnly: event.modifierFlags.isSuperset(of: plain))
             return
         }
         initialDragLocation = point
