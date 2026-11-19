@@ -261,10 +261,10 @@ import BlinkClipCapture
         }
 
         if section == .toolbox {
-            guard node("settings.toolbox.network-speed.toggle") != nil else {
+            guard let toggle = node("settings.toolbox.network-speed.toggle") else {
                 throw Failure(message: "toolbox page is missing the menu-bar speed switch")
             }
-            guard node("settings.toolbox.network-speed.unit.picker") != nil else {
+            guard let unitPicker = node("settings.toolbox.network-speed.unit.picker") else {
                 throw Failure(message: "toolbox page is missing the unit segmented control")
             }
             guard node("settings.toolbox.network-speed.unit.subtitle") != nil else {
@@ -273,6 +273,38 @@ import BlinkClipCapture
             let unitLabels = tree.filter { ["B/s", "bps"].contains(axText($0)) }
             try check(unitLabels.count >= 2,
                       "toolbox segmented control does not show both units: \(unitLabels.map(axText))")
+            // NETLAYOUT：「排版」行（单行 / 上下两行）与「单位」行同级、同一张卡，
+            // 排在单位行下方，页面仍在一屏内。
+            guard let layoutPicker = node("settings.toolbox.network-speed.layout.picker") else {
+                throw Failure(message: "toolbox page is missing the layout segmented control")
+            }
+            guard node("settings.toolbox.network-speed.layout.subtitle") != nil else {
+                throw Failure(message: "toolbox page is missing the layout description")
+            }
+            for label in [SettingsCopy.trilingual("单行", "單行", "Single line"),
+                          SettingsCopy.trilingual("上下两行", "上下兩行", "Two lines")] {
+                try check(tree.contains { axText($0) == label },
+                          "toolbox layout control does not offer \(label)")
+            }
+            let padded = card.insetBy(dx: -1, dy: -1)
+            try check(padded.contains(layoutPicker),
+                      "layout segcontrol is outside the toolbox card: control \(layoutPicker) card \(card)")
+            try check(layoutPicker.maxY < unitPicker.minY,
+                      "layout row is not below the unit row: layout \(layoutPicker) unit \(unitPicker)")
+            try check(toggle.maxY > unitPicker.minY,
+                      "unit row is not below the speed switch: switch \(toggle) unit \(unitPicker)")
+            // 布局预算：新增一行之后工具箱页仍然一屏装得下，且三行的竖直顺序
+            // 是「开关 → 单位 → 排版」，行与行之间没有重叠。
+            if let geometry = pageGeometry["\(appearance)-\(section.rawValue)"] {
+                try check(geometry["fitsOneScreen"] == 1,
+                          "toolbox page no longer fits one screen after the layout row: \(geometry)")
+                try check(geometry["documentHeight"]! <= geometry["viewportHeight"]! + 0.5,
+                          "toolbox page content \(geometry["documentHeight"]!)pt exceeds the \(geometry["viewportHeight"]!)pt viewport")
+            } else {
+                throw Failure(message: "\(appearance) toolbox page has no geometry for the layout budget")
+            }
+            try check(layoutPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
+                      "layout row is above the toolbox card top")
         }
 
         if section == .ai {
@@ -645,7 +677,7 @@ import BlinkClipCapture
     /// （截图后行为 / 框选覆盖层 / 截图翻译）、隐私三张、AI 一张、工具箱一张。数量按卡片身份
     /// 点名，同时核对实际量到的卡片数——新加一张卡不会悄悄跑出逐卡断言。
     @MainActor static var cardCentringCoverage: [(section: SettingsSection, cards: Int)] {
-        [(.general, 4), (.clipboard, 2), (.screenshot, 3), (.privacy, 3), (.ai, 1)]
+        [(.general, 4), (.clipboard, 2), (.screenshot, 3), (.privacy, 3), (.ai, 1), (.toolbox, 1)]
     }
 
     /// 逐卡逐行断言（新结构：卡片只给左右内边距）。
@@ -764,7 +796,9 @@ import BlinkClipCapture
         var roles: [String] {
             switch kind {
             case .toggle: return ["AXCheckBox", "AXButton", "AXSwitch"]
-            case .picker: return ["AXPopUpButton", "AXMenuButton", "AXButton"]
+            // 分段控件（`pickerStyle(.segmented)`）在 AX 里是 AXRadioGroup 而不是
+            // 弹出按钮；它的帧就是控件本身的外框（工具箱页实测 22pt 高）。
+            case .picker: return ["AXPopUpButton", "AXMenuButton", "AXButton", "AXRadioGroup"]
             case .checkbox: return ["AXCheckBox"]
             }
         }
@@ -819,6 +853,10 @@ import BlinkClipCapture
                 AlignmentRow(control: "settings.toolbox.network-speed.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.toolbox.network-speed.title"),
                              detailIdentifier: "settings.toolbox.network-speed.subtitle"),
+                // NETLAYOUT：排版行与单位行一样是「标题 + 说明 + 右侧分段控件」。
+                AlignmentRow(control: "settings.toolbox.network-speed.layout.picker", kind: .picker,
+                             title: SettingsCopy.text("settings.toolbox.network-speed.layout.title"),
+                             detailIdentifier: "settings.toolbox.network-speed.layout.subtitle"),
             ]
         case .privacy:
             return [

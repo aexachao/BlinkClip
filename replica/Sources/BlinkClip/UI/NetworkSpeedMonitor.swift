@@ -108,6 +108,21 @@ enum NetworkSpeedInterfaceReader {
     }
 }
 
+/// 菜单栏网速的排版。
+///
+/// - `singleLine`（默认）：`↓1.2M ↑7.0K`，走 `button.attributedTitle`（原生单行标题）；
+/// - `twoLines`：第一行 `↓1.2M`、第二行 `↑7.0K`。`NSButton` 标题只能一行，
+///   所以这一种由 `NetworkSpeedStatusItem` 自绘模板 `NSImage`（图标 + 两行文字）。
+///
+/// rawValue 是落盘契约：改名字会让用户的选择回到默认值。
+enum NetworkSpeedLayout: String, CaseIterable, Codable, Sendable {
+    case singleLine = "single"
+    case twoLines = "twoLines"
+
+    /// 分段控件的顺序：单行在前（默认项）。
+    static let pickerOrder: [NetworkSpeedLayout] = [.singleLine, .twoLines]
+}
+
 /// 菜单栏网速的偏好键与应用内唯一实例。
 ///
 /// 偏好是应用级 UserDefaults（和 `appLanguage` 同一层），不进剪贴板 store：
@@ -117,6 +132,7 @@ final class NetworkSpeedMonitor: ObservableObject {
     struct Snapshot: Equatable {
         var isEnabled: Bool
         var unit: NetworkSpeedUnit
+        var layout: NetworkSpeedLayout
         var rates: NetworkSpeedRates?
         /// 定时器采样次数（含基线），用于回归里证明「关掉后真的停了」。
         var sampleCount: Int
@@ -126,6 +142,7 @@ final class NetworkSpeedMonitor: ObservableObject {
 
     static let enabledKey = "blinkclip.networkSpeed.enabled"
     static let unitKey = "blinkclip.networkSpeed.unit"
+    static let layoutKey = "blinkclip.networkSpeed.layout"
 
     static let shared = NetworkSpeedMonitor()
 
@@ -154,7 +171,9 @@ final class NetworkSpeedMonitor: ObservableObject {
         self.observesWake = observeWake
         let enabled = defaults.bool(forKey: Self.enabledKey)
         let unit = NetworkSpeedUnit(rawValue: defaults.string(forKey: Self.unitKey) ?? "") ?? .bytesPerSecond
-        snapshot = Snapshot(isEnabled: enabled, unit: unit, rates: nil, sampleCount: 0, baselineResetCount: 0)
+        let layout = NetworkSpeedLayout(rawValue: defaults.string(forKey: Self.layoutKey) ?? "") ?? .singleLine
+        snapshot = Snapshot(isEnabled: enabled, unit: unit, layout: layout,
+                            rates: nil, sampleCount: 0, baselineResetCount: 0)
     }
 
     deinit {
@@ -164,6 +183,9 @@ final class NetworkSpeedMonitor: ObservableObject {
 
     /// 当前界面语言的单位回显；设置页直接用它做分段控件绑定。
     var unit: NetworkSpeedUnit { snapshot.unit }
+
+    /// 当前排版；设置页分段控件与状态栏渲染共用同一个快照值。
+    var layout: NetworkSpeedLayout { snapshot.layout }
 
     func setEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: Self.enabledKey)
@@ -180,6 +202,14 @@ final class NetworkSpeedMonitor: ObservableObject {
         guard snapshot.unit != unit else { return }
         defaults.set(unit.rawValue, forKey: Self.unitKey)
         snapshot.unit = unit
+    }
+
+    /// 切换排版：写偏好并更新快照。状态栏是 `$snapshot` 的订阅者，所以这里
+    /// 不需要重启应用或重建 `NSStatusItem`，下一帧就按新排版重画。
+    func setLayout(_ layout: NetworkSpeedLayout) {
+        guard snapshot.layout != layout else { return }
+        defaults.set(layout.rawValue, forKey: Self.layoutKey)
+        snapshot.layout = layout
     }
 
     /// 打开开关：立刻取一次基线，之后每 `interval` 秒采样一次。

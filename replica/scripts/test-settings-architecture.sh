@@ -178,9 +178,28 @@ checks = {
                                  and "settings.toolbox.network-speed.toggle" in aux
                                  and "settings.toolbox.network-speed.unit.picker" in aux
                                  and "settings.toolbox.network-speed.unit.subtitle" in aux
+                                 and "settings.toolbox.network-speed.layout.picker" in aux
+                                 and "settings.toolbox.network-speed.layout.subtitle" in aux
                                  and 'case 6: toolbox' in aux,
+    # NETLAYOUT：一张卡三行（开关 / 单位 / 排版）。排版与单位同级、同一张卡，
+    # 顺序是「单位 → 排版」，两条分隔线各一行，没有把排版挤到卡外。
+    'toolbox-layout-row-shares-the-unit-card': (toolbox_source := aux[aux.index('private var toolbox: some View'):aux.index('/// 分区标题在侧栏与页内共用一处来源')])
+                                               .count('Divider()') == 2
+                                               and toolbox_source.index('networkSpeedUnitRow')
+                                               < toolbox_source.index('networkSpeedLayoutRow'),
+    'toolbox-layout-options-are-trilingual': all(
+        literal in aux for literal in ('"单行", "單行", "Single line"',
+                                       '"上下两行", "上下兩行", "Two lines"'))
+                                              and 'NetworkSpeedLayout.pickerOrder' in aux,
+    'toolbox-layout-row-is-asserted': 'settings.toolbox.network-speed.layout.picker' in harness
+                                      and 'settings.toolbox.network-speed.layout.subtitle' in harness
+                                      and '(.toolbox, 1)' in harness
+                                      and 'toolbox page no longer fits one screen' in harness
+                                      and 'layout row is not below the unit row' in harness,
     'toolbox-copy-is-trilingual': 'settings.toolbox.network-speed.title' in (ui / 'SettingsCopy.swift').read_text()
-                                  and 'settings.toolbox.network-speed.tooltip' in (ui / 'SettingsCopy.swift').read_text(),
+                                  and 'settings.toolbox.network-speed.tooltip' in (ui / 'SettingsCopy.swift').read_text()
+                                  and 'settings.toolbox.network-speed.layout.title' in (ui / 'SettingsCopy.swift').read_text()
+                                  and 'settings.toolbox.network-speed.layout.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
     'about-row-selects-a-page': 'aboutReturnTab' not in aux and 'restoreSidebarAfterAbout' not in aux
                                  and 'BlinkClipAboutWindow.present' not in aux
                                  and '.tag(SettingsAboutPane.tabIndex)' in aux,
@@ -215,6 +234,7 @@ checks = {
                                  and '(.screenshot, 3)' in harness
                                  and '(.privacy, 3)' in harness
                                  and '(.ai, 1)' in harness
+                                 and '(.toolbox, 1)' in harness
                                  and 'try check(bandDelta <= 0.5' in harness
                                  and 'appearance == "light" ? 1.0 : 1.5' in harness
                                  and 'printCardCentringTable(appearance:' in harness,
