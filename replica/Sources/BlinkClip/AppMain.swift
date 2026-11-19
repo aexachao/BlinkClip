@@ -45,6 +45,7 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     private var pauseResumeTimer: Timer?
     private var scheduledResumeDate: Date?
     private var lastPauseFlag: Bool?
+    private var networkSpeedObservation: AnyCancellable?
     private var hotKeyStatus: OSStatus = noErr
     private var stackHotKeyStatus: OSStatus = noErr
     private var hotKeyObservation: AnyCancellable?
@@ -242,6 +243,17 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked(_:))
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // 菜单栏网速：文字与现有图标共用这一颗 NSStatusBarButton，点击/右键行为不变。
+        // 开关关闭时渲染器只把标题清空、宽度收回 squareLength，没有任何后台定时器。
+        NetworkSpeedStatusItem.apply(to: statusItem, enabled: NetworkSpeedMonitor.shared.snapshot.isEnabled,
+                                     rates: NetworkSpeedMonitor.shared.snapshot.rates,
+                                     unit: NetworkSpeedMonitor.shared.unit)
+        networkSpeedObservation = NetworkSpeedMonitor.shared.$snapshot
+            .removeDuplicates()
+            .sink { [weak self] snapshot in
+                MainActor.assumeIsolated { self?.renderNetworkSpeed(snapshot) }
+            }
+        if NetworkSpeedMonitor.shared.snapshot.isEnabled { NetworkSpeedMonitor.shared.start() }
         ui.panelToggleButton = statusItem.button
         let main = NSMenu()
         let appMenu = NSMenu(title: ReplicaBrand.name)
@@ -274,6 +286,14 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         NSApp.mainMenu = main
     }
 
+    /// 把采集快照落到状态栏：文字/宽度由渲染器负责，tooltip 与热键状态共用一份。
+    private func renderNetworkSpeed(_ snapshot: NetworkSpeedMonitor.Snapshot) {
+        NetworkSpeedStatusItem.apply(to: statusItem, enabled: snapshot.isEnabled,
+                                     rates: snapshot.rates, unit: snapshot.unit)
+        // 只刷新 tooltip；热键状态文案不必每秒重算一次。
+        applyStatusToolTip()
+    }
+
     private func updateStatus() {
         if arguments.contains("--no-global-hotkey") {
             ui.hotKeyStatusMessage = ScreenshotSettingsCopy.text(.hotKeysDisabledForRun)
@@ -287,7 +307,20 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
             ui.hotKeyStatusMessage = [message("历史", store.preferences.historyShortcut, hotKeyStatus),
                                       message("\(ReplicaBrand.name) Stack", store.preferences.stackShortcut, stackHotKeyStatus)].joined(separator: "；")
         }
-        statusItem.button?.toolTip = "\(ReplicaBrand.name) · \(ui.hotKeyStatusMessage)"
+        applyStatusToolTip()
+    }
+
+    private func applyStatusToolTip() {
+        let baseTooltip = "\(ReplicaBrand.name) · \(ui.hotKeyStatusMessage)"
+        if NetworkSpeedMonitor.shared.snapshot.isEnabled {
+            // 网速打开时 tooltip 先给完整速度（B/s 或 bps），下一行仍保留原有的
+            // 快捷键状态，不因为新功能丢掉旧信息。
+            let speed = NetworkSpeedStatusItem.toolTip(rates: NetworkSpeedMonitor.shared.snapshot.rates,
+                                                       unit: NetworkSpeedMonitor.shared.unit)
+            statusItem.button?.toolTip = "\(speed)\n\(baseTooltip)"
+        } else {
+            statusItem.button?.toolTip = baseTooltip
+        }
     }
 
     private func configureGlobalHotKeys(force: Bool = false) {
@@ -614,6 +647,8 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     func applicationWillTerminate(_ notification: Notification) {
         if argument("--data-dir") == nil { BackgroundService.markRunning(false) }
         hotKeyObservation?.cancel()
+        networkSpeedObservation?.cancel()
+        NetworkSpeedMonitor.shared.stop()
         diagnosticsObservation?.cancel()
         accessibilityObservation?.cancel()
         soundEffects?.stop()

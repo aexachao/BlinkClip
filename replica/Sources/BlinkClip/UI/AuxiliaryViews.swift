@@ -296,10 +296,12 @@ struct ReplicaSettingsView: View {
     /// 必须有默认值：`Tests/Native/UIInteractionHarness.swift` 仍然用单参构造。
     var initialTab: Int = 0
     @StateObject private var permissionProvider: PermissionStatusModelProvider
-    /// 「关于闪贴」页的状态模型。关于是内容区里的第七页，因此模型跟着设置根视图
+    /// 「关于闪贴」页的状态模型。关于是内容区里的第八页，因此模型跟着设置根视图
     /// 活着：切到别的分区再切回来，状态行（上次检查时间/检查中/有新版本）还在，
     /// 不重开一份。
     @StateObject private var aboutModel: BlinkClipAboutModel
+    /// 菜单栏网速的唯一实例（AppMain 装配状态栏，设置页读同一份快照做预览）。
+    @ObservedObject private var networkSpeed = NetworkSpeedMonitor.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedExclusions: Set<String> = []
     @State private var showingMCPConfiguration = false
@@ -375,7 +377,7 @@ struct ReplicaSettingsView: View {
                 ForEach(SettingsSection.allCases) { section in
                     sidebarRow(section.title, icon: section.icon, index: section.rawValue)
                 }
-                // 「AI 工具」之后的第七行：关于是内容区里的一个页面，和六个分区一样
+                // 「AI 工具」之后的第八行：关于是内容区里的一个页面，和七个分区一样
                 // 参与选中（选中态、标题与右侧内容一起换）。
                 aboutRow
             }
@@ -396,7 +398,7 @@ struct ReplicaSettingsView: View {
         }
     }
 
-    /// 关于页的侧栏行：tag 用 `SettingsAboutPane.tabIndex`（6），不会被六个分区
+    /// 关于页的侧栏行：tag 用 `SettingsAboutPane.tabIndex`（7），不会被七个分区
     /// 的编号占用；选中它就把内容区换成关于页，不再打开任何独立窗口。
     private static let aboutRowTitleKey = "updates.about-title"
 
@@ -410,7 +412,7 @@ struct ReplicaSettingsView: View {
             .accessibilityIdentifier("BlinkClipSettingsAbout")
     }
 
-    /// 六个分区与关于页共用一份选中值：`tab` 就是当前页号，点哪一行都是直接写它。
+    /// 七个分区与关于页共用一份选中值：`tab` 就是当前页号，点哪一行都是直接写它。
     /// 关于页不再有「动作行」语义，因此也没有「关闭后落回原分区」这类补帧逻辑。
     private var sidebarSelection: Binding<Int?> {
         Binding(get: { tab }, set: { value in
@@ -424,7 +426,7 @@ struct ReplicaSettingsView: View {
         return 0
     }
 
-    /// 标题栏里那一行小标题：六个分区用自己的名字，关于页用「关于闪贴」。
+    /// 标题栏里那一行小标题：七个分区用自己的名字，关于页用「关于闪贴」。
     private var paneTitle: String {
         if tab == SettingsAboutPane.tabIndex { return SettingsCopy.text(Self.aboutRowTitleKey) }
         return SettingsSection(rawValue: tab ?? 0)?.title ?? SettingsSection.general.title
@@ -442,6 +444,7 @@ struct ReplicaSettingsView: View {
                     case 3: clipboard
                     case 4: shortcuts
                     case 5: mcp
+                    case 6: toolbox
                     default: general
                     }
                 }
@@ -762,7 +765,7 @@ struct ReplicaSettingsView: View {
             .accessibilityIdentifier("settings.card")
     }
 
-    // MARK: - 关于闪贴（内容区第七页）
+    // MARK: - 关于闪贴（内容区第八页）
 
     // Product identity, update controls and project information are separate groups.
     private var about: some View {
@@ -876,6 +879,67 @@ struct ReplicaSettingsView: View {
     ///
     /// 三组：截图后行为、框选覆盖层（十字辅助线开关）、截图翻译；
     /// 所有快捷键统一位于「键盘快捷键」分区。
+    /// 工具箱：菜单栏网速。新的一页，不受截图分区高度预算限制；
+    /// 仍沿用同一套 `SettingsPageScroll` + `settingsSectionTitle` + `settingsCard`
+    /// 与逐行留白常量，因此卡片/行级回归断言同样覆盖这一页。
+    private var toolbox: some View {
+        SettingsPageScroll {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(SectionTitle.toolbox)
+                    settingsCard {
+                        settingsToggle("settings.toolbox.network-speed.title",
+                                       subtitle: "settings.toolbox.network-speed.subtitle",
+                                       isOn: networkSpeedEnabledBinding,
+                                       identifier: "settings.toolbox.network-speed.toggle")
+                        Divider()
+                        networkSpeedUnitRow
+                    }
+                }
+            }
+        }
+    }
+
+    /// 分区标题在侧栏与页内共用一处来源。
+    private enum SectionTitle {
+        static var toolbox: String { SettingsSection.toolbox.title }
+    }
+
+    private var networkSpeedEnabledBinding: Binding<Bool> {
+        Binding(get: { networkSpeed.snapshot.isEnabled },
+                set: { networkSpeed.setEnabled($0) })
+    }
+
+    private var networkSpeedUnitBinding: Binding<NetworkSpeedUnit> {
+        Binding(get: { networkSpeed.unit }, set: { networkSpeed.setUnit($0) })
+    }
+
+    /// 预览行：显示当前下载读数的完整格式（B/s 或 bps），未取到基线时是 `—`。
+    private var networkSpeedReadingLine: String {
+        let reading = networkSpeed.snapshot.rates.map {
+            NetworkSpeedFormatter.fullString(bytesPerSecond: $0.downloadBytesPerSecond,
+                                             unit: networkSpeed.unit)
+        } ?? "—"
+        return String(format: SettingsCopy.text("settings.toolbox.network-speed.unit.subtitle"), reading)
+    }
+
+    private var networkSpeedUnitRow: some View {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
+            Text(SettingsCopy.text("settings.toolbox.network-speed.unit.title"))
+            Text(networkSpeedReadingLine)
+                .font(.caption).settingsSecondaryText()
+                .accessibilityIdentifier("settings.toolbox.network-speed.unit.subtitle")
+        } trailing: {
+            Picker(SettingsCopy.text("settings.toolbox.network-speed.unit.title"),
+                   selection: networkSpeedUnitBinding) {
+                Text("B/s").tag(NetworkSpeedUnit.bytesPerSecond)
+                Text("bps").tag(NetworkSpeedUnit.bitsPerSecond)
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .accessibilityIdentifier("settings.toolbox.network-speed.unit.picker")
+        }
+    }
+
     private var screenshot: some View {
         SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
@@ -1545,7 +1609,7 @@ private extension View {
     }
 }
 
-/// 设置内容区的内边距：六个分区共用一套节奏。
+/// 设置内容区的内边距：七个分区共用一套节奏。
 ///
 /// 内容**顶部对齐**：第一个内容块距内容区顶 16pt（`topInset`），底边留 20pt
 /// 收尾，内容超出一屏时从顶部起滚动。上下不再取同一个值——那是「装得下就
@@ -1625,7 +1689,7 @@ private struct SettingsRadioRows<Option: Hashable>: View {
 /// 这里只做「内边距 + ScrollView」，不套 `GeometryReader`、不做
 /// `frame(minHeight:alignment: .center)`：上一轮把内容块放进最小高度等于
 /// 可视高度的 frame 里求垂直居中，结果是短页整体浮在内容区中间，与「设置项
-/// 在自己的行内居中」是两件事。页面从头对齐后，六页的顶部节奏只有一个值。
+/// 在自己的行内居中」是两件事。页面从头对齐后，七页的顶部节奏只有一个值。
 struct SettingsPageScroll<Content: View>: View {
     @ViewBuilder var content: Content
 
