@@ -13,7 +13,7 @@ mkdir -p "$TMPDIR" "$CLANG_MODULE_CACHE_PATH" "$ARTIFACT_TASK_DIR/out"
 test_root="$ARTIFACT_TASK_DIR/build/harness"
 mkdir -p "$test_root"
 source "$replica_root/Tests/Native/build-support.sh"
-shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipInAppUpdater.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
+shasum -a 256 "$replica_root/Sources/BlinkClip/UI/SettingsSplitView.swift" "$replica_root/Sources/BlinkClip/UI/ReplicaUIController.swift" "$replica_root/Sources/BlinkClip/UI/AuxiliaryViews.swift" "$replica_root/Sources/BlinkClip/UI/SettingsSurfaceStyle.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/PermissionStatusView.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/CloudKitSyncController.swift" "$replica_root/Sources/BlinkClip/UI/HistoryCapacityControl.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipInAppUpdater.swift" "$replica_root/Sources/BlinkClip/UI/BlinkClipAboutWindowController.swift" "$replica_root/Sources/BlinkClip/UI/NetworkSpeedMonitor.swift" "$replica_root/Sources/BlinkClip/UI/NetworkSpeedStatusItem.swift" "$replica_root/Tests/Native/SettingsArchitectureHarness.swift" "$replica_root/scripts/test-settings-architecture.sh" "$replica_root/Tests/Native/build-support.sh" > "$ARTIFACT_TASK_DIR/out/source-sha256.txt"
 prepare_native_test_ui > "$ARTIFACT_TASK_DIR/out/build.log" 2>&1
 compile_native_test_harness shortcut-row-restore "$replica_root/Sources/BlinkClip/UI/SettingsShortcutRowRestore.swift" "$replica_root/Sources/BlinkClip/UI/SettingsCopy.swift" "$replica_root/Sources/BlinkClip/UI/ScreenshotSettingsCopy.swift" "$replica_root/Tests/Native/ShortcutRowRestoreHarness.swift" > "$ARTIFACT_TASK_DIR/out/row-compile.log" 2>&1
 "$test_harness" | tee "$ARTIFACT_TASK_DIR/out/row-test.log"
@@ -80,11 +80,11 @@ checks = {
                               and 'static let tileSpacing: CGFloat = 10' in retention,
     'retention-single-width-formula': retention.count('gridColumns - 1) * Self.tileSpacing') == 1,
     'retention-no-count-3-row': 'index < 4 ? 0 : 1' not in retention and 'row == 0 ? 4 : 3' not in retention,
-    # 3) 六页统一 16pt 顶部节奏，页面**顶部对齐**（上一轮的「装得下就居中」已撤销）：
-    #    内边距只在 `SettingsPageMetrics` 写一次，六个分区共用同一个容器；
+    # 3) 七页统一 16pt 顶部节奏，页面**顶部对齐**（上一轮的「装得下就居中」已撤销）：
+    #    内边距只在 `SettingsPageMetrics` 写一次，七个分区共用同一个容器；
     #    容器里不得再出现 GeometryReader / minHeight 等于可视高度的居中 frame。
-    # 六个分区 + 关于页：内容区一共七页，共用同一个滚动容器与同一份页边距。
-    'seven-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 7,
+    # 七个分区 + 关于页：内容区一共八页，共用同一个滚动容器与同一份页边距。
+    'eight-pages-share-the-scroll-container': aux.count('SettingsPageScroll {') == 8,
     'page-insets-defined-once': aux.count('horizontalInset: CGFloat = 20') == 1
                                 and aux.count('topInset: CGFloat = 16') == 1
                                 and aux.count('bottomInset: CGFloat = 20') == 1,
@@ -107,7 +107,7 @@ checks = {
                                       and 'controller.updater.automaticallyChecksForUpdates' in (ui / 'BlinkClipInAppUpdater.swift').read_text(),
     'auto-update-copy-is-trilingual': 'settings.automatic-updates.title' in (ui / 'SettingsCopy.swift').read_text()
                                       and 'settings.automatic-updates.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
-    # Z3a：关于是设置页内的第七页（独立关于窗口已移除）。页面只有「检查更新」一个
+    # Z3a：关于是设置页内的第八页（独立关于窗口已移除）。页面只有「检查更新」一个
     # 动作按钮，状态 + 按钮排在链接/许可之上，检查中置灰，没有关闭按钮。
     'about-is-a-settings-page': 'private var about: some View' in aux
                                 and 'SettingsAboutPane.tabIndex' in aux
@@ -169,6 +169,18 @@ checks = {
     'conflict-keeps-recording': 'rejection.pending != nil, case .assigned = state' in (ui / 'ShortcutRecorder.swift').read_text()
                                  and 'model.beginRecording()' in (ui / 'ShortcutRecorder.swift').read_text(),
     # Z3a：关于行不再有「动作行」语义，选中态就是普通的一页（不需要回退补帧）。
+    # 工具箱：rawValue 6 是新增的深链页，0–5 与关于页（7）不能被动过。
+    'toolbox-is-section-six': 'case .toolbox: return' not in aux
+                              and 'case general = 0, clipboard = 3, screenshot = 2, shortcuts = 4, privacy = 1, ai = 5, toolbox = 6'
+                              in (ui / 'SettingsCopy.swift').read_text()
+                              and 'static let tabIndex = 7' in (ui / 'SettingsCopy.swift').read_text(),
+    'toolbox-page-has-one-card': 'private var toolbox: some View' in aux
+                                 and "settings.toolbox.network-speed.toggle" in aux
+                                 and "settings.toolbox.network-speed.unit.picker" in aux
+                                 and "settings.toolbox.network-speed.unit.subtitle" in aux
+                                 and 'case 6: toolbox' in aux,
+    'toolbox-copy-is-trilingual': 'settings.toolbox.network-speed.title' in (ui / 'SettingsCopy.swift').read_text()
+                                  and 'settings.toolbox.network-speed.tooltip' in (ui / 'SettingsCopy.swift').read_text(),
     'about-row-selects-a-page': 'aboutReturnTab' not in aux and 'restoreSidebarAfterAbout' not in aux
                                  and 'BlinkClipAboutWindow.present' not in aux
                                  and '.tag(SettingsAboutPane.tabIndex)' in aux,

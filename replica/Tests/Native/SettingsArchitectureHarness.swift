@@ -260,6 +260,21 @@ import BlinkClipCapture
                       "retention grid height is not \(HistoryCapacityControl.gridHeight)pt")
         }
 
+        if section == .toolbox {
+            guard node("settings.toolbox.network-speed.toggle") != nil else {
+                throw Failure(message: "toolbox page is missing the menu-bar speed switch")
+            }
+            guard node("settings.toolbox.network-speed.unit.picker") != nil else {
+                throw Failure(message: "toolbox page is missing the unit segmented control")
+            }
+            guard node("settings.toolbox.network-speed.unit.subtitle") != nil else {
+                throw Failure(message: "toolbox page is missing the reading preview")
+            }
+            let unitLabels = tree.filter { ["B/s", "bps"].contains(axText($0)) }
+            try check(unitLabels.count >= 2,
+                      "toolbox segmented control does not show both units: \(unitLabels.map(axText))")
+        }
+
         if section == .ai {
             guard let connect = node("settings.mcp.connect"), let status = node("settings.mcp.status"),
                   let description = node("settings.mcp.description") else {
@@ -626,8 +641,8 @@ import BlinkClipCapture
         cardCentringGeometry["\(appearance)-\(section.rawValue)"] = rows
     }
 
-    /// 需要逐卡达标的十三张卡（任务口径）：通用四组、剪贴板两张、截图三张
-    /// （截图后行为 / 框选覆盖层 / 截图翻译）、隐私三张、AI 一张。数量按卡片身份
+    /// 需要逐卡达标的十四张卡（任务口径）：通用四组、剪贴板两张、截图三张
+    /// （截图后行为 / 框选覆盖层 / 截图翻译）、隐私三张、AI 一张、工具箱一张。数量按卡片身份
     /// 点名，同时核对实际量到的卡片数——新加一张卡不会悄悄跑出逐卡断言。
     @MainActor static var cardCentringCoverage: [(section: SettingsSection, cards: Int)] {
         [(.general, 4), (.clipboard, 2), (.screenshot, 3), (.privacy, 3), (.ai, 1)]
@@ -798,6 +813,12 @@ import BlinkClipCapture
                 AlignmentRow(control: "settings.crosshair-guides.toggle", kind: .toggle,
                              title: ScreenshotSettingsCopy.text(.crosshairGuidesTitle),
                              detailIdentifier: nil),
+            ]
+        case .toolbox:
+            return [
+                AlignmentRow(control: "settings.toolbox.network-speed.toggle", kind: .toggle,
+                             title: SettingsCopy.text("settings.toolbox.network-speed.title"),
+                             detailIdentifier: "settings.toolbox.network-speed.subtitle"),
             ]
         case .privacy:
             return [
@@ -1313,7 +1334,7 @@ import BlinkClipCapture
     /// 「自动检查更新」开关：默认关（信息表里 `SUEnableAutomaticChecks=NO`，默认域
     /// 里连键都没有）→ 打开写入 Sparkle 自己那一份 `SUEnableAutomaticChecks`（`true`）
     /// → 重开视图（相当于重启应用后重开设置窗）仍然是开 → 关掉写回 false。
-    /// 「关于闪贴」是设置内容区里的第七页。
+    /// 「关于闪贴」是设置内容区里的第八页。
     ///
     /// 它必须和六个分区共用同一套节奏（页顶 16pt、settingsCard、卡片内容垂直居中），
     /// 并且只有「检查更新」一个动作按钮：状态行压在按钮上方 ≤12pt、两者同一条中轴，
@@ -2041,9 +2062,10 @@ import BlinkClipCapture
         let store = try ClipboardStore(directoryURL: fixture)
         let state = ReplicaUIState(store: store)
         let model = PermissionStatusModel(readAccessibility: { true }, readPostEvents: { true }, readScreenRecording: { true }, requestScreenAccess: {}, requestAccessibilityAccess: {})
-        try check(SettingsSection.allCases.map(\.rawValue) == [0,3,2,4,1,5], "stable ordered section IDs")
+        try check(SettingsSection.allCases.map(\.rawValue) == [0,3,2,4,1,5,6], "stable ordered section IDs")
         try check(SettingsSection(rawValue: 2) == .screenshot, "screenshot deep link preserved")
-        // The six sidebar names are trilingual now: under zh-Hant every one of
+        try check(SettingsSection(rawValue: 6) == .toolbox, "toolbox deep link preserved")
+        // The seven sidebar names are trilingual now: under zh-Hant every one of
         // them must be Traditional, and no Simplified-only spelling may survive.
         // 关于页的图标是真实应用图标（离屏渲染的证据要能看出是闪贴）。
         let iconURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -2053,7 +2075,7 @@ import BlinkClipCapture
         let settingsLanguage = SettingsCopy.language
         let sectionTitles = SettingsSection.allCases.map(\.title)
         if settingsLanguage == .zhHant {
-            try check(sectionTitles == ["一般", "剪貼簿與歷史記錄", "截圖", "快捷鍵", "隱私與權限", "AI 工具"],
+            try check(sectionTitles == ["一般", "剪貼簿與歷史記錄", "截圖", "快捷鍵", "隱私與權限", "AI 工具", "工具箱"],
                       "zh-Hant sidebar names: \(sectionTitles)")
             let simplifiedOnly = ["设置", "默认", "剪贴板", "屏幕", "恢复", "窗口", "保存", "应用", "快捷键", "历史", "权限", "复制"]
             for title in sectionTitles {
@@ -2062,7 +2084,7 @@ import BlinkClipCapture
                 }
             }
         } else if settingsLanguage == .zhHans {
-            try check(sectionTitles == ["通用", "剪贴板与历史", "截图", "快捷键", "隐私与权限", "AI 工具"],
+            try check(sectionTitles == ["通用", "剪贴板与历史", "截图", "快捷键", "隐私与权限", "AI 工具", "工具箱"],
                       "zh-Hans sidebar names: \(sectionTitles)")
         }
         let originalRetention = store.preferences.historyRetentionDays
@@ -2163,7 +2185,7 @@ import BlinkClipCapture
             window.contentView = nil
             window.close()
         }
-        // 关于是内容区里的第七页：与六个分区同一套宿主、同一套节奏，不弹独立窗口。
+        // 关于是内容区里的第八页：与七个分区同一套宿主、同一套节奏，不弹独立窗口。
         let aboutHosting = NSHostingView(rootView: ReplicaSettingsView(
             state: state, initialTab: SettingsAboutPane.tabIndex, permissionModel: model).background(Color(nsColor: .windowBackgroundColor)))
         let aboutWindow = OffscreenSettingsWindow(contentRect: NSRect(x: -5000, y: -5000, width: 648, height: 600),
@@ -2212,7 +2234,7 @@ import BlinkClipCapture
             }
             sheet.unlockFocus()
             let bitmap = NSBitmapImageRep(data: sheet.tiffRepresentation!)!
-            try bitmap.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(language)-\(appearance)-seven-pages-top-scroll-offscreen.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("\(language)-\(appearance)-eight-pages-top-scroll-offscreen.png"))
         }
         }
         NSApp.appearance = NSAppearance(named: .aqua)
@@ -2254,8 +2276,8 @@ import BlinkClipCapture
         let beforeBody = try pixels(navigationHost, headerOnly: false)
         guard let targetHeader = screenshotHeader else { throw Failure(message: "missing screenshot reference") }
         try check(beforeHeader != targetHeader, "general and screenshot headers differ before navigation")
-        // 六项分区 + 末尾的「关于闪贴」动作行：动作行不是分区，选中态与顺序都不变。
-        guard let navigation = descendants(navigationHost, of: NSOutlineView.self).first(where: { $0.numberOfRows == 7 }) else { throw Failure(message: "native seven-row outline not found") }
+        // 七项分区 + 末尾的「关于闪贴」动作行：动作行不是分区，选中态与顺序都不变。
+        guard let navigation = descendants(navigationHost, of: NSOutlineView.self).first(where: { $0.numberOfRows == 8 }) else { throw Failure(message: "native eight-row outline not found") }
         navigation.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
         navigation.delegate?.outlineViewSelectionDidChange?(Notification(name: NSOutlineView.selectionDidChangeNotification, object: navigation))
         let deadline = Date().addingTimeInterval(3)
@@ -2276,7 +2298,7 @@ import BlinkClipCapture
         }
         // 页脚已删：产品名不再作为侧栏页脚出现；「关于闪贴」变成列表里的最后一行。
         let sidebarNodes = accessibilityTree(navigationHost)
-        // The rendered sidebar must carry the same six trilingual names the
+        // The rendered sidebar must carry the same seven trilingual names the
         // production provider returns for this process language.
         var sidebarLabels = Set<String>()
         for node in sidebarNodes {
@@ -2298,7 +2320,7 @@ import BlinkClipCapture
                   "the removed settings-footer product name is still rendered")
         try check(sidebarNodes.contains { axID($0) == "BlinkClipSettingsAbout" }, "sidebar is missing the About BlinkClip row")
         let aboutRowIndex = SettingsSection.allCases.count
-        try check(aboutRowIndex == 6, "About row is not the seventh row")
+        try check(aboutRowIndex == 7, "About row is not the eighth row")
         let aboutTitle = SettingsCopy.text("updates.about-title")
         // 点侧栏「关于闪贴」：右侧内容区换成关于页、标题栏跟着换，**不弹独立窗口**。
         navigation.selectRowIndexes(IndexSet(integer: aboutRowIndex), byExtendingSelection: false)
@@ -2374,7 +2396,7 @@ import BlinkClipCapture
             "about": aboutGeometry,
             "topInset": SettingsPageMetrics.topInset,
             "bottomInset": SettingsPageMetrics.bottomInset,
-            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, seven sidebar rows (six sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row is the seventh page inside the right content area (no independent About window): native selection updates the pane title to the About BlinkClip copy, the page is top aligned at 16pt, with separate identity, update card and project footer, and leaving it selects General again. No physical mouse clicks."]
+            "sections":SettingsSection.allCases.map(\.title),"settingsLanguage":SettingsCopy.language.rawValue,"evidence":"Actual ReplicaSettingsView offscreen complete NSWindow theme frame including traffic lights and native NSToolbar; 648x600 window with production SettingsSplitView toolbar delegate path, eight sidebar rows (seven sections plus the About action row) light/dark top/scrolled header pixel invariance; isolated store and injected permissions. No live user history/TCC requests. Initial-tab navigation plus native NSOutlineView selection and exact native toolbar title checked; right content also changes; the removed footer product name is absent and the About row is the eighth page inside the right content area (no independent About window): native selection updates the pane title to the About BlinkClip copy, the page is top aligned at 16pt, with separate identity, update card and project footer, and leaving it selects General again. No physical mouse clicks."]
         let data = try JSONSerialization.data(withJSONObject: result, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: out.appendingPathComponent("result-\(language).json"))
         print(String(decoding:data,as:UTF8.self))

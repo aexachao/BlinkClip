@@ -181,6 +181,10 @@ _SHELL_ITEMS = [
     ("pasteboard-write-feedback", "写剪贴板反馈",
      "BlinkClipCore（含 SoundEffects）、Tests/Native/PasteboardWriteFeedbackHarness.swift",
      "写剪贴板时的反馈分类与剪贴板内容"),
+    ("network-speed", "菜单栏网速",
+     "BlinkClipCore/NetworkSpeed.swift、UI/NetworkSpeedMonitor.swift、UI/NetworkSpeedStatusItem.swift、"
+     "UI/SettingsCopy.swift、UI/ReplicaBrand.swift",
+     "1 秒采样、关闭停表、唤醒重置基线、utun 优先口径、状态栏文字/宽度/tooltip"),
     ("permission-status", "权限状态",
      "BlinkClipCore/AccessibilityService.swift、PermissionPromptPolicy.swift、"
      "PermissionStatusSnapshot.swift、SettingsStrings.swift、UI/PermissionStatusView.swift、"
@@ -209,7 +213,7 @@ _SHELL_ITEMS = [
     ("settings-localization", "设置文案本地化",
      "BlinkClipCore/SettingsStrings.swift、SettingsLocalization.swift、ResourceBundle.swift、AppBrand.swift、"
      "Pasteboard.swift、UI/ 文案提供者（ReplicaUIController、SettingsCopy、ScreenshotSettingsCopy、"
-     "ReplicaToastCopy、ShortcutRecorder、AuxiliaryViews）、AppMain.swift",
+     "ReplicaToastCopy、ShortcutRecorder、AuxiliaryViews、NetworkSpeedStatusItem）、AppMain.swift",
      "三语解析一致性与设置文案表"),
     ("settings-shortcut-reset", "快捷键重置",
      "UI/SettingsShortcutReset.swift、UI/SettingsCopy.swift",
@@ -365,7 +369,7 @@ UI_COMPILE = ("app-updates", "appearance-preferences", "capture-integration", "c
               "copy-restore", "panel-permission-interaction", "panel-scroll", "panel-top-corners",
               "quick-paste", "search-button", "settings-architecture", "settings-localization",
               "settings-shortcut-reset", "settings-window-focus", "shortcut-row-restore",
-              "text-card-appearance", "ui-interaction")
+              "text-card-appearance", "ui-interaction", "network-speed")
 
 # 会链接/编译 BlinkClipCore 的测试（core 层改动的保守面）
 CORE_LINKED = ("core-tests", "app-monitor", "app-updates", "capture-integration", "cloudkit-sync",
@@ -634,6 +638,11 @@ RULES = [
                 "replica/Sources/BlinkClip/UI/HistoryCapacityControl.swift"],
          tests=("history-retention", "retention-save-performance", "settings-architecture"),
          why="保留期限的专属测试 + 保存性能 + 设置架构"),
+    dict(id="ui-network-speed",
+         globs=["replica/Sources/BlinkClip/UI/NetworkSpeedMonitor.swift",
+                "replica/Sources/BlinkClip/UI/NetworkSpeedStatusItem.swift"],
+         tests=("network-speed", "settings-architecture", "settings-localization"),
+         why="网速采集/渲染的专属测试；设置页编译 UI 全量并断言新分区文案"),
     dict(id="ui-auxiliary-views", globs=["replica/Sources/BlinkClip/UI/AuxiliaryViews.swift"],
          tests=("history-retention", "retention-save-performance", "settings-architecture",
                 "settings-localization"),
@@ -662,6 +671,9 @@ RULES = [
          why="UI/ 其余文件均被这批测试编译（多数按 UI/ 全量 glob 编译）"),
 
     # ============ 4. BlinkClipCore ============
+    dict(id="core-network-speed", globs=["replica/Sources/BlinkClipCore/NetworkSpeed.swift"],
+         tests=("core-tests", "network-speed", "settings-architecture", "settings-localization"),
+         why="纯函数口径由 core-tests 覆盖；运行时与设置页由 native harness 编译"),
     dict(id="core-sound-effects", globs=["replica/Sources/BlinkClipCore/SoundEffects.swift"],
          tests=("sound-effects", "copy-restore", "feedback-shortcuts"),
          why="三个测试都编译 SoundEffects.swift：sound-effects 断言分类映射，copy-restore 断言"

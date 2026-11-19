@@ -207,7 +207,7 @@ struct AppUpdateHarness {
 
     @MainActor static var neverCheckedText: String { SettingsLocalization.text("updates.never-checked") }
 
-    // MARK: - 关于页（设置窗口内容区里的第七页）
+    // MARK: - 关于页（设置窗口内容区里的第八页）
 
     /// 关于不再是独立窗口：页面在生产 `ReplicaSettingsView` 里，几何与语义都从
     /// 一个真实设置窗口的无障碍树里量，文案则从页面复用的 `BlinkClipAboutModel`
@@ -699,7 +699,7 @@ struct AppUpdateHarness {
         try check(noFeedMessage == gentle && UpdateProtocol.capturedRequests.isEmpty,
                   "Missing SUFeedURL was not handled locally: \(noFeedMessage)")
 
-        // ── 关于页（设置窗口内容区里的第七页）──────────────────────────────
+        // ── 关于页（设置窗口内容区里的第八页）──────────────────────────────
         // 关于不再是独立窗口：页面住在一个真实的设置窗口里，断言走无障碍树
         // （单按钮 / 状态行 ≤12pt 同轴 / 状态行在链接之前 / 无关闭按钮）。
         // 1. 还没检查过：不报「已是最新」，文案中性，状态行属于动作块。

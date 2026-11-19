@@ -94,9 +94,9 @@ def values(run, prefixes):
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
 # 56 条设置文案 + 34 条截图文案 + 5 条 toast 文案，三语同键集。
-assert len(keys['en']) == 95, f'unexpected key count: {len(keys["en"])}'
+assert len(keys['en']) == 100, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
-    assert runs[language]['settingsKeyCount'] == 56, (language, runs[language]['settingsKeyCount'])
+    assert runs[language]['settingsKeyCount'] == 61, (language, runs[language]['settingsKeyCount'])
     assert runs[language]['screenshotKeyCount'] == 34, (language, runs[language]['screenshotKeyCount'])
     assert runs[language]['toastKeyCount'] == 5, (language, runs[language]['toastKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
@@ -207,15 +207,15 @@ assert not any(s in hant_blob for s, _ in exercised), 'a simplified word survive
 
 # --- six sidebar section titles, in all three languages ----------------------
 sections = {language: values(runs[language], ['section.']) for language in languages}
-assert len(sections['zh-Hant']) == 6, sections['zh-Hant']
-expected_sections = ['一般', '剪貼簿與歷史記錄', '截圖', '快捷鍵', '隱私與權限', 'AI 工具']
+assert len(sections['zh-Hant']) == 7, sections['zh-Hant']
+expected_sections = ['一般', '剪貼簿與歷史記錄', '截圖', '快捷鍵', '隱私與權限', 'AI 工具', '工具箱']
 assert sorted(sections['zh-Hant'].values()) == sorted(expected_sections), sections['zh-Hant']
 assert 'General' in sections['en'].values() and '截圖' not in sections['en'].values()
 assert '截图' in sections['zh-Hans'].values(), sections['zh-Hans']
 
 # --- the whole settings table is Traditional under zh-Hant --------------------
 settings = {language: values(runs[language], ['settings.']) for language in languages}
-assert len(settings['zh-Hant']) == 56, len(settings['zh-Hant'])
+assert len(settings['zh-Hant']) == 61, len(settings['zh-Hant'])
 assert set(settings['zh-Hant']) == set(settings['zh-Hans']) == set(settings['en']), 'settings key sets differ'
 # 10 known Simplified/Traditional divergences: no Simplified-only spelling may
 # survive anywhere in the zh-Hant settings copy.
@@ -402,6 +402,8 @@ assert not problems, problems
 
 allow_identical = {'完成', '取消', '播放操作提示音', 'AI 工具', '正在同步…', '等待同步',
                    '最近更新 ', 'iCloud 同步', '永久', '\\(days) 天', '最近 \\(days) 天',
+                   # 「工具箱」简繁同形（toolbox 在繁体里也写工具箱），不是漏翻。
+                   '工具箱',
                    # 「上次同步」简繁同形：语义与写法在两套字形里完全一致，不是漏翻。
                    '上次同步 '}
 identical = {a[0] for owner in calls for _, a in calls[owner] if a[0] == a[1]}
@@ -417,7 +419,9 @@ SETTINGS_HELPERS = ['SettingsCopy.swift', 'ScreenshotSettingsCopy.swift', 'Permi
                     'HistoryRetentionCopy.swift', 'ShortcutRecorder.swift', 'SettingsShortcutRowRestore.swift',
                     'SettingsWindowFocusRestore.swift',
                     # Z3b：外观与语言的两个选项类型与写入口（主题/语言的文案都从这张表取）。
-                    'SettingsAppearanceLanguage.swift']
+                    'SettingsAppearanceLanguage.swift',
+                    # 菜单栏网速的 tooltip 也走 SettingsCopy 的三语表。
+                    'NetworkSpeedStatusItem.swift']
 by_name = {p.name: p for p in files}
 
 def code(text):
@@ -455,7 +459,7 @@ for name in SETTINGS_HELPERS + ['SettingsShortcutReset.swift']:
 used |= set(re.findall(r'aboutRowTitleKey\s*=\s*"([^"]+)"', by_name['AuxiliaryViews.swift'].read_text()))
 assert used == terms, ('settings keys outside the trilingual table', sorted(used - terms),
                        'unused terms', sorted(terms - used))
-assert len(terms) == 56, len(terms)
+assert len(terms) == 61, len(terms)
 
 # Inventory of the remaining blanket "any zh" branches outside the settings
 # copy: none of them is settings-page copy. AppBrand picks the Chinese app name,
