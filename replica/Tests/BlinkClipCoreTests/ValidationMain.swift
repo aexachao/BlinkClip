@@ -66,6 +66,7 @@ func requireValue<T>(_ value: @autoclosure () throws -> T?, file: StaticString =
 struct ValidationMain {
     static func main() async {
         let suite = ClipboardStoreTests()
+        let networkSpeed = NetworkSpeedTests()
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--check-store" {
             do {
                 let summary = try await MainActor.run {
@@ -118,6 +119,13 @@ struct ValidationMain {
             ,("payload-less-item-identity", suite.testPayloadLessItemsKeepDistinctIdentityWhileDuplicatesStillDedupe)
             ,("persisted-projection-after-save", suite.testSavedItemsPublishThePersistedProjection)
             ,("corrupt-payload-container-degrades", suite.testCorruptPrivateContainersDegradeInsteadOfFailingWrites)
+            ,("network-speed-byte-format", networkSpeed.testByteFormatting)
+            ,("network-speed-bits-format", networkSpeed.testBitsFormatting)
+            ,("network-speed-compact-title", networkSpeed.testCompactMenuBarTitle)
+            ,("network-speed-interface-eligibility", networkSpeed.testInterfaceEligibility)
+            ,("network-speed-utun-priority", networkSpeed.testUtunTakesPriorityOnlyWhenTunnelIsActive)
+            ,("network-speed-baseline-elapsed", networkSpeed.testFirstSampleIsBaselineAndUsesActualElapsed)
+            ,("network-speed-counter-reset", networkSpeed.testCounterResetAndNonAdvancingTime)
         ]
         var selected: Set<String>?
         if let index = CommandLine.arguments.firstIndex(of: "--only") {
