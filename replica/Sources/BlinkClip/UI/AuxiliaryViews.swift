@@ -882,7 +882,8 @@ struct ReplicaSettingsView: View {
     /// 工具箱：菜单栏网速。新的一页，不受截图分区高度预算限制；
     /// 仍沿用同一套 `SettingsPageScroll` + `settingsSectionTitle` + `settingsCard`
     /// 与逐行留白常量，因此卡片/行级回归断言同样覆盖这一页。
-    /// 一张卡三行：开关、单位（`B/s` | `bps`）、排版（单行 | 上下两行，默认单行）。
+    /// 一张卡四行：开关、单位（`B/s` | `bps`）、排版（单行 | 上下两行，默认单行）、
+    /// 宽度（固定，默认 | 随内容）。
     private var toolbox: some View {
         SettingsPageScroll {
             VStack(alignment: .leading, spacing: 20) {
@@ -897,6 +898,8 @@ struct ReplicaSettingsView: View {
                         networkSpeedUnitRow
                         Divider()
                         networkSpeedLayoutRow
+                        Divider()
+                        networkSpeedWidthRow
                     }
                 }
             }
@@ -919,6 +922,10 @@ struct ReplicaSettingsView: View {
 
     private var networkSpeedLayoutBinding: Binding<NetworkSpeedLayout> {
         Binding(get: { networkSpeed.layout }, set: { networkSpeed.setLayout($0) })
+    }
+
+    private var networkSpeedWidthBinding: Binding<NetworkSpeedWidth> {
+        Binding(get: { networkSpeed.width }, set: { networkSpeed.setWidth($0) })
     }
 
     /// 预览行：显示当前下载读数的完整格式（B/s 或 bps），未取到基线时是 `—`。
@@ -976,6 +983,39 @@ struct ReplicaSettingsView: View {
             switch layout {
             case .singleLine: return SettingsCopy.trilingual("单行", "單行", "Single line")
             case .twoLines: return SettingsCopy.trilingual("上下两行", "上下兩行", "Two lines")
+            }
+        }
+    }
+
+    /// 「宽度」行：固定（默认）/ 随内容。
+    ///
+    /// 与「排版」行同级、同一张卡，排在排版行下方。固定宽度把状态项长度写死
+    /// （单行 124pt / 两行 72pt），读数变化不重排整条菜单栏；「随内容」回到
+    /// 旧的自适应行为。两者与「排版」互不排斥，四种组合都生效。
+    private var networkSpeedWidthRow: some View {
+        settingsRow(verticalPadding: SettingsRowMetrics.withDescription) {
+            Text(SettingsCopy.text("settings.toolbox.network-speed.width.title"))
+            Text(SettingsCopy.text("settings.toolbox.network-speed.width.subtitle"))
+                .font(.caption).settingsSecondaryText()
+                .accessibilityIdentifier("settings.toolbox.network-speed.width.subtitle")
+        } trailing: {
+            Picker(SettingsCopy.text("settings.toolbox.network-speed.width.title"),
+                   selection: networkSpeedWidthBinding) {
+                ForEach(NetworkSpeedWidth.pickerOrder, id: \.self) { width in
+                    Text(NetworkSpeedWidthCopy.title(width)).tag(width)
+                }
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .accessibilityIdentifier("settings.toolbox.network-speed.width.picker")
+        }
+    }
+
+    /// 宽度选项的三语名：`固定/Fixed/固定`、`随内容/Fit Content/隨內容`。
+    private enum NetworkSpeedWidthCopy {
+        static func title(_ width: NetworkSpeedWidth) -> String {
+            switch width {
+            case .fixed: return SettingsCopy.trilingual("固定", "固定", "Fixed")
+            case .content: return SettingsCopy.trilingual("随内容", "隨內容", "Fit Content")
             }
         }
     }

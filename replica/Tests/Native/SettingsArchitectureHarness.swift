@@ -293,11 +293,28 @@ import BlinkClipCapture
                       "layout row is not below the unit row: layout \(layoutPicker) unit \(unitPicker)")
             try check(toggle.maxY > unitPicker.minY,
                       "unit row is not below the speed switch: switch \(toggle) unit \(unitPicker)")
-            // 布局预算：新增一行之后工具箱页仍然一屏装得下，且三行的竖直顺序
-            // 是「开关 → 单位 → 排版」，行与行之间没有重叠。
+            // NETWIDTH：「宽度」行（固定 / 随内容）与「排版」行同级、同一张卡，
+            // 排在排版行下方；选项名三语，默认固定。
+            guard let widthPicker = node("settings.toolbox.network-speed.width.picker") else {
+                throw Failure(message: "toolbox page is missing the width segmented control")
+            }
+            guard node("settings.toolbox.network-speed.width.subtitle") != nil else {
+                throw Failure(message: "toolbox page is missing the width description")
+            }
+            for label in [SettingsCopy.trilingual("固定", "固定", "Fixed"),
+                          SettingsCopy.trilingual("随内容", "隨內容", "Fit Content")] {
+                try check(tree.contains { axText($0) == label },
+                          "toolbox width control does not offer \(label)")
+            }
+            try check(padded.contains(widthPicker),
+                      "width segcontrol is outside the toolbox card: control \(widthPicker) card \(card)")
+            try check(widthPicker.maxY < layoutPicker.minY,
+                      "width row is not below the layout row: width \(widthPicker) layout \(layoutPicker)")
+            // 布局预算：四行之后工具箱页仍然一屏装得下，且四行的竖直顺序
+            // 是「开关 → 单位 → 排版 → 宽度」，行与行之间没有重叠。
             if let geometry = pageGeometry["\(appearance)-\(section.rawValue)"] {
                 try check(geometry["fitsOneScreen"] == 1,
-                          "toolbox page no longer fits one screen after the layout row: \(geometry)")
+                          "toolbox page no longer fits one screen after the width row: \(geometry)")
                 try check(geometry["documentHeight"]! <= geometry["viewportHeight"]! + 0.5,
                           "toolbox page content \(geometry["documentHeight"]!)pt exceeds the \(geometry["viewportHeight"]!)pt viewport")
             } else {
@@ -305,6 +322,8 @@ import BlinkClipCapture
             }
             try check(layoutPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
                       "layout row is above the toolbox card top")
+            try check(widthPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
+                      "width row is above the toolbox card top")
         }
 
         if section == .ai {
@@ -857,6 +876,10 @@ import BlinkClipCapture
                 AlignmentRow(control: "settings.toolbox.network-speed.layout.picker", kind: .picker,
                              title: SettingsCopy.text("settings.toolbox.network-speed.layout.title"),
                              detailIdentifier: "settings.toolbox.network-speed.layout.subtitle"),
+                // NETWIDTH：宽度行同样是「标题 + 说明 + 右侧分段控件」。
+                AlignmentRow(control: "settings.toolbox.network-speed.width.picker", kind: .picker,
+                             title: SettingsCopy.text("settings.toolbox.network-speed.width.title"),
+                             detailIdentifier: "settings.toolbox.network-speed.width.subtitle"),
             ]
         case .privacy:
             return [

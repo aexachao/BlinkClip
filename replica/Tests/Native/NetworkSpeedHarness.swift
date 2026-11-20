@@ -150,6 +150,11 @@ import Foundation
         }
     }
 
+    /// 文字在给定字体下的排版宽度（和 `NetworkSpeedStatusItem` 用同一份几何）。
+    static func textWidth(_ text: String, font: NSFont) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: font]).width
+    }
+
     static func main() async {
         if let index = CommandLine.arguments.firstIndex(of: "--live") {
             live(seconds: index + 1 < CommandLine.arguments.count
@@ -228,9 +233,11 @@ import Foundation
                                       uploadBytesPerSecond: 33_178)
         let icon = ReplicaBrand.menuBarImage()
         let singleWidths = NetworkSpeedStatusItem.measuredWidths(
-            enabled: true, rates: rates, unit: .bytesPerSecond, layout: .singleLine, icon: icon)
+            enabled: true, rates: rates, unit: .bytesPerSecond, layout: .singleLine,
+            width: .content, icon: icon)
         let disabledWidths = NetworkSpeedStatusItem.measuredWidths(
-            enabled: false, rates: nil, unit: .bytesPerSecond, layout: .twoLines, icon: icon)
+            enabled: false, rates: nil, unit: .bytesPerSecond, layout: .twoLines,
+            width: .fixed, icon: icon)
         check(singleWidths.button > disabledWidths.button + 40,
               "开启网速后状态栏没有变宽：\(disabledWidths.button) → \(singleWidths.button)")
         check(singleWidths.image >= 16, "图标被挤掉了：\(singleWidths.image)")
@@ -239,11 +246,13 @@ import Foundation
         // 真实布局宽度是 18pt 图标 + 左右各 3pt；生产代码仍写 `squareLength`）。
         check(abs(disabledWidths.button - 24) < 0.01,
               "关闭态宽度没回到 24pt：\(disabledWidths.button)")
-        let title = NetworkSpeedStatusItem.attributedTitle(rates: rates, unit: .bytesPerSecond).string
+        let title = NetworkSpeedStatusItem.attributedTitle(rates: rates, unit: .bytesPerSecond,
+                                                           width: .content).string
         check(title == "↓1.4M ↑32.4K", "菜单栏紧凑文字不对：\(title)")
         let bitRates = NetworkSpeedRates(downloadBytesPerSecond: 1_400_000,
                                          uploadBytesPerSecond: 32_400)
-        let bitsTitle = NetworkSpeedStatusItem.attributedTitle(rates: bitRates, unit: .bitsPerSecond).string
+        let bitsTitle = NetworkSpeedStatusItem.attributedTitle(rates: bitRates, unit: .bitsPerSecond,
+                                                               width: .content).string
         check(bitsTitle == "↓11.2M ↑259K", "bps 菜单栏文字不对：\(bitsTitle)")
         let tooltip = NetworkSpeedStatusItem.toolTip(rates: rates, unit: .bytesPerSecond)
         check(tooltip.contains("1.4 MB/s") && tooltip.contains("32.4 KB/s") && tooltip.contains("·"),
@@ -264,9 +273,10 @@ import Foundation
 
         // ---- ② 两行排版更窄，且高度压在菜单栏可用高度内 ----------------------
         let twoLineWidths = NetworkSpeedStatusItem.measuredWidths(
-            enabled: true, rates: rates, unit: .bytesPerSecond, layout: .twoLines, icon: icon)
+            enabled: true, rates: rates, unit: .bytesPerSecond, layout: .twoLines,
+            width: .content, icon: icon)
         let twoLineImage = NetworkSpeedStatusItem.twoLinesImage(icon: icon, rates: rates,
-                                                               unit: .bytesPerSecond)
+                                                               unit: .bytesPerSecond, width: .content)
         check(twoLineWidths.button < singleWidths.button,
               "两行排版没有比单行窄：\(twoLineWidths.button) vs \(singleWidths.button)")
         check(NetworkSpeedStatusItem.TwoLines.expectedWidth.contains(twoLineWidths.button),
@@ -312,12 +322,12 @@ import Foundation
         let button = NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 100, height: 22))
         button.imageScaling = .scaleProportionallyDown
         NetworkSpeedStatusItem.configure(button, enabled: true, rates: rates, unit: .bytesPerSecond,
-                                         layout: .singleLine, icon: icon)
+                                         layout: .singleLine, width: .content, icon: icon)
         let beforeSwitch = button.fittingSize.width
         check(button.image === icon, "单行模式应继续用原生模板图标")
         check(button.imagePosition == .imageLeading, "单行模式图标位置不对：\(button.imagePosition.rawValue)")
         NetworkSpeedStatusItem.configure(button, enabled: true, rates: rates, unit: .bytesPerSecond,
-                                         layout: .twoLines, icon: icon)
+                                         layout: .twoLines, width: .content, icon: icon)
         let afterSwitch = button.fittingSize.width
         check(afterSwitch < beforeSwitch,
               "切到两行后宽度没有立刻变小：\(beforeSwitch) → \(afterSwitch)")
@@ -325,7 +335,7 @@ import Foundation
         check(button.image !== icon && button.image?.isTemplate == true,
               "两行模式没有换成自绘模板图")
         NetworkSpeedStatusItem.configure(button, enabled: true, rates: rates, unit: .bytesPerSecond,
-                                         layout: .singleLine, icon: icon)
+                                         layout: .singleLine, width: .content, icon: icon)
         check(abs(button.fittingSize.width - beforeSwitch) < 0.01,
               "切回单行宽度没有恢复：\(button.fittingSize.width) vs \(beforeSwitch)")
         check(button.image === icon && button.attributedTitle.string == title,
@@ -333,7 +343,7 @@ import Foundation
 
         // ---- ④ 关闭开关：宽度回 24pt、标题清空、图片是纯图标 ------------------
         NetworkSpeedStatusItem.configure(button, enabled: false, rates: nil, unit: .bytesPerSecond,
-                                         layout: .twoLines, icon: icon)
+                                         layout: .twoLines, width: .fixed, icon: icon)
         check(button.attributedTitle.string.isEmpty, "关闭后仍有标题")
         check(button.imagePosition == .imageOnly, "关闭后图标位置不对")
         check(button.image === icon, "关闭后没有恢复纯图标")
@@ -354,16 +364,19 @@ import Foundation
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let realButton = item.button {
             NetworkSpeedStatusItem.apply(to: item, enabled: true, rates: rates,
-                                         unit: .bytesPerSecond, layout: .singleLine, icon: icon)
+                                         unit: .bytesPerSecond, layout: .singleLine,
+                                         width: .content, icon: icon)
             let singleLength = realButton.fittingSize.width
             check(item.length == NSStatusItem.variableLength, "开网速后状态项不是 variableLength")
             NetworkSpeedStatusItem.apply(to: item, enabled: true, rates: rates,
-                                         unit: .bytesPerSecond, layout: .twoLines, icon: icon)
+                                         unit: .bytesPerSecond, layout: .twoLines,
+                                         width: .content, icon: icon)
             let twoLineLength = realButton.fittingSize.width
             check(twoLineLength < singleLength,
                   "真状态项切到两行没有变窄：\(singleLength) → \(twoLineLength)")
             NetworkSpeedStatusItem.apply(to: item, enabled: false, rates: nil,
-                                         unit: .bytesPerSecond, layout: .twoLines, icon: icon)
+                                         unit: .bytesPerSecond, layout: .twoLines,
+                                         width: .fixed, icon: icon)
             check(abs(item.length - NSStatusItem.squareLength) < 0.01,
                   "关闭后状态项长度 \(item.length) 没回 squareLength")
             check(realButton.attributedTitle.string.isEmpty, "关闭后状态项仍有标题")
@@ -371,6 +384,222 @@ import Foundation
             NSStatusBar.system.removeStatusItem(item)
         } else {
             print("NOTE 本次运行没有 NSStatusBar（无菜单栏），真状态项断言只用离屏按钮")
+        }
+
+        // ---- ⑤ 宽度策略：固定（默认）/ 随内容 × 单行 / 两行 ----------------
+        check(NetworkSpeedWidth.allCases.map(\.rawValue) == ["fixed", "content"],
+              "宽度策略的落盘契约变了：\(NetworkSpeedWidth.allCases.map(\.rawValue))")
+        check(NetworkSpeedMonitor(defaults: defaults).width == .fixed, "默认宽度策略不是固定")
+        check(NetworkSpeedStatusItem.FixedWidth.segmentSlots == 6,
+              "一段的字符位不是 6：\(NetworkSpeedStatusItem.FixedWidth.segmentSlots)")
+        check(NetworkSpeedStatusItem.FixedWidth.singleLineSlots == 13,
+              "单行字符位不是 13：\(NetworkSpeedStatusItem.FixedWidth.singleLineSlots)")
+        let figureSpace = NetworkSpeedStatusItem.FixedWidth.pad
+
+        // 10 帧覆盖：空闲（B/s）、K、M、G、T、两位小数、三位整数、最宽后缀。
+        let frames: [NetworkSpeedRates] = [
+            NetworkSpeedRates(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0),
+            NetworkSpeedRates(downloadBytesPerSecond: 999, uploadBytesPerSecond: 1_024),
+            NetworkSpeedRates(downloadBytesPerSecond: 34_600, uploadBytesPerSecond: 33_178),
+            NetworkSpeedRates(downloadBytesPerSecond: 1_468_006, uploadBytesPerSecond: 4_500_000),
+            NetworkSpeedRates(downloadBytesPerSecond: 12_000_000, uploadBytesPerSecond: 900_000),
+            NetworkSpeedRates(downloadBytesPerSecond: 99_900_000, uploadBytesPerSecond: 102_400_000),
+            NetworkSpeedRates(downloadBytesPerSecond: 870_000_000, uploadBytesPerSecond: 1_046_000_000),
+            NetworkSpeedRates(downloadBytesPerSecond: 2_000_000_000, uploadBytesPerSecond: 33_178),
+            NetworkSpeedRates(downloadBytesPerSecond: 1_020_000_000, uploadBytesPerSecond: 1_022_000_000),
+            NetworkSpeedRates(downloadBytesPerSecond: 5_368_709_120, uploadBytesPerSecond: 12_582_912),
+        ]
+        // 最宽的一帧：两段都是三位整数 + 宽后缀 `M`（`↓ 870M ↑ 999M` 量级）。
+        let worstRates = frames[6]
+
+        // ① 固定宽度：10 帧不同读数，状态项长度恒定（0 变化），文字区放得下每一个标题。
+        var fixedLengths = Set<CGFloat>()
+        var fixedTitleSlots = Set<Int>()
+        var fixedTitleWidths: [CGFloat] = []
+        for frame in frames {
+            fixedLengths.insert(NetworkSpeedStatusItem.length(enabled: true, layout: .singleLine,
+                                                              width: .fixed))
+            let fixedTitle = NetworkSpeedStatusItem.fixedTitle(rates: frame, unit: .bytesPerSecond)
+            fixedTitleSlots.insert(fixedTitle.count)
+            fixedTitleWidths.append(textWidth(fixedTitle, font: NetworkSpeedStatusItem.titleFont))
+            let fitted = NetworkSpeedStatusItem.measuredWidths(
+                enabled: true, rates: frame, unit: .bytesPerSecond, layout: .singleLine,
+                width: .fixed, icon: icon)
+            check(fitted.button <= NetworkSpeedStatusItem.FixedWidth.singleLineLength,
+                  "固定宽度单行拟合宽 \(fitted.button) 超过状态项长度")
+        }
+        check(fixedLengths == [NetworkSpeedStatusItem.FixedWidth.singleLineLength],
+              "固定宽度模式下 10 帧长度不一致：\(fixedLengths)")
+        check(fixedTitleSlots == [NetworkSpeedStatusItem.FixedWidth.singleLineSlots],
+              "补位后的单行字符位数不恒定：\(fixedTitleSlots)")
+        let widestFixedTitle = fixedTitleWidths.max() ?? 0
+        // 真实菜单栏里文字区左右各 9pt、图标 18pt、图标与文字间距 2pt = 38pt 固定开销。
+        check(widestFixedTitle + 38 <= NetworkSpeedStatusItem.FixedWidth.singleLineLength,
+              "最宽固定标题 \(widestFixedTitle)pt + 38pt 开销超过 \(NetworkSpeedStatusItem.FixedWidth.singleLineLength)pt")
+
+        // ② 随内容：同一组 10 帧里拟合宽度确实在变（对照固定模式）。
+        var contentWidths = Set<CGFloat>()
+        for frame in frames {
+            contentWidths.insert(NetworkSpeedStatusItem.measuredWidths(
+                enabled: true, rates: frame, unit: .bytesPerSecond, layout: .singleLine,
+                width: .content, icon: icon).button)
+        }
+        check(contentWidths.count > 1,
+              "随内容模式下 10 帧宽度没有变化：\(contentWidths.sorted())")
+
+        // ③ 超预算降级：数字位超过 4 位时换成 `>999` + 后缀，一段仍然 6 位。
+        let overflowRates = NetworkSpeedRates(downloadBytesPerSecond: Double(20_480) * pow(1024, 4),
+                                              uploadBytesPerSecond: Double(12_300) * pow(1024, 4))
+        let overflowTitle = NetworkSpeedStatusItem.fixedTitle(rates: overflowRates,
+                                                             unit: .bytesPerSecond)
+        check(overflowTitle.contains(">999T"),
+              "超预算没有降级：\(overflowTitle.debugDescription)")
+        check(overflowTitle.count == NetworkSpeedStatusItem.FixedWidth.singleLineSlots,
+              "降级后字符位数变了：\(overflowTitle.debugDescription)")
+        let overflowSegment = NetworkSpeedStatusItem.segment(from: "↓20480T")
+        check(NetworkSpeedStatusItem.fixedSegmentText(overflowSegment) == "↓>999T",
+              "降级文本不对：\(NetworkSpeedStatusItem.fixedSegmentText(overflowSegment).debugDescription)")
+        let overflowFitted = NetworkSpeedStatusItem.measuredWidths(
+            enabled: true, rates: overflowRates, unit: .bytesPerSecond, layout: .singleLine,
+            width: .fixed, icon: icon)
+        check(overflowFitted.button <= NetworkSpeedStatusItem.FixedWidth.singleLineLength,
+              "降级后宽度 \(overflowFitted.button) 仍然撑破固定宽度")
+        // 不足 1 个单位时后缀压成一位：`B/s` → `B`、`bps` → `b`，仍占 6 位。
+        let idleTitle = NetworkSpeedStatusItem.fixedTitle(
+            rates: NetworkSpeedRates(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0),
+            unit: .bytesPerSecond)
+        check(idleTitle == "↓\(figureSpace)\(figureSpace)\(figureSpace)0B ↑\(figureSpace)\(figureSpace)\(figureSpace)0B",
+              "固定宽度空闲文字不对：\(idleTitle.debugDescription)")
+        let idleBitsTitle = NetworkSpeedStatusItem.fixedTitle(
+            rates: NetworkSpeedRates(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0),
+            unit: .bitsPerSecond)
+        check(idleBitsTitle == "↓\(figureSpace)\(figureSpace)\(figureSpace)0b ↑\(figureSpace)\(figureSpace)\(figureSpace)0b",
+              "固定宽度 bps 空闲文字不对：\(idleBitsTitle.debugDescription)")
+        // 数字格像素恒定：`1.2` / `32.4` / `99.9`（带小数点）与 `812` / `999` 画的
+        // 都是 4 个数字宽——小数点比数字窄，靠 `.kern` 补回差额。
+        let cellWidths = ["1.2", "32.4", "99.9", "812", "999", ">999"]
+            .map { number -> CGFloat in
+                let segment = NetworkSpeedStatusItem.fixedSegmentText(
+                    .init(arrow: "↓", number: number, suffix: "K"))
+                return NetworkSpeedStatusItem.fixedAttributedText(
+                    segment, font: NetworkSpeedStatusItem.titleFont, color: .black).size().width
+            }
+        let cellSpread = (cellWidths.max() ?? 0) - (cellWidths.min() ?? 0)
+        check(cellSpread < 0.01,
+              "数字格宽度不稳定（最大差 \(cellSpread)pt）：\(cellWidths)")
+        // 数字右对齐：`0` 与 `812` 落在同一列的右边（补位字符数 = 4 − 数字长度）。
+        let shortSegment = NetworkSpeedStatusItem.fixedSegmentText(
+            NetworkSpeedStatusItem.segment(from: "↓0B/s"))
+        let longSegment = NetworkSpeedStatusItem.fixedSegmentText(
+            NetworkSpeedStatusItem.segment(from: "↓812K"))
+        check(shortSegment.count == longSegment.count,
+              "不同位数的数字补位后长度不同：\(shortSegment.debugDescription) / \(longSegment.debugDescription)")
+        check(shortSegment.hasSuffix("0B") && longSegment.hasSuffix("812K"),
+              "补位没有把数字顶到右边：\(shortSegment.debugDescription) / \(longSegment.debugDescription)")
+
+        // ④ 四种组合：单行/两行 × 固定/随内容，长度与图宽各按自己的策略落定。
+        var combinationLengths: [String: Double] = [:]
+        for layout in NetworkSpeedLayout.pickerOrder {
+            for width in NetworkSpeedWidth.pickerOrder {
+                let length = NetworkSpeedStatusItem.length(enabled: true, layout: layout, width: width)
+                combinationLengths["\(layout.rawValue)-\(width.rawValue)"] = Double(length)
+                if width.isFixed {
+                    let expected = layout == .singleLine
+                        ? NetworkSpeedStatusItem.FixedWidth.singleLineLength
+                        : NetworkSpeedStatusItem.FixedWidth.twoLinesLength
+                    check(length == expected,
+                          "固定宽度 \(layout.rawValue) 的长度 \(length) 不是 \(expected)")
+                } else {
+                    check(length == NSStatusItem.variableLength,
+                          "随内容 \(layout.rawValue) 的长度 \(length) 不是 variableLength")
+                }
+            }
+        }
+        check(combinationLengths.count == 4, "四种组合没有各自独立：\(combinationLengths)")
+        let fixedTwoImage = NetworkSpeedStatusItem.twoLinesImage(
+            icon: icon, rates: worstRates, unit: .bytesPerSecond, width: .fixed)
+        check(abs(fixedTwoImage.size.width - NetworkSpeedStatusItem.FixedWidth.twoLinesImageWidth) < 0.01,
+              "固定宽度两行图宽不是 \(NetworkSpeedStatusItem.FixedWidth.twoLinesImageWidth)：\(fixedTwoImage.size.width)")
+        check(abs(fixedTwoImage.size.height - NetworkSpeedStatusItem.TwoLines.height) < 0.01,
+              "固定宽度两行图高不是 \(NetworkSpeedStatusItem.TwoLines.height)：\(fixedTwoImage.size.height)")
+        let fixedTwoLines = NetworkSpeedStatusItem.fixedLines(rates: worstRates, unit: .bytesPerSecond)
+        check(fixedTwoLines.download.count == 6 && fixedTwoLines.upload.count == 6,
+              "两行文字段不是 6 位：\(fixedTwoLines)")
+        check(fixedTwoLines.download.hasPrefix("↓") && fixedTwoLines.upload.hasPrefix("↑"),
+              "两行箭头顺序不对：\(fixedTwoLines)")
+        let contentTwoImage = NetworkSpeedStatusItem.twoLinesImage(
+            icon: icon, rates: rates, unit: .bytesPerSecond, width: .content)
+        check(contentTwoImage.size.width < fixedTwoImage.size.width,
+              "随内容两行图没有比固定宽度窄：\(contentTwoImage.size.width) vs \(fixedTwoImage.size.width)")
+        // 两行固定时文字格放得下最宽的一行。
+        let widestTwoLine = max(textWidth(fixedTwoLines.download, font: NetworkSpeedStatusItem.TwoLines.font),
+                                textWidth(fixedTwoLines.upload, font: NetworkSpeedStatusItem.TwoLines.font))
+        check(widestTwoLine <= NetworkSpeedStatusItem.FixedWidth.twoLinesTextWidth,
+              "两行最宽文字 \(widestTwoLine)pt 超过固定文字格 \(NetworkSpeedStatusItem.FixedWidth.twoLinesTextWidth)pt")
+
+        // ⑤ 关闭：固定/随内容都回到 24pt（`squareLength`），不留白。
+        for layout in NetworkSpeedLayout.pickerOrder {
+            for width in NetworkSpeedWidth.pickerOrder {
+                check(NetworkSpeedStatusItem.length(enabled: false, layout: layout, width: width)
+                      == NSStatusItem.squareLength,
+                      "关闭后 \(layout.rawValue)/\(width.rawValue) 没有回 squareLength")
+            }
+        }
+        let disabledFixed = NetworkSpeedStatusItem.measuredWidths(
+            enabled: false, rates: nil, unit: .bytesPerSecond, layout: .singleLine,
+            width: .fixed, icon: icon)
+        check(abs(disabledFixed.button - 24) < 0.01,
+              "固定宽度关闭后宽度 \(disabledFixed.button) 没回到 24pt")
+
+        // 偏好：默认固定，切换即写盘并可从偏好恢复。
+        monitor.setWidth(.content)
+        check(monitor.snapshot.width == .content, "切换宽度策略没有立即更新快照")
+        check(defaults.string(forKey: NetworkSpeedMonitor.widthKey) == "content",
+              "宽度策略没有写进偏好：\(defaults.string(forKey: NetworkSpeedMonitor.widthKey) ?? "nil")")
+        check(NetworkSpeedMonitor(defaults: defaults).width == .content,
+              "重启后宽度策略没有从偏好恢复")
+        monitor.setWidth(.fixed)
+
+        // 真状态项：固定宽度下逐帧长度不变、文字区放得下最宽标题、两行图不被缩放。
+        var fixedRealChecks = 0
+        let fixedItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let fixedButton = fixedItem.button {
+            NetworkSpeedStatusItem.apply(to: fixedItem, enabled: true, rates: worstRates,
+                                         unit: .bytesPerSecond, layout: .singleLine,
+                                         width: .fixed, icon: icon)
+            check(fixedItem.length == NetworkSpeedStatusItem.FixedWidth.singleLineLength,
+                  "真状态项固定单行长度 \(fixedItem.length) 不对")
+            let worstTitleWidth = textWidth(NetworkSpeedStatusItem.fixedTitle(rates: worstRates,
+                                                                             unit: .bytesPerSecond),
+                                            font: NetworkSpeedStatusItem.titleFont)
+            let titleArea = fixedButton.cell?.titleRect(forBounds: fixedButton.bounds).width ?? 0
+            check(titleArea >= worstTitleWidth,
+                  "固定单行文字区 \(titleArea)pt 放不下最宽标题 \(worstTitleWidth)pt（会被截断）")
+            for frame in frames {
+                NetworkSpeedStatusItem.apply(to: fixedItem, enabled: true, rates: frame,
+                                             unit: .bytesPerSecond, layout: .singleLine,
+                                             width: .fixed, icon: icon)
+                check(fixedItem.length == NetworkSpeedStatusItem.FixedWidth.singleLineLength,
+                      "真状态项固定单行长度变了：\(fixedItem.length)")
+                let area = fixedButton.cell?.titleRect(forBounds: fixedButton.bounds).width ?? 0
+                let needed = textWidth(NetworkSpeedStatusItem.fixedTitle(rates: frame,
+                                                                        unit: .bytesPerSecond),
+                                       font: NetworkSpeedStatusItem.titleFont)
+                check(area >= needed,
+                      "固定单行文字区 \(area)pt 放不下 \(needed)pt 的标题")
+            }
+            NetworkSpeedStatusItem.apply(to: fixedItem, enabled: true, rates: worstRates,
+                                         unit: .bytesPerSecond, layout: .twoLines,
+                                         width: .fixed, icon: icon)
+            check(fixedItem.length == NetworkSpeedStatusItem.FixedWidth.twoLinesLength,
+                  "真状态项固定两行长度 \(fixedItem.length) 不对")
+            let imageRect = fixedButton.cell?.imageRect(forBounds: fixedButton.bounds) ?? .zero
+            check(abs(imageRect.width - NetworkSpeedStatusItem.FixedWidth.twoLinesImageWidth) < 0.5,
+                  "两行图在真状态项里被缩放：\(imageRect)")
+            fixedRealChecks = 1
+            NSStatusBar.system.removeStatusItem(fixedItem)
+        } else {
+            print("NOTE 本次运行没有 NSStatusBar（无菜单栏），固定宽度的真状态项断言只用离屏按钮")
         }
 
         let payload: [String: Any] = [
@@ -385,6 +614,23 @@ import Foundation
             "iconWidth": Double((singleWidths.image * 100).rounded() / 100),
             "realStatusItem": realStatusItemChecks,
             "layouts": NetworkSpeedLayout.allCases.map(\.rawValue),
+            "widths": NetworkSpeedWidth.allCases.map(\.rawValue),
+            "fixedSingleLength": Double(NetworkSpeedStatusItem.FixedWidth.singleLineLength),
+            "fixedTwoLinesLength": Double(NetworkSpeedStatusItem.FixedWidth.twoLinesLength),
+            "fixedTwoLinesImageWidth": Double(NetworkSpeedStatusItem.FixedWidth.twoLinesImageWidth),
+            "fixedTitleSlots": NetworkSpeedStatusItem.FixedWidth.singleLineSlots,
+            "fixedWidestTitleWidth": Double((widestFixedTitle * 100).rounded() / 100),
+            "fixedTitleSample": NetworkSpeedStatusItem.fixedTitle(rates: worstRates,
+                                                                 unit: .bytesPerSecond),
+            "fixedIdleTitle": idleTitle,
+            "degradeText": NetworkSpeedStatusItem.fixedSegmentText(
+                NetworkSpeedStatusItem.segment(from: "↓20480T")),
+            "fixedWidthStable": fixedLengths.count == 1,
+            "fixedNumberCellWidth": Double(((cellWidths.first ?? 0) * 100).rounded() / 100),
+            "fixedNumberCellSpread": Double((cellSpread * 1000).rounded() / 1000),
+            "contentWidthCount": contentWidths.count,
+            "combinationLengths": combinationLengths,
+            "fixedRealStatusItem": fixedRealChecks,
             "sampleCount": monitor.snapshot.sampleCount,
             "baselineResetCount": monitor.snapshot.baselineResetCount,
             "boundary": "生产 NetworkSpeedMonitor / NetworkSpeedInterfaceReader / NetworkSpeedStatusItem + 注入假计数器；真实 NSStatusBarButton 尺寸；不访问用户历史与剪贴板。",

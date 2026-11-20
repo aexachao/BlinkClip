@@ -123,6 +123,23 @@ enum NetworkSpeedLayout: String, CaseIterable, Codable, Sendable {
     static let pickerOrder: [NetworkSpeedLayout] = [.singleLine, .twoLines]
 }
 
+/// 菜单栏网速的宽度策略。
+///
+/// - `fixed`（默认）：状态项长度写死（单行 120pt / 上下两行 72pt），数值用等宽
+///   数字右对齐补位，读数变化不会让整条菜单栏重排；
+/// - `content`：状态项长度 `variableLength`，按「图标 + 文字」自适应（旧行为）。
+///
+/// rawValue 是落盘契约：改名字会让用户的选择回到默认值。
+enum NetworkSpeedWidth: String, CaseIterable, Codable, Sendable {
+    case fixed = "fixed"
+    case content = "content"
+
+    /// 分段控件的顺序：固定在前（默认项）。
+    static let pickerOrder: [NetworkSpeedWidth] = [.fixed, .content]
+
+    var isFixed: Bool { self == .fixed }
+}
+
 /// 菜单栏网速的偏好键与应用内唯一实例。
 ///
 /// 偏好是应用级 UserDefaults（和 `appLanguage` 同一层），不进剪贴板 store：
@@ -133,6 +150,7 @@ final class NetworkSpeedMonitor: ObservableObject {
         var isEnabled: Bool
         var unit: NetworkSpeedUnit
         var layout: NetworkSpeedLayout
+        var width: NetworkSpeedWidth
         var rates: NetworkSpeedRates?
         /// 定时器采样次数（含基线），用于回归里证明「关掉后真的停了」。
         var sampleCount: Int
@@ -143,6 +161,7 @@ final class NetworkSpeedMonitor: ObservableObject {
     static let enabledKey = "blinkclip.networkSpeed.enabled"
     static let unitKey = "blinkclip.networkSpeed.unit"
     static let layoutKey = "blinkclip.networkSpeed.layout"
+    static let widthKey = "blinkclip.networkSpeed.width"
 
     static let shared = NetworkSpeedMonitor()
 
@@ -172,7 +191,8 @@ final class NetworkSpeedMonitor: ObservableObject {
         let enabled = defaults.bool(forKey: Self.enabledKey)
         let unit = NetworkSpeedUnit(rawValue: defaults.string(forKey: Self.unitKey) ?? "") ?? .bytesPerSecond
         let layout = NetworkSpeedLayout(rawValue: defaults.string(forKey: Self.layoutKey) ?? "") ?? .singleLine
-        snapshot = Snapshot(isEnabled: enabled, unit: unit, layout: layout,
+        let width = NetworkSpeedWidth(rawValue: defaults.string(forKey: Self.widthKey) ?? "") ?? .fixed
+        snapshot = Snapshot(isEnabled: enabled, unit: unit, layout: layout, width: width,
                             rates: nil, sampleCount: 0, baselineResetCount: 0)
     }
 
@@ -186,6 +206,9 @@ final class NetworkSpeedMonitor: ObservableObject {
 
     /// 当前排版；设置页分段控件与状态栏渲染共用同一个快照值。
     var layout: NetworkSpeedLayout { snapshot.layout }
+
+    /// 当前宽度策略；设置页分段控件与状态栏渲染共用同一个快照值。
+    var width: NetworkSpeedWidth { snapshot.width }
 
     func setEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: Self.enabledKey)
@@ -210,6 +233,13 @@ final class NetworkSpeedMonitor: ObservableObject {
         guard snapshot.layout != layout else { return }
         defaults.set(layout.rawValue, forKey: Self.layoutKey)
         snapshot.layout = layout
+    }
+
+    /// 切换宽度策略：写偏好并更新快照，状态项长度下一帧就按新策略落定。
+    func setWidth(_ width: NetworkSpeedWidth) {
+        guard snapshot.width != width else { return }
+        defaults.set(width.rawValue, forKey: Self.widthKey)
+        snapshot.width = width
     }
 
     /// 打开开关：立刻取一次基线，之后每 `interval` 秒采样一次。

@@ -248,7 +248,8 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         NetworkSpeedStatusItem.apply(to: statusItem, enabled: NetworkSpeedMonitor.shared.snapshot.isEnabled,
                                      rates: NetworkSpeedMonitor.shared.snapshot.rates,
                                      unit: NetworkSpeedMonitor.shared.unit,
-                                     layout: NetworkSpeedMonitor.shared.layout)
+                                     layout: NetworkSpeedMonitor.shared.layout,
+                                     width: NetworkSpeedMonitor.shared.width)
         networkSpeedObservation = NetworkSpeedMonitor.shared.$snapshot
             .removeDuplicates()
             .sink { [weak self] snapshot in
@@ -292,7 +293,7 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     private func renderNetworkSpeed(_ snapshot: NetworkSpeedMonitor.Snapshot) {
         NetworkSpeedStatusItem.apply(to: statusItem, enabled: snapshot.isEnabled,
                                      rates: snapshot.rates, unit: snapshot.unit,
-                                     layout: snapshot.layout)
+                                     layout: snapshot.layout, width: snapshot.width)
         // 只刷新 tooltip；热键状态文案不必每秒重算一次。
         applyStatusToolTip()
     }
