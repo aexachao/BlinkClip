@@ -22,7 +22,7 @@ import os
 ///   位数变化，但两行的左边缘（箭头）始终对齐。
 /// - **超宽不裁剪、不降级成 `>999`**：数值是真实的，容器宽度不动；真放不下时只记一次
 ///   日志（`NetworkSpeedStatusItem.overflowLogs`），绘制照旧、内容会被容器裁掉一点。
-///   正常读数不会走到这里：最宽正常串（`999.9M`）比文字区窄 2.6pt。
+///   正常读数不会走到这里：最宽的两种串（正常读数 `99.9M`、降级串 `>999G`）都比文字区窄。
 /// - **关闭开关**：清空标题、图片恢复纯图标，长度回 `squareLength`（24pt），
 ///   定时器由 `NetworkSpeedMonitor.stop()` 停掉（0 采样）。
 enum NetworkSpeedStatusItem {
@@ -51,30 +51,36 @@ enum NetworkSpeedStatusItem {
 
     /// 固定宽度：容器固定、文字左对齐、无补位无字距，数字该多宽就多宽。
     ///
-    /// 实测（`TwoLines.font` = `monospacedDigitSystemFont(ofSize: 9, weight: .regular)`）：
+    /// 自适应小数（B 档 0 位、KB/MB/GB < 100 一位、≥ 100 无位）之后，读数最多 5 个字符
+    /// （`99.9M`）。实测（`TwoLines.font` = `monospacedDigitSystemFont(ofSize: 9, weight: .regular)`）：
     ///
     /// | 串 | 宽 |
     /// |---|---|
-    /// | `↑999.9M`（最宽正常串：三位整数 + 一位小数 + 最宽后缀 `M`） | **41.41pt** |
-    /// | `↑812.3K`（典型 6 字符串） | 39.48pt |
-    /// | `↑4.2B` | 27.79pt |
-    /// | `↑>999G`（降级串，比最宽正常串窄 3.99pt） | 37.43pt |
+    /// | `↑>999G`（降级串；现在是**最宽**的一种，`>999` 比三位数字宽） | **37.43pt** |
+    /// | `↑99.9M`（最宽正常串：< 100 一位小数 + 最宽后缀 `M`，bps 下是 `↑11.2M`） | **35.58pt** |
+    /// | `↑99.9G` | 34.43pt |
+    /// | `↑32.4K`（< 100 一位小数） | 33.64pt |
+    /// | `↑999M`（≥ 100 无小数） | 32.74pt |
+    /// | `↑999B`（B 档无小数；`↑512B` 同宽） | 30.79pt |
+    /// | `↑4B` | 19.12pt |
     /// | `↑—`（首拍占位） | 15.23pt |
     ///
-    /// 文字区取 **44pt** = 最宽正常串 41.41 + 2.59pt 安全余量（6.3%），图宽因此是
-    /// 18（图标）+ 6（间距）+ 44 = **68pt**；真实菜单栏里状态项左右各留 3pt，
-    /// 所以状态项长度 = 68 + 6 = **74pt**。关闭开关时回 `squareLength`（24pt）。
+    /// 文字区取 **38pt** = max(最宽正常串 35.58 + 2.42pt 安全余量（6.8%），
+    /// 降级串 37.43 + 0.57pt)。图宽因此是 18（图标）+ 6（间距）+ 38 = **62pt**；
+    /// 真实菜单栏里状态项左右各留 3pt，所以状态项长度 = 62 + 6 = **68pt**。
+    /// 关闭开关时回 `squareLength`（24pt）。
     enum FixedWidth {
-        /// 最宽的正常读数（`999.9` + 最宽后缀 `M`）；断言与注释共用这一条事实。
-        static let widestLine = "↑999.9M"
-        static let widestLineWidth: CGFloat = 41.41
-        /// 降级串（末档 GB 无处可进）；比最宽正常串窄，不会撑破。
+        /// 最宽的正常读数（`99.9` + 最宽后缀 `M`）；断言与注释共用这一条事实。
+        static let widestLine = "↑99.9M"
+        static let widestLineWidth: CGFloat = 35.58
+        /// 降级串（末档 GB 无处可进）；带 `>999`，比最宽正常串还宽 1.85pt。
         static let degradedLine = "↑>999G"
+        static let degradedLineWidth: CGFloat = 37.43
         /// 两行文字区的固定宽度（pt）：左对齐画进这个盒子，超出的部分由容器裁掉。
-        static let textWidth: CGFloat = 44
-        /// 两行图的固定宽度（pt）= 18pt 图标 + 6pt 间距 + 44pt 文字区。
+        static let textWidth: CGFloat = 38
+        /// 两行图的固定宽度（pt）= 18pt 图标 + 6pt 间距 + 38pt 文字区。
         static var imageWidth: CGFloat { TwoLines.iconWidth + TwoLines.iconGap + textWidth }
-        /// 真实菜单栏里 `NSStatusBarButton` 给图片左右各 3pt 内边距（沿用改动前的 66 + 6）。
+        /// 真实菜单栏里 `NSStatusBarButton` 给图片左右各 3pt 内边距（沿用改动前的 62 + 6）。
         static let buttonPadding: CGFloat = 6
         /// 状态项固定长度（pt）= 图宽 + 六边距。
         static var length: CGFloat { imageWidth + buttonPadding }
@@ -101,7 +107,7 @@ enum NetworkSpeedStatusItem {
         [.font: TwoLines.font, .foregroundColor: color]
     }
 
-    /// 两行图：第一行上传、第二行下载，固定 68×22pt，两行从同一个 `x` 左对齐。
+    /// 两行图：第一行上传、第二行下载，固定 62×22pt，两行从同一个 `x` 左对齐。
     static func twoLinesImage(icon: NSImage, rates: NetworkSpeedRates?,
                               unit: NetworkSpeedUnit) -> NSImage {
         let lines = lines(rates: rates, unit: unit)
@@ -124,14 +130,10 @@ enum NetworkSpeedStatusItem {
         }
         // 模板图：浅色菜单栏黑、深色白、高亮由 AppKit 重新着色。
         image.isTemplate = true
-        // 无障碍描述用完整的两段读法（上传在前，与视觉顺序一致）。
-        image.accessibilityDescription = "↑\(value(from: rows[0])) ↓\(value(from: rows[1]))"
+        // 无障碍描述走 tooltip 的同一份**完整写法**（`下载 812 KB/s · 上传 32.4 KB/s`，
+        // 下载在前）：VoiceOver 读到的是带 `/s`、带小数的完整读数，与鼠标悬停一致。
+        image.accessibilityDescription = toolTip(rates: rates, unit: unit)
         return image
-    }
-
-    /// 去掉一段文字里已有的箭头，只留数值部分（拼无障碍描述用）。
-    private static func value(from row: String) -> String {
-        row.hasPrefix("↑") || row.hasPrefix("↓") ? String(row.dropFirst()) : row
     }
 
     /// 超宽只记一次日志：不裁剪内容、不改容器宽度（数值是真实的）。
@@ -175,7 +177,7 @@ enum NetworkSpeedStatusItem {
     /// 把开关、读数与单位落到状态项上。
     ///
     /// - 关闭：宽度收回 `squareLength`（24pt），图标回到原来的位置与点击行为；
-    /// - 打开：固定 74pt，读数变化不重排。
+    /// - 打开：固定 68pt，读数变化不重排。
     static func apply(to statusItem: NSStatusItem, enabled: Bool,
                       rates: NetworkSpeedRates?, unit: NetworkSpeedUnit,
                       icon: NSImage = ReplicaBrand.menuBarImage()) {

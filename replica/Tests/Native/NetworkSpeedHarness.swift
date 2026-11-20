@@ -10,8 +10,9 @@ import Foundation
 ///  - 唤醒通知重置基线；
 ///  - utun 优先口径（活动隧道只算隧道，不叠加物理网卡）；
 ///  - 菜单栏唯一呈现：两行（上 `↑` 上传 / 下 `↓` 下载）、固定宽度、左对齐、无补位无字距；
-///  - 四档进位（B / KB / MB / GB）与末档降级串 `>999G`；
-///  - tooltip、无障碍描述与关闭态 24pt。
+///  - macOS 风格自适应小数（B 档 0 位、KB/MB/GB < 100 一位、≥ 100 无位）与四档进位、
+///    末档降级串 `>999G`；
+///  - tooltip / 无障碍描述的完整写法（`下载 812 KB/s · 上传 32.4 KB/s`）与关闭态 24pt。
 @MainActor
 @main struct NetworkSpeedHarness {
     static var checks = 0
@@ -230,14 +231,24 @@ import Foundation
         tunnelMonitor.setEnabled(false)
         monitor.setEnabled(false)
 
-        // ---- 格式：四档进位与末档降级 --------------------------------------
+        // ---- 格式：自适应小数（B 档 0 位、< 100 一位、≥ 100 无位）与四档进位 ------
         let carrySamples: [(Double, String, String)] = [
-            (4.2, "4.2 B/s", "4.2B"),
-            (1_023, "1.0 KB/s", "1.0K"),
+            // ① B 档（< 1024 B）没有小数位。
+            (0, "0 B/s", "0B"),
+            (4.2, "4 B/s", "4B"),
+            (512, "512 B/s", "512B"),
+            (999, "999 B/s", "999B"),
+            (999.6, "1.0 KB/s", "1.0K"),
+            (1_024, "1.0 KB/s", "1.0K"),
+            // ② KB/MB/GB 里 < 100 保留一位小数。
             (33_178, "32.4 KB/s", "32.4K"),
-            (831_795, "812.3 KB/s", "812.3K"),
+            (99.94 * 1_048_576, "99.9 MB/s", "99.9M"),
             (1_468_006, "1.4 MB/s", "1.4M"),
+            // ③ ≥ 100 不显示小数。
+            (831_795, "812 KB/s", "812K"),
+            (340 * 1_048_576.0, "340 MB/s", "340M"),
             (1_073_741_824, "1.0 GB/s", "1.0G"),
+            (999 * 1_073_741_824.0, "999 GB/s", "999G"),
         ]
         for (bytes, full, compact) in carrySamples {
             check(NetworkSpeedFormatter.fullString(bytesPerSecond: bytes, unit: .bytesPerSecond) == full,
@@ -245,10 +256,30 @@ import Foundation
             let compactTitle = NetworkSpeedFormatter.compactString(downloadBytesPerSecond: bytes,
                                                                    uploadBytesPerSecond: 0,
                                                                    unit: .bytesPerSecond)
-            check(compactTitle == "↓\(compact) ↑0.0B",
+            check(compactTitle == "↓\(compact) ↑0B",
                   "紧凑格式 \(bytes) B/s 不对：\(compactTitle)")
         }
-        // 末档（GB）无处可进：≥ 1024 GB 落成降级串，完整写法给 `>999 GB/s`。
+        // ④ 进位边界：显示值到 999.x 就进下一档，0 位小数时即「四舍五入到 ≥ 999.5」。
+        //    999 B 还在 B 档、999.6 B 进 KB；999.4 KB 还在 KB、999.6 KB 进 MB；
+        //    99.96 M 的「一位小数」会变成 100.0，于是直接按整数显示 `100M`。
+        let boundaries: [(Double, String, String)] = [
+            (999, "999 B/s", "999B"),
+            (999.6, "1.0 KB/s", "1.0K"),
+            (1_023_385, "999 KB/s", "999K"),      // 999.3994 KB
+            (1_023_590, "1.0 MB/s", "1.0M"),      // 999.5996 KB
+            (99.94 * 1_048_576, "99.9 MB/s", "99.9M"),
+            (99.96 * 1_048_576, "100 MB/s", "100M"),
+            (999 * 1_073_741_824.0, "999 GB/s", "999G"),
+        ]
+        for (bytes, full, compact) in boundaries {
+            check(NetworkSpeedFormatter.fullString(bytesPerSecond: bytes, unit: .bytesPerSecond) == full,
+                  "进位边界 \(bytes) B/s 不对：\(NetworkSpeedFormatter.fullString(bytesPerSecond: bytes, unit: .bytesPerSecond))")
+            check(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: bytes,
+                                                      uploadBytesPerSecond: 0,
+                                                      unit: .bytesPerSecond) == "↓\(compact) ↑0B",
+                  "进位边界紧凑写法 \(bytes) B/s 不对")
+        }
+        // ⑤ 末档（GB）无处可进：≥ 999.5 GB 落成降级串，完整写法给 `>999 GB/s`。
         let beyondGigabytes = 1_024 * 1_073_741_824.0
         check(NetworkSpeedFormatter.fullString(bytesPerSecond: beyondGigabytes, unit: .bytesPerSecond)
               == ">999 GB/s",
@@ -262,16 +293,30 @@ import Foundation
                                      uploadBytesPerSecond: beyondGigabytes),
             unit: .bytesPerSecond)
         check(degradedTooltip.contains(">999 GB/s"), "tooltip 没有给降级单位：\(degradedTooltip)")
-        // bps 模式同样四档：×8、1000 进制、一位小数。
+        // bps 模式同样四档、同样自适应小数：×8、1000 进制。
         check(NetworkSpeedFormatter.fullString(bytesPerSecond: 1_400_000, unit: .bitsPerSecond) == "11.2 Mbps",
               "bps 完整格式不对：\(NetworkSpeedFormatter.fullString(bytesPerSecond: 1_400_000, unit: .bitsPerSecond))")
+        check(NetworkSpeedFormatter.fullString(bytesPerSecond: 32_400, unit: .bitsPerSecond) == "259 kbps",
+              "bps ≥ 100 应无小数：\(NetworkSpeedFormatter.fullString(bytesPerSecond: 32_400, unit: .bitsPerSecond))")
+        check(NetworkSpeedFormatter.fullString(bytesPerSecond: 4, unit: .bitsPerSecond) == "32 bps",
+              "bps 第一档应无小数：\(NetworkSpeedFormatter.fullString(bytesPerSecond: 4, unit: .bitsPerSecond))")
         check(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_400_000,
                                                   uploadBytesPerSecond: 32_400,
-                                                  unit: .bitsPerSecond) == "↓11.2M ↑259.2K",
+                                                  unit: .bitsPerSecond) == "↓11.2M ↑259K",
               "bps 紧凑格式不对：\(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_400_000, uploadBytesPerSecond: 32_400, unit: .bitsPerSecond))")
         check(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0,
-                                                  unit: .bytesPerSecond) == "↓0.0B ↑0.0B",
+                                                  unit: .bytesPerSecond) == "↓0B ↑0B",
               "空闲紧凑格式不对：\(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0, unit: .bytesPerSecond))")
+        check(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0,
+                                                  unit: .bitsPerSecond) == "↓0b ↑0b",
+              "空闲 bps 紧凑格式不对：\(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0, unit: .bitsPerSecond))")
+
+        // ⑥ tooltip / 设置页 / VoiceOver 的完整写法：同一份自适应小数 + `/s` 后缀。
+        let tooltip = NetworkSpeedStatusItem.toolTip(
+            rates: NetworkSpeedRates(downloadBytesPerSecond: 831_795, uploadBytesPerSecond: 33_178),
+            unit: .bytesPerSecond)
+        check(tooltip.contains("812 KB/s") && tooltip.contains("32.4 KB/s") && tooltip.contains(" · "),
+              "tooltip 完整写法不对：\(tooltip)")
 
         // ---- ① 唯一呈现：只有两行，没有单行路径 -----------------------------
         let rates = NetworkSpeedRates(downloadBytesPerSecond: 1_468_006,
@@ -289,7 +334,7 @@ import Foundation
         let bitLines = NetworkSpeedStatusItem.lines(
             rates: NetworkSpeedRates(downloadBytesPerSecond: 1_400_000, uploadBytesPerSecond: 32_400),
             unit: .bitsPerSecond)
-        check(bitLines.upload == "↑259.2K" && bitLines.download == "↓11.2M",
+        check(bitLines.upload == "↑259K" && bitLines.download == "↓11.2M",
               "bps 两行不对：\(bitLines)")
 
         // ---- ⑤ 不再补位、不再补字距 -----------------------------------------
@@ -300,7 +345,7 @@ import Foundation
         check(Set(attributes.keys) == [.font, .foregroundColor],
               "两行文字属性多出了别的键：\(attributes.keys)")
 
-        // ---- 图几何：固定 64×22pt -------------------------------------------
+        // ---- 图几何：固定 62×22pt -------------------------------------------
         let image = NetworkSpeedStatusItem.twoLinesImage(icon: icon, rates: rates,
                                                          unit: .bytesPerSecond)
         check(abs(image.size.width - NetworkSpeedStatusItem.FixedWidth.imageWidth) < 0.01,
@@ -310,9 +355,13 @@ import Foundation
         check(abs(image.size.height - 22) < 0.01,
               "两行图高应正好两行行高（22pt），实际 \(image.size.height)")
         check(image.isTemplate, "两行图不是模板图（深色/高亮会看不清）")
-        check(image.accessibilityDescription == "↑32.4K ↓1.4M",
-              "两行图的无障碍描述应按「上↑下↓」：\(image.accessibilityDescription ?? "nil")")
-        check(!(image.accessibilityDescription ?? "").contains("\u{2007}"),
+        // VoiceOver 走完整写法（与 tooltip 同一份字符串、同样自适应小数）。
+        let imageDescription = image.accessibilityDescription ?? "nil"
+        check(imageDescription == NetworkSpeedStatusItem.toolTip(rates: rates, unit: .bytesPerSecond),
+              "无障碍描述不是 tooltip 的完整写法：\(imageDescription)")
+        check(imageDescription.contains("1.4 MB/s") && imageDescription.contains("32.4 KB/s"),
+              "无障碍描述缺完整读数：\(imageDescription)")
+        check(!imageDescription.contains("\u{2007}"),
               "无障碍描述里仍有补位字符")
 
         // 宽度预算：最宽正常串与降级串都必须落在固定文字区内。
@@ -322,10 +371,13 @@ import Foundation
                                         font: NetworkSpeedStatusItem.TwoLines.font)
         check(abs(widestMeasured - NetworkSpeedStatusItem.FixedWidth.widestLineWidth) < 0.05,
               "最宽串实测 \(widestMeasured)pt 与常量 \(NetworkSpeedStatusItem.FixedWidth.widestLineWidth)pt 不符")
+        check(abs(degradeMeasured - NetworkSpeedStatusItem.FixedWidth.degradedLineWidth) < 0.05,
+              "降级串实测 \(degradeMeasured)pt 与常量 \(NetworkSpeedStatusItem.FixedWidth.degradedLineWidth)pt 不符")
         check(widestMeasured <= NetworkSpeedStatusItem.FixedWidth.textWidth,
               "最宽正常串 \(widestMeasured)pt 放不进 \(NetworkSpeedStatusItem.FixedWidth.textWidth)pt 文字区")
-        check(degradeMeasured < widestMeasured,
-              "降级串 \(degradeMeasured)pt 不窄于最宽正常串 \(widestMeasured)pt")
+        // 自适应小数之后降级串反而更宽（`>999` 比三位数字宽），文字区必须同时容下它。
+        check(degradeMeasured > widestMeasured,
+              "降级串 \(degradeMeasured)pt 应该比最宽正常串 \(widestMeasured)pt 宽")
         check(degradeMeasured <= NetworkSpeedStatusItem.FixedWidth.textWidth,
               "降级串 \(degradeMeasured)pt 放不进固定文字区")
         check(NetworkSpeedStatusItem.FixedWidth.imageWidth
@@ -334,10 +386,10 @@ import Foundation
               "图宽不是「图标 + 间距 + 文字区」")
 
         // ---- 像素证据：两行、上↑下↓、左对齐 ---------------------------------
-        // 用一个「上传比下载宽很多」的读数：`↑812.3K`（39.48pt）在上、`↓0.0B`（27.79pt）在下。
+        // 用一个「上传比下载宽很多」的读数：`↑812K`（30.80pt）在上、`↓0B`（19.12pt）在下。
         let lopsided = NetworkSpeedRates(downloadBytesPerSecond: 0, uploadBytesPerSecond: 831_795)
         let lopsidedLines = NetworkSpeedStatusItem.lines(rates: lopsided, unit: .bytesPerSecond)
-        check(lopsidedLines.upload == "↑812.3K" && lopsidedLines.download == "↓0.0B",
+        check(lopsidedLines.upload == "↑812K" && lopsidedLines.download == "↓0B",
               "上传在上用的样例不对：\(lopsidedLines)")
         let lopsidedImage = NetworkSpeedStatusItem.twoLinesImage(icon: icon, rates: lopsided,
                                                                  unit: .bytesPerSecond)
@@ -371,7 +423,7 @@ import Foundation
         if let rep = rasterize(lopsidedImage, scale: 2) {
             let scale = 2
             check(hasInk(rep, columns: 0..<(18 * scale)), "两行图左侧 18pt 图标区域没有墨迹")
-            check(!hasInk(rep, columns: (18 * scale)..<(20 * scale)), "两行图图标与文字之间（2pt 间距）有墨迹")
+            check(!hasInk(rep, columns: (18 * scale)..<(24 * scale)), "两行图图标与文字之间（6pt 间距）有墨迹")
             let bands = inkBands(rep, columns: (20 * scale)..<rep.pixelsWide)
             check(bands.count == 2, "两行文字没有分成两段：\(bands)")
             if bands.count == 2 {
@@ -537,6 +589,9 @@ import Foundation
             "bands": bandEvidence,
             "lines": ["upload": lines.upload, "download": lines.download],
             "formatSamples": carrySamples.map { ["bytes": $0.0, "full": $0.1, "compact": $0.2] },
+            "boundarySamples": boundaries.map { ["bytes": $0.0, "full": $0.1, "compact": $0.2] },
+            "tooltip": tooltip,
+            "accessibilityDescription": imageDescription,
             "degradeCompact": degradedTitle,
             "degradeFull": NetworkSpeedFormatter.fullString(bytesPerSecond: beyondGigabytes,
                                                             unit: .bytesPerSecond),

@@ -156,16 +156,31 @@ public enum NetworkSpeedRateCalculator {
 /// 菜单栏文字与 tooltip 的格式化。
 ///
 /// 单位只有四档：`B`、`KB`、`MB`、`GB`（bps 模式对应 `bps`、`kbps`、`Mbps`、`Gbps`）。
-/// 完整格式（tooltip / 设置预览）：1024 进制、一位小数，`1.4 MB/s` / `4.2 B/s` /
-/// `812.3 KB/s`；bps 模式先 ×8，再按 1000 进制、一位小数，`11.2 Mbps` / `259.2 kbps`。
-/// 菜单栏紧凑写法去掉 `/s`：B/s 模式 `↓1.4M ↑32.4K`、`↓812.3K ↑4.2B`；
-/// bps 模式 `↓11.2M ↑259.2K`。不足 1 个单位时保留单位字母，空闲显示
-/// `↓0.0B ↑0.0B`（宽度稳定，不隐藏）。
+/// 小数位按 **macOS 风格自适应**：B 档固定 **0 位**；KB/MB/GB 里数值 **< 100 用 1 位、
+/// ≥ 100 用 0 位**（B/s 走 1024 进制，bps 先 ×8、走 1000 进制）。
 ///
-/// 进位与降级：一位小数的显示值达到 999.9 就进下一档（`999.96 KB/s` → `1.0 MB/s`，
-/// 除数仍是 1024），所以任一档显示的数字最多 5 个字符（`999.9`）。末档 GB 无处可进
-/// （≥ 1024 GB），显示降级串 `>999 GB/s`（菜单栏 `>999G`）——比最宽正常串
-/// `999.9M` 更窄，不会撑破固定宽度。
+/// | 读数 | 完整写法（tooltip / 设置页 / VoiceOver） | 菜单栏紧凑写法 |
+/// |---|---|---|
+/// | 0 B | `0 B/s` | `0B` |
+/// | 4 B | `4 B/s` | `4B` |
+/// | 512 B | `512 B/s` | `512B` |
+/// | 32.4 KB | `32.4 KB/s` | `32.4K` |
+/// | 812 KB | `812 KB/s` | `812K` |
+/// | 1.4 MB | `1.4 MB/s` | `1.4M` |
+/// | 9.8 MB | `9.8 MB/s` | `9.8M` |
+/// | 340 MB | `340 MB/s` | `340M` |
+/// | 999 GB | `999 GB/s` | `999G` |
+///
+/// 菜单栏紧凑写法只是把完整写法的空格与 `/s` 去掉；tooltip 的完整读法是
+/// `下载 812 KB/s · 上传 32.4 KB/s`。不足 1 个单位时保留单位字母，空闲显示
+/// `↓0B ↑0B`（宽度稳定，不隐藏），首拍占位 `↓— ↑—`。
+///
+/// 进位与降级：显示值到 999.x 就进下一档，所以任一档最多 3 位整数——0 位小数时是
+/// `999`、1 位小数时是 `99.9`。0 位小数档按 `≥ 999.5` 进档（`999.6 KB/s` →
+/// `1.0 MB/s`，除数仍是 1024），不会出现 `1000KB/s` 这种四位整数；1 位小数只出现在
+/// < 100 的区间，99.96 这种「一位小数会进位成 100.0」的读数直接按整数显示（`100K`），
+/// 不会出现 `100.0K`。末档 GB 无处可进（显示值到 999.x），降级成 `>999 GB/s`
+/// （菜单栏 `>999G`）——它比最宽正常串 `99.9M` 宽 1.85pt，仍在固定文字区内。
 public enum NetworkSpeedFormatter {
     private struct Scale {
         let base: Double
@@ -217,32 +232,44 @@ public enum NetworkSpeedFormatter {
         let scale = unit.isBits ? bitScale : byteScale
         let shown = presented(bytesPerSecond, unit: unit, scale: scale)
         guard !shown.degraded else { return scale.degradedCompact }
-        // 紧凑写法只是把完整写法的空格与 `/s` 去掉：`4.2 B/s` → `4.2B`、`812.3 KB/s` → `812.3K`。
+        // 紧凑写法只是把完整写法的空格与 `/s` 去掉：`4 B/s` → `4B`、`812 KB/s` → `812K`、
+        // `32.4 KB/s` → `32.4K`。
         return "\(shown.number)\(scale.compactUnits[shown.index])"
     }
 
-    /// 把字节/比特值落到「一位小数的数字 + 档位」，两种写法共用同一份进位口径。
+    /// 把字节/比特值落到「自适应小数的数字 + 档位」，两种写法共用同一份进位口径。
     ///
-    /// - `number`：一位小数的数字（`4.2`、`32.4`、`812.3`、`999.9`）；
+    /// - `number`：按小数位格式化后的数字（`4`、`512`、`32.4`、`812`、`999`）；
     /// - `index`：档位下标，配合完整单位表或紧凑单位表取后缀；
-    /// - `degraded`：末档（GB / Gbps）显示值已达 999.9、无处可进，调用方改用降级串。
+    /// - `degraded`：末档（GB / Gbps）显示值到 999.x、无处可进，调用方改用降级串。
     private static func presented(_ bytesPerSecond: Double, unit: NetworkSpeedUnit,
                                   scale: Scale) -> (number: String, index: Int, degraded: Bool) {
         let value = unit.isBits ? max(0, bytesPerSecond) * 8 : max(0, bytesPerSecond)
         var scaled = scaleRaw(value, in: scale.base, units: scale.units)
-        // 999.9 是显示层的一档边界：999.96 KB 不再显示成 1000.0 KB，而是 1.0 MB
-        // （除数仍是 1024）。末档已经无档可进，于是交给降级串。
-        if rounded(scaled.value, decimals: 1) >= 999.9 {
+        // 999.x 是显示层的一档边界：0 位小数时即「四舍五入到 ≥ 999.5」，999.6 KB 不再
+        // 显示成 1000 KB，而是 1.0 MB（除数仍是 1024）。末档已经无档可进，交给降级串。
+        if rounded(scaled.value, decimals: 0) >= 999.5 {
             guard scaled.index < scale.units.count - 1 else {
                 return ("", scaled.index, true)
             }
             scaled = (scaled.value / scale.base, scaled.index + 1)
         }
-        return (number(scaled.value, decimals: 1), scaled.index, false)
+        return (number(scaled.value, decimals: decimals(scaled)), scaled.index, false)
+    }
+
+    /// 自适应小数位：B 档（第一档）固定 **0 位**；KB/MB/GB 数值 **< 100 时 1 位、
+    /// ≥ 100 时 0 位**。
+    ///
+    /// 99.96 这种「一位小数会进位成 100.0」的读数按 100 处理、改按整数显示（`100K`），
+    /// 所以 1 位小数的写法最多到 `99.9`（4 个字符），0 位小数最多到 `999`（3 个字符）。
+    private static func decimals(_ scaled: (value: Double, index: Int)) -> Int {
+        guard scaled.index > 0, scaled.value < 100,
+              rounded(scaled.value, decimals: 1) < 100 else { return 0 }
+        return 1
     }
 
     /// 按 1024 / 1000 逐级缩放，最多升到最后一档（GB / Gbps）。
-    /// 999.9 的显示进位留给调用方（`presented`），避免出现 `1000.0 KB/s` 这类四位整数。
+    /// 999.x 的显示进位留给调用方（`presented`），避免出现 `1000 KB/s` 这类四位整数。
     private static func scaleRaw(_ value: Double, in base: Double, units: [String])
         -> (value: Double, index: Int) {
         var scaled = value
