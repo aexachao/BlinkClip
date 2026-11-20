@@ -125,7 +125,7 @@ enum NetworkSpeedLayout: String, CaseIterable, Codable, Sendable {
 
 /// 菜单栏网速的宽度策略。
 ///
-/// - `fixed`（默认）：状态项长度写死（单行 120pt / 上下两行 72pt），数值用等宽
+/// - `fixed`（默认）：状态项长度写死（单行 124pt / 上下两行 72pt），数值用等宽
 ///   数字右对齐补位，读数变化不会让整条菜单栏重排；
 /// - `content`：状态项长度 `variableLength`，按「图标 + 文字」自适应（旧行为）。
 ///
