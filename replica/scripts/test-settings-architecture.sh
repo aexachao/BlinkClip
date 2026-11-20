@@ -178,42 +178,34 @@ checks = {
                                  and "settings.toolbox.network-speed.toggle" in aux
                                  and "settings.toolbox.network-speed.unit.picker" in aux
                                  and "settings.toolbox.network-speed.unit.subtitle" in aux
-                                 and "settings.toolbox.network-speed.layout.picker" in aux
-                                 and "settings.toolbox.network-speed.layout.subtitle" in aux
-                                 and "settings.toolbox.network-speed.width.picker" in aux
-                                 and "settings.toolbox.network-speed.width.subtitle" in aux
                                  and 'case 6: toolbox' in aux,
-    # NETLAYOUT / NETWIDTH：一张卡四行（开关 / 单位 / 排版 / 宽度）。三行子项同级、
-    # 同一张卡，顺序是「单位 → 排版 → 宽度」，三条分隔线各一行，没有把行挤到卡外。
-    'toolbox-layout-row-shares-the-unit-card': (toolbox_source := aux[aux.index('private var toolbox: some View'):aux.index('/// 分区标题在侧栏与页内共用一处来源')])
-                                               .count('Divider()') == 3
-                                               and toolbox_source.index('networkSpeedUnitRow')
-                                               < toolbox_source.index('networkSpeedLayoutRow')
-                                               < toolbox_source.index('networkSpeedWidthRow'),
-    'toolbox-layout-options-are-trilingual': all(
-        literal in aux for literal in ('"单行", "單行", "Single line"',
-                                       '"上下两行", "上下兩行", "Two lines"'))
-                                              and 'NetworkSpeedLayout.pickerOrder' in aux,
-    'toolbox-width-options-are-trilingual': all(
-        literal in aux for literal in ('"固定", "固定", "Fixed"',
-                                       '"随内容", "隨內容", "Fit Content"'))
-                                             and 'NetworkSpeedWidth.pickerOrder' in aux,
-    'toolbox-layout-row-is-asserted': 'settings.toolbox.network-speed.layout.picker' in harness
-                                      and 'settings.toolbox.network-speed.layout.subtitle' in harness
-                                      and '(.toolbox, 1)' in harness
-                                      and 'toolbox page no longer fits one screen' in harness
-                                      and 'layout row is not below the unit row' in harness,
-    'toolbox-width-row-is-asserted': 'settings.toolbox.network-speed.width.picker' in harness
-                                      and 'settings.toolbox.network-speed.width.subtitle' in harness
-                                      and 'toolbox width control does not offer' in harness
-                                      and 'width row is not below the layout row' in harness
-                                      and 'toolbox page no longer fits one screen after the width row' in harness,
+    # 一张卡只剩两行（开关 / 单位）：一条分隔线，两行同一张卡，顺序是「开关 → 单位」。
+    # 「排版」「宽度」两个设置项已删除：行、绑定、枚举、三语键都不得再出现。
+    'toolbox-has-only-the-switch-and-unit': (toolbox_source := aux[aux.index('private var toolbox: some View'):aux.index('/// 分区标题在侧栏与页内共用一处来源')])
+                                            .count('Divider()') == 1
+                                            and toolbox_source.index('settingsToggle("settings.toolbox.network-speed.title"')
+                                            < toolbox_source.index('networkSpeedUnitRow')
+                                            and 'networkSpeedLayoutRow' not in aux
+                                            and 'networkSpeedWidthRow' not in aux
+                                            and 'NetworkSpeedLayout' not in aux
+                                            and 'NetworkSpeedWidth' not in aux
+                                            and 'networkSpeedLayoutBinding' not in aux
+                                            and 'networkSpeedWidthBinding' not in aux,
+    'toolbox-removed-keys-are-gone': all(key not in (ui / 'SettingsCopy.swift').read_text()
+                                         for key in ('settings.toolbox.network-speed.layout.title',
+                                                     'settings.toolbox.network-speed.layout.subtitle',
+                                                     'settings.toolbox.network-speed.width.title',
+                                                     'settings.toolbox.network-speed.width.subtitle')),
+    'toolbox-two-rows-are-asserted': 'settings.toolbox.network-speed.unit.picker' in harness
+                                     and 'settings.toolbox.network-speed.unit.subtitle' in harness
+                                     and '(.toolbox, 1)' in harness
+                                     and 'toolbox page no longer fits one screen' in harness
+                                     and 'unit row is not below the speed switch' in harness
+                                     and 'removed layout/width controls' in harness,
     'toolbox-copy-is-trilingual': 'settings.toolbox.network-speed.title' in (ui / 'SettingsCopy.swift').read_text()
                                   and 'settings.toolbox.network-speed.tooltip' in (ui / 'SettingsCopy.swift').read_text()
-                                  and 'settings.toolbox.network-speed.layout.title' in (ui / 'SettingsCopy.swift').read_text()
-                                  and 'settings.toolbox.network-speed.layout.subtitle' in (ui / 'SettingsCopy.swift').read_text()
-                                  and 'settings.toolbox.network-speed.width.title' in (ui / 'SettingsCopy.swift').read_text()
-                                  and 'settings.toolbox.network-speed.width.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
+                                  and 'settings.toolbox.network-speed.unit.title' in (ui / 'SettingsCopy.swift').read_text()
+                                  and 'settings.toolbox.network-speed.unit.subtitle' in (ui / 'SettingsCopy.swift').read_text(),
     'about-row-selects-a-page': 'aboutReturnTab' not in aux and 'restoreSidebarAfterAbout' not in aux
                                  and 'BlinkClipAboutWindow.present' not in aux
                                  and '.tag(SettingsAboutPane.tabIndex)' in aux,

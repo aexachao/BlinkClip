@@ -4,7 +4,9 @@ import BlinkClipCore
 /// 菜单栏网速的纯函数口径：接口选择、基线/回绕、速率分母与两种格式。
 ///
 /// 这些测试不读真实网卡，注入 `NetworkSpeedInterfaceSnapshot` 与采样时间，
-/// 因此 VPN 口径、计数器重置与 999.9K 边界都能稳定复现。
+/// 因此 VPN 口径、计数器重置、999.9K 边界与末档降级都能稳定复现。
+///
+/// 单位只有四档：B、KB、MB、GB（bps 模式 bps、kbps、Mbps、Gbps）。
 struct NetworkSpeedTests {
     // MARK: - 格式
 
@@ -30,6 +32,18 @@ struct NetworkSpeedTests {
                     "1.0 KB/s")
         expectEqual(NetworkSpeedFormatter.fullString(bytesPerSecond: 1_024, unit: .bytesPerSecond),
                     "1.0 KB/s")
+        // 四档：B → KB → MB → GB，每档一位小数。
+        expectEqual(NetworkSpeedFormatter.fullString(bytesPerSecond: 1_024 * 1_024, unit: .bytesPerSecond),
+                    "1.0 MB/s")
+        expectEqual(NetworkSpeedFormatter.fullString(bytesPerSecond: 999 * 1_073_741_824, unit: .bytesPerSecond),
+                    "999.0 GB/s")
+        // 末档（GB）无档可进：≥ 1024 GB 落成降级串，而不是 TB 或四位整数。
+        expectEqual(NetworkSpeedFormatter.fullString(bytesPerSecond: 1_024 * 1_073_741_824,
+                                                     unit: .bytesPerSecond),
+                    ">999 GB/s")
+        expectEqual(NetworkSpeedFormatter.fullString(bytesPerSecond: 20_480 * 1_073_741_824,
+                                                     unit: .bytesPerSecond),
+                    ">999 GB/s")
     }
 
     func testBitsFormatting() {
@@ -45,33 +59,46 @@ struct NetworkSpeedTests {
     }
 
     func testCompactMenuBarTitle() {
+        // 紧凑写法 = 完整写法去掉空格与 `/s`：一位小数，四档单位字母 B/K/M/G。
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_468_006,
                                                         uploadBytesPerSecond: 33_178, unit: .bytesPerSecond),
                     "↓1.4M ↑32.4K")
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 831_795,
                                                         uploadBytesPerSecond: 4.2, unit: .bytesPerSecond),
-                    "↓812K ↑4.2B/s")
+                    "↓812.3K ↑4.2B")
+        expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_073_741_824,
+                                                        uploadBytesPerSecond: 1_024 * 1_024,
+                                                        unit: .bytesPerSecond),
+                    "↓1.0G ↑1.0M")
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_400_000,
                                                         uploadBytesPerSecond: 32_400, unit: .bitsPerSecond),
-                    "↓11.2M ↑259K")
+                    "↓11.2M ↑259.2K")
         // 空闲不隐藏、宽度稳定。
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0,
                                                         uploadBytesPerSecond: 0, unit: .bytesPerSecond),
-                    "↓0B/s ↑0B/s")
+                    "↓0.0B ↑0.0B")
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 0,
                                                         uploadBytesPerSecond: 0, unit: .bitsPerSecond),
-                    "↓0bps ↑0bps")
+                    "↓0.0b ↑0.0b")
         // 首采样只有基线：占位符而不是数字。
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: nil,
                                                         uploadBytesPerSecond: nil, unit: .bytesPerSecond),
                     "↓— ↑—")
-        // 999.6K / 999.9K 取整会撞到 1000K，进档成 1.0M。
+        // 一位小数的边界是 999.9：999.6 KB 原样显示（`999.6K`），
+        // 999.9 KB 再往上一格才进档成 `1.0M`，不会出现 `1000.0K`。
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_023_590,
                                                         uploadBytesPerSecond: 0, unit: .bytesPerSecond),
-                    "↓1.0M ↑0B/s")
+                    "↓999.6K ↑0.0B")
         expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_023_897,
                                                         uploadBytesPerSecond: 0, unit: .bytesPerSecond),
-                    "↓1.0M ↑0B/s")
+                    "↓1.0M ↑0.0B")
+        // 末档（G）无档可进：≥ 1024 GB 显示降级串 `>999G`（5 个字符，比最宽正常串窄）。
+        expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 1_024 * 1_073_741_824,
+                                                        uploadBytesPerSecond: 0, unit: .bytesPerSecond),
+                    "↓>999G ↑0.0B")
+        expectEqual(NetworkSpeedFormatter.compactString(downloadBytesPerSecond: 20_480 * 1_073_741_824,
+                                                        uploadBytesPerSecond: 0, unit: .bytesPerSecond),
+                    "↓>999G ↑0.0B")
     }
 
     // MARK: - 接口选择与 VPN 口径

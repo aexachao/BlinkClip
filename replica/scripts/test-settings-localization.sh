@@ -71,14 +71,14 @@ root, out = map(pathlib.Path, sys.argv[1:])
 languages = ['en', 'zh-Hans', 'zh-Hant']
 runs = {language: json.loads((out / f'{language}.json').read_text()) for language in languages}
 assert all(run['passed'] for run in runs.values()), {k: v['passed'] for k, v in runs.items()}
-# 每种语言至少 100 条检查：进程语言 + 语言判定 + 三语查表 + 7 个分区标题 +
-# 65 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题、Z3b 新增
-# 「外观与语言」组的 8 条、WEBLINK 新增关于页链接行的四条、NETLAYOUT 新增「排版」标题与说明、
-# NETWIDTH 新增「宽度」标题与说明）
+# 每种语言至少 96 条检查：进程语言 + 语言判定 + 三语查表 + 7 个分区标题 +
+# 61 条设置文案（P7 新增「自动检查更新」标题与说明、X1a 新增三个分组标题、Z3b 新增
+# 「外观与语言」组的 8 条、WEBLINK 新增关于页链接行的四条；NETSPEED-SIMPLIFY 删掉了
+# 「排版」「宽度」两行的四条键）
 # + 截图表的 copy-table/title/2 个无障碍标签/停用提示 + 34 条截图文案 +
 # 6 条 toast 文案（T2：截图成功 toast 从设置表移到 toast 表，复制/暂停/继续/截图四条
 # toast 的文案现在只有一个来源）。
-assert all(len(run['cases']) >= 100 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
+assert all(len(run['cases']) >= 96 for run in runs.values()), {k: len(v['cases']) for k, v in runs.items()}
 
 def resolved(run):
     """34 条截图文案：resolved.<key>。"""
@@ -95,10 +95,10 @@ def values(run, prefixes):
 
 keys = {language: set(run['keys']) for language, run in runs.items()}
 assert keys['en'] == keys['zh-Hans'] == keys['zh-Hant'], 'key set differs per language'
-# 65 条设置文案 + 34 条截图文案 + 5 条 toast 文案，三语同键集。
-assert len(keys['en']) == 104, f'unexpected key count: {len(keys["en"])}'
+# 61 条设置文案 + 34 条截图文案 + 5 条 toast 文案，三语同键集。
+assert len(keys['en']) == 100, f'unexpected key count: {len(keys["en"])}'
 for language in languages:
-    assert runs[language]['settingsKeyCount'] == 65, (language, runs[language]['settingsKeyCount'])
+    assert runs[language]['settingsKeyCount'] == 61, (language, runs[language]['settingsKeyCount'])
     assert runs[language]['screenshotKeyCount'] == 34, (language, runs[language]['screenshotKeyCount'])
     assert runs[language]['toastKeyCount'] == 5, (language, runs[language]['toastKeyCount'])
 resolved_cases = {language: set(resolved(run)) for language, run in runs.items()}
@@ -217,7 +217,7 @@ assert '截图' in sections['zh-Hans'].values(), sections['zh-Hans']
 
 # --- the whole settings table is Traditional under zh-Hant --------------------
 settings = {language: values(runs[language], ['settings.']) for language in languages}
-assert len(settings['zh-Hant']) == 65, len(settings['zh-Hant'])
+assert len(settings['zh-Hant']) == 61, len(settings['zh-Hant'])
 assert set(settings['zh-Hant']) == set(settings['zh-Hans']) == set(settings['en']), 'settings key sets differ'
 # 10 known Simplified/Traditional divergences: no Simplified-only spelling may
 # survive anywhere in the zh-Hant settings copy.
@@ -239,9 +239,7 @@ same = {name for name in settings['zh-Hant']
 assert same <= {f'settings.{key}' for key in ('settings.mcp.connection-sheet.done',
                                               'general.action.cancel',
                                               'settings.sound-effects.title',
-                                              'settings.appearance.theme.dark',
-                                              # NETLAYOUT：「排版」简繁同形（Layout 表头），不是漏翻。
-                                              'settings.toolbox.network-speed.layout.title')}, same
+                                              'settings.appearance.theme.dark')}, same
 for name in settings['zh-Hant']:
     assert settings['zh-Hant'][name] not in IDENTICAL or settings['zh-Hant'][name] == settings['zh-Hans'][name]
 # Spot-check the terms the report calls out, so a silent revert cannot pass.
@@ -260,12 +258,10 @@ spot = {
     'settings.settings.appearance.theme.subtitle': '選「跟隨系統」時隨 macOS 外觀切換。',
     'settings.settings.appearance.language.subtitle': '介面語言；部分系統對話框仍跟隨系統語言。',
     'settings.settings.appearance.follow-system': '跟隨系統',
-    # NETLAYOUT：菜单栏网速「排版」行的说明（标题「排版」简繁同形，已进同形白名单，
-    # 这里只逐字核对说明，避免 spot 的「简繁必须不同」前提被同形词打破）。
-    'settings.settings.toolbox.network-speed.layout.subtitle': '上下兩行較窄。',
-    # NETWIDTH：「宽度」行的标题与说明，繁中不得回落英文或简体。
-    'settings.settings.toolbox.network-speed.width.title': '寬度',
-    'settings.settings.toolbox.network-speed.width.subtitle': '固定寬度不會讓整條選單列重排。',
+    # NETSPEED-SIMPLIFY：工具箱只剩开关与单位，「排版」「宽度」四条键已删除，
+    # 这里改为逐字核对留下的单位行，避免删键时把同一张卡的文字一起删掉。
+    'settings.settings.toolbox.network-speed.unit.title': '單位',
+    'settings.settings.toolbox.network-speed.unit.subtitle': '目前讀數：%@',
     'settings.updates.about-title': '關於閃貼',
     # WEBLINK：关于页链接行的四条，繁中不得回落英文，也不得留简体字形。
     'settings.updates.link-website': '官方網站',
@@ -414,9 +410,6 @@ allow_identical = {'完成', '取消', '播放操作提示音', 'AI 工具', '�
                    '最近更新 ', 'iCloud 同步', '永久', '\\(days) 天', '最近 \\(days) 天',
                    # 「工具箱」简繁同形（toolbox 在繁体里也写工具箱），不是漏翻。
                    '工具箱',
-                   # NETWIDTH：宽度选项「固定」简繁同形（fixed 在繁体里也写固定），
-                   # 另一半选项「随内容 / 隨內容」是差异写法，这里只放行同形的那个。
-                   '固定',
                    # 「上次同步」简繁同形：语义与写法在两套字形里完全一致，不是漏翻。
                    '上次同步 '}
 identical = {a[0] for owner in calls for _, a in calls[owner] if a[0] == a[1]}
@@ -472,7 +465,7 @@ for name in SETTINGS_HELPERS + ['SettingsShortcutReset.swift']:
 used |= set(re.findall(r'aboutRowTitleKey\s*=\s*"([^"]+)"', by_name['AuxiliaryViews.swift'].read_text()))
 assert used == terms, ('settings keys outside the trilingual table', sorted(used - terms),
                        'unused terms', sorted(terms - used))
-assert len(terms) == 65, len(terms)
+assert len(terms) == 61, len(terms)
 
 # Inventory of the remaining blanket "any zh" branches outside the settings
 # copy: none of them is settings-page copy. AppBrand picks the Chinese app name,

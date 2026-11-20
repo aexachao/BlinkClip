@@ -247,9 +247,7 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
         // 开关关闭时渲染器只把标题清空、宽度收回 squareLength，没有任何后台定时器。
         NetworkSpeedStatusItem.apply(to: statusItem, enabled: NetworkSpeedMonitor.shared.snapshot.isEnabled,
                                      rates: NetworkSpeedMonitor.shared.snapshot.rates,
-                                     unit: NetworkSpeedMonitor.shared.unit,
-                                     layout: NetworkSpeedMonitor.shared.layout,
-                                     width: NetworkSpeedMonitor.shared.width)
+                                     unit: NetworkSpeedMonitor.shared.unit)
         networkSpeedObservation = NetworkSpeedMonitor.shared.$snapshot
             .removeDuplicates()
             .sink { [weak self] snapshot in
@@ -289,11 +287,10 @@ final class ReplicaAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValid
     }
 
     /// 把采集快照落到状态栏：文字/宽度由渲染器负责，tooltip 与热键状态共用一份。
-    /// 排版也在快照里，所以设置页一改「排版」，这里下一帧就按新排版重画。
+    /// 开关或单位一变，这里下一帧就按新读数重画（状态项长度恒为固定值）。
     private func renderNetworkSpeed(_ snapshot: NetworkSpeedMonitor.Snapshot) {
         NetworkSpeedStatusItem.apply(to: statusItem, enabled: snapshot.isEnabled,
-                                     rates: snapshot.rates, unit: snapshot.unit,
-                                     layout: snapshot.layout, width: snapshot.width)
+                                     rates: snapshot.rates, unit: snapshot.unit)
         // 只刷新 tooltip；热键状态文案不必每秒重算一次。
         applyStatusToolTip()
     }

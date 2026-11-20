@@ -273,57 +273,30 @@ import BlinkClipCapture
             let unitLabels = tree.filter { ["B/s", "bps"].contains(axText($0)) }
             try check(unitLabels.count >= 2,
                       "toolbox segmented control does not show both units: \(unitLabels.map(axText))")
-            // NETLAYOUT：「排版」行（单行 / 上下两行）与「单位」行同级、同一张卡，
-            // 排在单位行下方，页面仍在一屏内。
-            guard let layoutPicker = node("settings.toolbox.network-speed.layout.picker") else {
-                throw Failure(message: "toolbox page is missing the layout segmented control")
-            }
-            guard node("settings.toolbox.network-speed.layout.subtitle") != nil else {
-                throw Failure(message: "toolbox page is missing the layout description")
-            }
-            for label in [SettingsCopy.trilingual("单行", "單行", "Single line"),
-                          SettingsCopy.trilingual("上下两行", "上下兩行", "Two lines")] {
-                try check(tree.contains { axText($0) == label },
-                          "toolbox layout control does not offer \(label)")
-            }
             let padded = card.insetBy(dx: -1, dy: -1)
-            try check(padded.contains(layoutPicker),
-                      "layout segcontrol is outside the toolbox card: control \(layoutPicker) card \(card)")
-            try check(layoutPicker.maxY < unitPicker.minY,
-                      "layout row is not below the unit row: layout \(layoutPicker) unit \(unitPicker)")
+            try check(padded.contains(unitPicker),
+                      "unit segcontrol is outside the toolbox card: control \(unitPicker) card \(card)")
+            // 两行口径：开关在上、单位在下；「排版」「宽度」两个设置项已删除，
+            // 页面上不该再出现它们的控件。
             try check(toggle.maxY > unitPicker.minY,
                       "unit row is not below the speed switch: switch \(toggle) unit \(unitPicker)")
-            // NETWIDTH：「宽度」行（固定 / 随内容）与「排版」行同级、同一张卡，
-            // 排在排版行下方；选项名三语，默认固定。
-            guard let widthPicker = node("settings.toolbox.network-speed.width.picker") else {
-                throw Failure(message: "toolbox page is missing the width segmented control")
-            }
-            guard node("settings.toolbox.network-speed.width.subtitle") != nil else {
-                throw Failure(message: "toolbox page is missing the width description")
-            }
-            for label in [SettingsCopy.trilingual("固定", "固定", "Fixed"),
-                          SettingsCopy.trilingual("随内容", "隨內容", "Fit Content")] {
-                try check(tree.contains { axText($0) == label },
-                          "toolbox width control does not offer \(label)")
-            }
-            try check(padded.contains(widthPicker),
-                      "width segcontrol is outside the toolbox card: control \(widthPicker) card \(card)")
-            try check(widthPicker.maxY < layoutPicker.minY,
-                      "width row is not below the layout row: width \(widthPicker) layout \(layoutPicker)")
-            // 布局预算：四行之后工具箱页仍然一屏装得下，且四行的竖直顺序
-            // 是「开关 → 单位 → 排版 → 宽度」，行与行之间没有重叠。
+            try check(node("settings.toolbox.network-speed.layout.picker") == nil
+                      && node("settings.toolbox.network-speed.width.picker") == nil,
+                      "toolbox page still shows the removed layout/width controls")
+            try check(node("settings.toolbox.network-speed.layout.subtitle") == nil
+                      && node("settings.toolbox.network-speed.width.subtitle") == nil,
+                      "toolbox page still shows the removed layout/width descriptions")
+            // 布局预算：只剩两行之后工具箱页仍然一屏装得下，且单位行没有跑到卡外。
             if let geometry = pageGeometry["\(appearance)-\(section.rawValue)"] {
                 try check(geometry["fitsOneScreen"] == 1,
-                          "toolbox page no longer fits one screen after the width row: \(geometry)")
+                          "toolbox page no longer fits one screen: \(geometry)")
                 try check(geometry["documentHeight"]! <= geometry["viewportHeight"]! + 0.5,
                           "toolbox page content \(geometry["documentHeight"]!)pt exceeds the \(geometry["viewportHeight"]!)pt viewport")
             } else {
                 throw Failure(message: "\(appearance) toolbox page has no geometry for the layout budget")
             }
-            try check(layoutPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
-                      "layout row is above the toolbox card top")
-            try check(widthPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
-                      "width row is above the toolbox card top")
+            try check(unitPicker.maxY <= (cardRects.map(\.maxY).max() ?? 0) + 1,
+                      "unit row is above the toolbox card top")
         }
 
         if section == .ai {
@@ -868,18 +841,15 @@ import BlinkClipCapture
                              detailIdentifier: nil),
             ]
         case .toolbox:
+            // 工具箱只剩两行：开关（标题 + 说明）与单位行（标题 + 说明 + 右侧分段控件）。
+            // 单位行的分段控件两侧与文字块中线对齐，所以和开关一起进逐行对齐断言。
             return [
                 AlignmentRow(control: "settings.toolbox.network-speed.toggle", kind: .toggle,
                              title: SettingsCopy.text("settings.toolbox.network-speed.title"),
                              detailIdentifier: "settings.toolbox.network-speed.subtitle"),
-                // NETLAYOUT：排版行与单位行一样是「标题 + 说明 + 右侧分段控件」。
-                AlignmentRow(control: "settings.toolbox.network-speed.layout.picker", kind: .picker,
-                             title: SettingsCopy.text("settings.toolbox.network-speed.layout.title"),
-                             detailIdentifier: "settings.toolbox.network-speed.layout.subtitle"),
-                // NETWIDTH：宽度行同样是「标题 + 说明 + 右侧分段控件」。
-                AlignmentRow(control: "settings.toolbox.network-speed.width.picker", kind: .picker,
-                             title: SettingsCopy.text("settings.toolbox.network-speed.width.title"),
-                             detailIdentifier: "settings.toolbox.network-speed.width.subtitle"),
+                AlignmentRow(control: "settings.toolbox.network-speed.unit.picker", kind: .picker,
+                             title: SettingsCopy.text("settings.toolbox.network-speed.unit.title"),
+                             detailIdentifier: "settings.toolbox.network-speed.unit.subtitle"),
             ]
         case .privacy:
             return [

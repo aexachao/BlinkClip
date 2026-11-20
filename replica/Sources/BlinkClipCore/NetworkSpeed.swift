@@ -155,38 +155,47 @@ public enum NetworkSpeedRateCalculator {
 
 /// 菜单栏文字与 tooltip 的格式化。
 ///
-/// 完整格式（tooltip / 设置预览）：1024 进制、一位小数，`1.4 MB/s` / `4.2 B/s`；
-/// bps 模式先 ×8，再按 1000 进制、一位小数，`11.2 Mbps` / `259.2 kbps`。
-/// 菜单栏紧凑写法：B/s 模式 `↓1.4M ↑32.4K`，bps 模式 `↓11.2M ↑259K`；
-/// 不足 1 个单位时保留单位后缀，空闲显示 `↓0B/s ↑0B/s`（宽度稳定，不隐藏）。
+/// 单位只有四档：`B`、`KB`、`MB`、`GB`（bps 模式对应 `bps`、`kbps`、`Mbps`、`Gbps`）。
+/// 完整格式（tooltip / 设置预览）：1024 进制、一位小数，`1.4 MB/s` / `4.2 B/s` /
+/// `812.3 KB/s`；bps 模式先 ×8，再按 1000 进制、一位小数，`11.2 Mbps` / `259.2 kbps`。
+/// 菜单栏紧凑写法去掉 `/s`：B/s 模式 `↓1.4M ↑32.4K`、`↓812.3K ↑4.2B`；
+/// bps 模式 `↓11.2M ↑259.2K`。不足 1 个单位时保留单位字母，空闲显示
+/// `↓0.0B ↑0.0B`（宽度稳定，不隐藏）。
+///
+/// 进位与降级：一位小数的显示值达到 999.9 就进下一档（`999.96 KB/s` → `1.0 MB/s`，
+/// 除数仍是 1024），所以任一档显示的数字最多 5 个字符（`999.9`）。末档 GB 无处可进
+/// （≥ 1024 GB），显示降级串 `>999 GB/s`（菜单栏 `>999G`）——比最宽正常串
+/// `999.9M` 更窄，不会撑破固定宽度。
 public enum NetworkSpeedFormatter {
     private struct Scale {
         let base: Double
         let units: [String]
         let compactUnits: [String]
+        /// 末档放不下时的完整写法（tooltip / 设置预览）。
+        let degraded: String
+        /// 末档放不下时的菜单栏紧凑写法。
+        let degradedCompact: String
     }
 
     private static let byteScale = Scale(base: 1024,
-                                         units: ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"],
-                                         compactUnits: ["B/s", "K", "M", "G", "T"])
+                                         units: ["B/s", "KB/s", "MB/s", "GB/s"],
+                                         compactUnits: ["B", "K", "M", "G"],
+                                         degraded: ">999 GB/s",
+                                         degradedCompact: ">999G")
     private static let bitScale = Scale(base: 1000,
-                                        units: ["bps", "kbps", "Mbps", "Gbps", "Tbps"],
-                                        compactUnits: ["bps", "K", "M", "G", "T"])
+                                        units: ["bps", "kbps", "Mbps", "Gbps"],
+                                        compactUnits: ["b", "K", "M", "G"],
+                                        degraded: ">999 Gbps",
+                                        degradedCompact: ">999G")
 
     /// 空读数（还没取到基线，或刚从重置里恢复）的菜单栏占位。
     public static let unavailableCompact = "↓— ↑—"
 
     public static func fullString(bytesPerSecond: Double, unit: NetworkSpeedUnit) -> String {
-        let value = unit.isBits ? max(0, bytesPerSecond) * 8 : max(0, bytesPerSecond)
         let scale = unit.isBits ? bitScale : byteScale
-        var scaled = scaleRaw(value, in: scale.base, units: scale.units)
-        // 一位小数的边界是 999.9K：999.9 KB 不再显示，直接进档成 1.0 MB/s
-        // （999.96 KB 同理）。除数仍是 1024，只是不在最后一档显示 999.9。
-        if scaled.index < scale.units.count - 1,
-           rounded(scaled.value, decimals: 1) >= 999.9 {
-            scaled = (scaled.value / scale.base, scaled.index + 1)
-        }
-        return "\(number(scaled.value, decimals: 1)) \(scale.units[scaled.index])"
+        let shown = presented(bytesPerSecond, unit: unit, scale: scale)
+        guard !shown.degraded else { return scale.degraded }
+        return "\(shown.number) \(scale.units[shown.index])"
     }
 
     public static func compactString(downloadBytesPerSecond: Double?, uploadBytesPerSecond: Double?,
@@ -205,25 +214,35 @@ public enum NetworkSpeedFormatter {
     }
 
     private static func compact(_ bytesPerSecond: Double, unit: NetworkSpeedUnit) -> String {
-        let value = unit.isBits ? max(0, bytesPerSecond) * 8 : max(0, bytesPerSecond)
         let scale = unit.isBits ? bitScale : byteScale
-        var scaled = scaleRaw(value, in: scale.base, units: scale.compactUnits)
-        if scaled.value == 0 { return "0\(scale.compactUnits[scaled.index])" }
-        // 三位有效数字的紧凑写法：<100 保留一位小数（1.4M / 32.4K），
-        // ≥100 取整（259K / 812K）。
-        var decimals = scaled.value < 100 ? 1 : 0
-        if scaled.index < scale.compactUnits.count - 1,
-           rounded(scaled.value, decimals: decimals) >= 1000 {
-            // 999.6K 取整是 1000K；先提升到 MB 再格式化，得到 1.0M。
-            scaled = (scaled.value / scale.base, scaled.index + 1)
-            decimals = scaled.value < 100 ? 1 : 0
-        }
-        let number = self.number(scaled.value, decimals: decimals)
-        return "\(number)\(scale.compactUnits[scaled.index])"
+        let shown = presented(bytesPerSecond, unit: unit, scale: scale)
+        guard !shown.degraded else { return scale.degradedCompact }
+        // 紧凑写法只是把完整写法的空格与 `/s` 去掉：`4.2 B/s` → `4.2B`、`812.3 KB/s` → `812.3K`。
+        return "\(shown.number)\(scale.compactUnits[shown.index])"
     }
 
-    /// 按 1024 / 1000 逐级缩放。进档判定留给调用方（完整格式一位小数、
-    /// 紧凑格式按有效数字取整），避免出现 `1000.0 KB/s` 这类四位整数。
+    /// 把字节/比特值落到「一位小数的数字 + 档位」，两种写法共用同一份进位口径。
+    ///
+    /// - `number`：一位小数的数字（`4.2`、`32.4`、`812.3`、`999.9`）；
+    /// - `index`：档位下标，配合完整单位表或紧凑单位表取后缀；
+    /// - `degraded`：末档（GB / Gbps）显示值已达 999.9、无处可进，调用方改用降级串。
+    private static func presented(_ bytesPerSecond: Double, unit: NetworkSpeedUnit,
+                                  scale: Scale) -> (number: String, index: Int, degraded: Bool) {
+        let value = unit.isBits ? max(0, bytesPerSecond) * 8 : max(0, bytesPerSecond)
+        var scaled = scaleRaw(value, in: scale.base, units: scale.units)
+        // 999.9 是显示层的一档边界：999.96 KB 不再显示成 1000.0 KB，而是 1.0 MB
+        // （除数仍是 1024）。末档已经无档可进，于是交给降级串。
+        if rounded(scaled.value, decimals: 1) >= 999.9 {
+            guard scaled.index < scale.units.count - 1 else {
+                return ("", scaled.index, true)
+            }
+            scaled = (scaled.value / scale.base, scaled.index + 1)
+        }
+        return (number(scaled.value, decimals: 1), scaled.index, false)
+    }
+
+    /// 按 1024 / 1000 逐级缩放，最多升到最后一档（GB / Gbps）。
+    /// 999.9 的显示进位留给调用方（`presented`），避免出现 `1000.0 KB/s` 这类四位整数。
     private static func scaleRaw(_ value: Double, in base: Double, units: [String])
         -> (value: Double, index: Int) {
         var scaled = value
