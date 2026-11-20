@@ -39,8 +39,8 @@ enum NetworkSpeedStatusItem {
         static let lineHeight: CGFloat = ceil(font.ascender - font.descender + font.leading)
         /// 左侧原生产品图标：与关闭态 `button.image` 是同一张 18×18 模板图。
         static let iconWidth: CGFloat = 18
-        /// 图标与文字的间距。
-        static let iconGap: CGFloat = 2
+        /// 图标与文字的间距（6pt：18pt 图标右边缘到文字左边缘）。
+        static let iconGap: CGFloat = 6
         /// 菜单栏可用高度上限；超出会被状态栏裁掉。
         static let maxHeight: CGFloat = 22
         /// 整图高度：两行行高，且不超过菜单栏可用高度。
@@ -62,8 +62,8 @@ enum NetworkSpeedStatusItem {
     /// | `↑—`（首拍占位） | 15.23pt |
     ///
     /// 文字区取 **44pt** = 最宽正常串 41.41 + 2.59pt 安全余量（6.3%），图宽因此是
-    /// 18（图标）+ 2（间距）+ 44 = **64pt**；真实菜单栏里状态项左右各留 3pt，
-    /// 所以状态项长度 = 64 + 6 = **70pt**。关闭开关时回 `squareLength`（24pt）。
+    /// 18（图标）+ 6（间距）+ 44 = **68pt**；真实菜单栏里状态项左右各留 3pt，
+    /// 所以状态项长度 = 68 + 6 = **74pt**。关闭开关时回 `squareLength`（24pt）。
     enum FixedWidth {
         /// 最宽的正常读数（`999.9` + 最宽后缀 `M`）；断言与注释共用这一条事实。
         static let widestLine = "↑999.9M"
@@ -72,7 +72,7 @@ enum NetworkSpeedStatusItem {
         static let degradedLine = "↑>999G"
         /// 两行文字区的固定宽度（pt）：左对齐画进这个盒子，超出的部分由容器裁掉。
         static let textWidth: CGFloat = 44
-        /// 两行图的固定宽度（pt）= 18pt 图标 + 2pt 间距 + 44pt 文字区。
+        /// 两行图的固定宽度（pt）= 18pt 图标 + 6pt 间距 + 44pt 文字区。
         static var imageWidth: CGFloat { TwoLines.iconWidth + TwoLines.iconGap + textWidth }
         /// 真实菜单栏里 `NSStatusBarButton` 给图片左右各 3pt 内边距（沿用改动前的 66 + 6）。
         static let buttonPadding: CGFloat = 6
@@ -101,7 +101,7 @@ enum NetworkSpeedStatusItem {
         [.font: TwoLines.font, .foregroundColor: color]
     }
 
-    /// 两行图：第一行上传、第二行下载，固定 64×22pt，两行从同一个 `x` 左对齐。
+    /// 两行图：第一行上传、第二行下载，固定 68×22pt，两行从同一个 `x` 左对齐。
     static func twoLinesImage(icon: NSImage, rates: NetworkSpeedRates?,
                               unit: NetworkSpeedUnit) -> NSImage {
         let lines = lines(rates: rates, unit: unit)
@@ -175,7 +175,7 @@ enum NetworkSpeedStatusItem {
     /// 把开关、读数与单位落到状态项上。
     ///
     /// - 关闭：宽度收回 `squareLength`（24pt），图标回到原来的位置与点击行为；
-    /// - 打开：固定 70pt，读数变化不重排。
+    /// - 打开：固定 74pt，读数变化不重排。
     static func apply(to statusItem: NSStatusItem, enabled: Bool,
                       rates: NetworkSpeedRates?, unit: NetworkSpeedUnit,
                       icon: NSImage = ReplicaBrand.menuBarImage()) {

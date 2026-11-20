@@ -49,6 +49,8 @@ checks = {
     'left-aligned-two-rows': code.count('TwoLines.textX') >= 1
                               and 'textX: CGFloat' in code,
     'fixed-width-constant': 'static let textWidth: CGFloat = 44' in code,
+    'icon-gap-is-6': 'static let iconGap: CGFloat = 6' in code
+                     and 'textX: CGFloat { iconWidth + iconGap }' in code,
 }
 assert all(checks.values()), checks
 print(f'Renderer source gate: {len(checks)} checks passed')
@@ -72,8 +74,11 @@ length = report['enabledLength']
 image = report['imageWidth']
 text = report['textWidth']
 assert abs(length - (image + 6)) < 0.01, f'状态项长度 {length} 不是图宽 {image} + 6pt 内边距'
-assert abs(image - (18 + 2 + text)) < 0.01, f'图宽 {image} 不是 18pt 图标 + 2pt 间距 + {text}pt 文字区'
-assert 66 <= length <= 74, f'固定长度 {length}pt 不在预计的 66–74pt 内'
+assert abs(image - (18 + 6 + text)) < 0.01, f'图宽 {image} 不是 18pt 图标 + 6pt 间距 + {text}pt 文字区'
+assert 70 <= length <= 78, f'固定长度 {length}pt 不在预计的 70–78pt 内'
+# 图标（18pt）与文字区之间的间距：图宽减掉图标与文字区，必须正好 6pt。
+gap = image - 18 - text
+assert abs(gap - 6) < 0.01, f'图标与文字间距 {gap}pt 不是 6pt'
 assert report['imageHeight'] <= 22.01, f"两行图高 {report['imageHeight']} 超过 22pt"
 
 # ①② 两行顺序与内容：第一行 ↑（上传）、第二行 ↓（下载）。
@@ -82,6 +87,13 @@ bands = report['bands']
 assert bands, 'harness 没有给出两行墨迹证据'
 assert abs(bands['topMinColumn'] - bands['bottomMinColumn']) <= 2, \
     f"两行左边缘不齐：{bands['topMinColumn']} vs {bands['bottomMinColumn']}"
+# 图标与文字的像素间距：图内 18pt 图标占 0–36px、文字排版原点在 18+6=24pt=48px（@2x），
+# 即两段之间留 12px（6pt）空白。harness 只从 20pt=40px 起扫墨迹，这里断言最左墨迹
+# 落在 48–52px（48px 是文字左边缘，多出的 ≤2px 是 ↑/↓ 字形自带的 bearing），
+# 于是 36–47px 必为空白——图标右边缘到文字左边缘正好 12px。
+ink_left = min(bands['topMinColumn'], bands['bottomMinColumn'])
+assert 48 <= ink_left <= 52, \
+    f"文字墨迹左边缘 {ink_left}px 不在 48–52px（图标右边缘 36px + 6pt 间距 12px）"
 offsets = bands['leftOffsets']
 assert len(offsets) == 3 and len(set(offsets)) == 1, \
     f"两行左边缘之差随读数变化（不是同一个排版原点）：{offsets}"
@@ -121,7 +133,8 @@ assert report['degradeFull'] == '>999 GB/s', report['degradeFull']
 assert report['degradeCompact'] == '↓>999G ↑>999G', report['degradeCompact']
 
 print(f"Presentation: two lines (↑ upload on top, ↓ download below), fixed {length}pt "
-      f"(image {image}×{report['imageHeight']}pt, text box {text}pt), "
+      f"(image {image}×{report['imageHeight']}pt = 18pt icon + {gap}pt gap + {text}pt text box), "
+      f"text ink starts at {ink_left}px @2x (icon edge 36px, gap 12px), "
       f"10/10 frames width {widths[0]}pt, disabled {report['disabledButtonWidth']}pt, "
       f"{report['checks']} checks")
 print(f"Budget: widest normal {report['widestLine']} = {report['widestLineWidth']}pt, "
