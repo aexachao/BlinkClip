@@ -145,6 +145,35 @@ import Foundation
         return bands
     }
 
+    /// 图标在合成图里不能上下颠倒：卡片里的实心横条必须落在卡片上半。
+    ///
+    /// 量的是「横条相对卡片上下边」的位置（设计值 0.325；上下颠倒会变成 0.675），
+    /// 所以不受整图 0.5px 对齐误差影响。2× 像素，图标 18pt = 36px，
+    /// 横条的 x 跨度取设计值 6.15…11.35pt（13…22px），避开卡片左右描边。
+    static func barRelativePosition(_ rep: NSBitmapImageRep, iconOrigin: (x: Int, y: Int)) -> Double? {
+        var runs: [(Int, Int)] = []
+        var start: Int?
+        for row in 0..<(18 * 2) {
+            var ink: CGFloat = 0
+            for column in 13..<22 {
+                ink += rep.colorAt(x: iconOrigin.x + column, y: iconOrigin.y + row)?.alphaComponent ?? 0
+            }
+            if ink > 4 {
+                if start == nil { start = row }
+            } else if let from = start {
+                runs.append((from, row - 1))
+                start = nil
+            }
+        }
+        if let from = start { runs.append((from, 18 * 2 - 1)) }
+        guard runs.count >= 3 else { return nil }
+        let cardTop = Double(runs.first!.0 + runs.first!.1) / 2
+        let cardBottom = Double(runs.last!.0 + runs.last!.1) / 2
+        let bar = Double(runs[runs.count / 2].0 + runs[runs.count / 2].1) / 2
+        guard cardBottom > cardTop else { return nil }
+        return (bar - cardTop) / (cardBottom - cardTop)
+    }
+
     static func hasInk(_ rep: NSBitmapImageRep, columns: Range<Int>) -> Bool {
         columns.contains { column in
             (0..<rep.pixelsHigh).contains { row in
@@ -424,6 +453,15 @@ import Foundation
             let scale = 2
             check(hasInk(rep, columns: 0..<(18 * scale)), "两行图左侧 18pt 图标区域没有墨迹")
             check(!hasInk(rep, columns: (18 * scale)..<(24 * scale)), "两行图图标与文字之间（6pt 间距）有墨迹")
+            // 图标朝向：本图是 flipped 上下文，图标若用默认 `draw(in:)` 会被上下颠倒
+            // （真机菜单栏实测：横条跑到下半、右下切角跑到右上）。这里断言横条仍在卡片上半。
+            let iconOrigin = (x: 0, y: Int((NetworkSpeedStatusItem.TwoLines.height
+                                            - NetworkSpeedStatusItem.TwoLines.iconWidth) / 2 * CGFloat(scale)))
+            if let relative = barRelativePosition(rep, iconOrigin: iconOrigin) {
+                check(relative < 0.5, "两行图里的图标上下颠倒了：横条在卡片相对高度 \(relative)")
+            } else {
+                check(false, "两行图里的图标找不到横条与卡片边，无法判定朝向")
+            }
             let bands = inkBands(rep, columns: (20 * scale)..<rep.pixelsWide)
             check(bands.count == 2, "两行文字没有分成两段：\(bands)")
             if bands.count == 2 {

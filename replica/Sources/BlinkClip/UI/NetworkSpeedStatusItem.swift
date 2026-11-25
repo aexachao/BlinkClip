@@ -117,9 +117,14 @@ enum NetworkSpeedStatusItem {
         let size = NSSize(width: FixedWidth.imageWidth, height: TwoLines.height)
         let image = NSImage(size: size, flipped: true) { _ in
             // 图标：18×18 模板图，垂直居中贴左边。
+            //
+            // 本图自身是 flipped（y 向下）的，图标也是 flipped 图；`draw(in:)` 的默认路径会在
+            // flipped 上下文里把图标上下颠倒（真机菜单栏实测：横条跑到卡片下半、右下切角跑到
+            // 右上）。必须走 `respectFlipped: true`，让图标按目标上下文的朝向绘制、保持正向。
             icon.draw(in: NSRect(x: 0, y: (size.height - TwoLines.iconWidth) / 2,
                                  width: TwoLines.iconWidth, height: TwoLines.iconWidth),
-                      from: .zero, operation: .sourceOver, fraction: 1)
+                      from: .zero, operation: .sourceOver, fraction: 1,
+                      respectFlipped: true, hints: nil)
             // 两行文字：同一个 x 起画 → 左边缘对齐；第二行紧接第一行，没有额外行距。
             for (index, row) in rows.enumerated() {
                 let rect = NSRect(x: TwoLines.textX, y: CGFloat(index) * TwoLines.lineHeight,
