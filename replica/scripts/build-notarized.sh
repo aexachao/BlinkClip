@@ -108,3 +108,10 @@ data['sparkle_feed_generated'] = True
 manifest.write_text(json.dumps(data, indent=2) + '\n')
 PY
 fi
+# 发版收尾顺手清理旧产物：发版后「记得手工清理」一定会漏，所以放在这里自动做。
+# 只保留最近 3 天与最新 5 个任务目录，回收的是上一次及更早的目录——本次发布的
+# out/ 是最新的一个，永远在保留集合里，不会删到自己。
+# 清理失败不能影响发布退出码：此时产物已经签名、公证、staple 完成，清理只是善后。
+if ! bash "$root/scripts/prune-artifacts.sh" --apply --keep-days 3 --quiet; then
+  printf '旧产物清理未完成（不影响本次发布）：bash scripts/prune-artifacts.sh --apply --keep-days 3\n' >&2
+fi

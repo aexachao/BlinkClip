@@ -173,6 +173,9 @@ npm run build:dmg
 
 更多开发说明见 [replica/README.md](replica/README.md) 与[测试说明](replica/TESTING.md)。
 
+构建与测试产物落在 `~/dev-artifacts/BlinkClip/<task>-<pid>-<时间戳>/`，不在仓库里。磁盘预算、
+清理脚本（`scripts/prune-artifacts.sh`）与发布后的自动清理见 [docs/DISK.md](docs/DISK.md)。
+
 ## 项目结构
 
 ```

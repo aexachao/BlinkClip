@@ -56,6 +56,14 @@ python3 replica/scripts/test-affected.py --full             # 必跑，全绿才
 
 `--full` 忽略改动、选中全部测试项。发版前不允许用「改动不大」作为跳过理由。
 
+### 发版后清理产物
+
+每个测试项都会在 `~/dev-artifacts/BlinkClip/<task>-<pid>-<时间戳>/` 落一份产物，`--full` 跑一次就是
+几十个目录，长期不清理会堆到数 GB。`build-notarized.sh` 结束时已经自动跑
+`bash scripts/prune-artifacts.sh --apply --keep-days 3`；多跑了测试的时候自己再跑一次
+`bash scripts/prune-artifacts.sh`（默认 dry-run，只列清单）。保留策略、预算和 `replica/.build` 的
+处理见 [DISK.md](DISK.md)。
+
 ### 每项一个隔离目录
 
 选择器给**每个测试项**分配自己的 `ARTIFACT_TASK_DIR`（`<产物根>/<测试项 id>`），并把
