@@ -20,18 +20,22 @@
 
 ## 预算
 
+预算只按**本仓库自己的产物根**定，不看 `~/dev-artifacts` 总量：那个目录是多个本地项目共用的，
+总量主要由别人撑起来，本仓库既控制不了也清不掉。
+
 | 项目 | 上限 | 超了说明什么 |
 | --- | --- | --- |
-| `~/dev-artifacts` 总量 | **8 GiB** | 跑测/发版太多没清理，或其它仓库的产物在长 |
+| `~/dev-artifacts/BlinkClip`（本仓库单仓库总量） | **3 GiB** | 跑测/发版太多没清理，或某次产物异常膨胀 |
 | 单个任务目录 | **1 GiB** | 构建产物异常：多半是把依赖、`dist/` 或整份 `.app` 重复拷进了 `out/` |
 
 `scripts/prune-artifacts.sh` 会在保留项里发现超过 1 GiB 的目录时打印一行 `注意: …`，
 提醒去 `.storage-guard.json` 和 `out/` 里看看到底写进了什么，而不是默默留着。
 
-> 8 GiB 是 `~/dev-artifacts` 的**总量**预算。这个目录是多个本地项目共用的，本仓库的脚本只管
-> `~/dev-artifacts/BlinkClip` 这一个子目录；别的仓库的产物不在它的处理范围内。
-> 截至 2026-11-26 清理后：本仓库 1.26 GiB / 144 个任务目录，`~/dev-artifacts` 合计 13.7 GiB
-> （差额来自 `fnos_music_ext`、`iReader`、`qingjian-music` 等其它仓库）。
+> 两个上限都只针对 `~/dev-artifacts/BlinkClip` 这一个子目录。`~/dev-artifacts` 下还有
+> `fnos_music_ext`、`iReader`、`qingjian-music` 等**其它仓库**的产物根（合计 12 GiB 以上），
+> 它们**不在本项目的清理与预算范围内**：`prune-artifacts.sh` 不会碰它们，本仓库的 3 GiB
+> 预算也不为它们负责。要回收那部分空间，得去对应仓库自己的清理流程处理。
+> 截至 2026-11-26 清理后：本仓库 1.3 GiB / 148 个任务目录。
 
 ## 清理
 
