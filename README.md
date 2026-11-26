@@ -15,9 +15,9 @@
 </p>
 
 <!-- blinkclip-download:start -->
-当前正式版 **1.0.45**，一个安装包兼容 Intel 与 Apple 芯片：
+当前正式版 **1.0.46**，一个安装包兼容 Intel 与 Apple 芯片：
 
-[下载 BlinkClip-1.0.45-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.45/BlinkClip-1.0.45-macos-universal.dmg)
+[下载 BlinkClip-1.0.46-macos-universal.dmg](https://github.com/aexachao/BlinkClip/releases/download/v1.0.46/BlinkClip-1.0.46-macos-universal.dmg)
 <!-- blinkclip-download:end -->
 
 ## 截图
