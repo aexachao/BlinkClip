@@ -1,5 +1,19 @@
 # 更新日志
 
+## 1.0.45 · 2026-11-26（GitHub Releases）
+
+菜单栏图标换成**用户提供的矢量标**：实心圆角卡 + 右上角挖空大四角星 + 两条挖空横条，以矢量 PDF 随包分发并作为模板图自动适配浅色 / 深色 / 高亮菜单栏。
+
+### 界面
+
+- **改用矢量标，不再用代码绘制。** 图标从 `NSBezierPath` 逐笔绘制改为加载随包资源 `Contents/Resources/BlinkClipMenuBarMark.pdf`（源文件 `replica/Assets/BlinkClipMenuBarMark.pdf`），造型为**实心圆角卡** + **右上角挖空大四角星** + **两条挖空横条**。PDF 是矢量，任意缩放下边缘都保持锐利，2× / 3× 屏上不再依赖位图分辨率。
+
+- **模板图自动适配浅 / 深 / 高亮。** 载入后置 `isTemplate = true`，浅色菜单栏由 AppKit 着黑、深色着白、高亮时反色，不自行解析 `effectiveAppearance`；`accessibilityDescription` 仍与菜单栏项同名。
+
+- **网速两行合成图里图标朝向正确。** 开启「在菜单栏显示网速」后的 62×22pt 两行合成图是 flipped 上下文，图标绘制显式走 `respectFlipped: true`，不会出现上下颠倒；`test-network-speed.sh` 保留朝向断言守住这一点。
+
+- **App 图标未改。** 本次只换菜单栏图标，`Assets/BlinkClipIcon.png` 与 `AppIcon.icns` 与 1.0.44 相同，图标实体仍是 824×824。
+
 ## 1.0.44 · 2026-11-25（GitHub Releases）
 
 菜单栏图标与 App 图标**重新同构成同一张「描边卡」**：取景框不动，中间那张便签改成 **1.2pt 空心描边**（原为实心填充），卡内横条改成**实心 5.2×0.9pt 胶囊**（原是从实心卡上挖出的负空间槽），右下角仍沿 3.2pt 斜切开口但**不画折片**，并**去掉四角星**——18pt 下星的对角线只有 3.0pt，1× 仅剩卡片角上 2–3px 的凸起，认不出来。同时修掉开启网速时两行合成图把图标**上下颠倒**的缺陷（`respectFlipped`）。
