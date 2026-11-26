@@ -145,33 +145,80 @@ import Foundation
         return bands
     }
 
-    /// 图标在合成图里不能上下颠倒：卡片里的实心横条必须落在卡片上半。
+    /// 图标区里一行有墨的像素跨度（用于判朝向与横条边界）。
+    struct InkSpan: Equatable {
+        var row: Int
+        var minColumn: Int
+        var maxColumn: Int
+        var width: Int { maxColumn - minColumn + 1 }
+        var centre: Double { Double(minColumn + maxColumn) / 2 }
+    }
+
+    /// 图标区最上面与最下面一行有墨的行。
     ///
-    /// 量的是「横条相对卡片上下边」的位置（设计值 0.325；上下颠倒会变成 0.675），
-    /// 所以不受整图 0.5px 对齐误差影响。2× 像素，图标 18pt = 36px，
-    /// 横条的 x 跨度取设计值 6.15…11.35pt（13…22px），避开卡片左右描边。
-    static func barRelativePosition(_ rep: NSBitmapImageRep, iconOrigin: (x: Int, y: Int)) -> Double? {
-        var runs: [(Int, Int)] = []
-        var start: Int?
-        for row in 0..<(18 * 2) {
-            var ink: CGFloat = 0
-            for column in 13..<22 {
-                ink += rep.colorAt(x: iconOrigin.x + column, y: iconOrigin.y + row)?.alphaComponent ?? 0
+    /// 新图标（用户提供的矢量图）最窄的一笔是四角星的上尖、落在**右上**，最宽的一笔是
+    /// 卡片底边、落在**下方**；上下颠倒会得到「顶部是卡片宽边、底部是星尖」。
+    static func firstAndLastInkRows(_ rep: NSBitmapImageRep, iconOrigin: (x: Int, y: Int),
+                                    scale: Int) -> (top: InkSpan, bottom: InkSpan)? {
+        func alpha(_ column: Int, _ row: Int) -> CGFloat {
+            rep.colorAt(x: iconOrigin.x + column, y: iconOrigin.y + row)?.alphaComponent ?? 0
+        }
+        let side = 18 * scale
+        var spans: [InkSpan] = []
+        for row in 0..<side {
+            var minColumn: Int?
+            var maxColumn: Int?
+            for column in 0..<side where alpha(column, row) >= 0.25 {
+                if minColumn == nil { minColumn = column }
+                maxColumn = column
             }
-            if ink > 4 {
+            if let minColumn, let maxColumn {
+                spans.append(InkSpan(row: row, minColumn: minColumn, maxColumn: maxColumn))
+            }
+        }
+        guard let top = spans.first, let bottom = spans.last else { return nil }
+        return (top, bottom)
+    }
+
+    /// 某一列上「上下都被墨夹住」的负空间条带：卡内挖空的两条横条。
+    ///
+    /// 图标上下的背景也满足「alpha 低」，但不是挖空，所以要求条带两端各自紧邻墨。
+    static func hollowBands(_ rep: NSBitmapImageRep, iconOrigin: (x: Int, y: Int), scale: Int,
+                            column: Int) -> [(from: Int, to: Int)] {
+        let side = 18 * scale
+        let profile: [CGFloat] = (0..<side).map {
+            rep.colorAt(x: iconOrigin.x + column, y: iconOrigin.y + $0)?.alphaComponent ?? 0
+        }
+        var bands: [(from: Int, to: Int)] = []
+        var start: Int?
+        for row in 0..<side {
+            if profile[row] < 0.5 {
                 if start == nil { start = row }
             } else if let from = start {
-                runs.append((from, row - 1))
+                bands.append((from, row - 1))
                 start = nil
             }
         }
-        if let from = start { runs.append((from, 18 * 2 - 1)) }
-        guard runs.count >= 3 else { return nil }
-        let cardTop = Double(runs.first!.0 + runs.first!.1) / 2
-        let cardBottom = Double(runs.last!.0 + runs.last!.1) / 2
-        let bar = Double(runs[runs.count / 2].0 + runs[runs.count / 2].1) / 2
-        guard cardBottom > cardTop else { return nil }
-        return (bar - cardTop) / (cardBottom - cardTop)
+        if let from = start { bands.append((from, side - 1)) }
+        return bands.filter {
+            $0.from > 0 && $0.to < side - 1
+                && profile[$0.from - 1] >= 0.5 && profile[$0.to + 1] >= 0.5
+        }
+    }
+
+    /// 某个负空间条带在中间那一行上的左右边界（左、右都必须被墨夹住）。
+    static func hollowSpan(_ rep: NSBitmapImageRep, iconOrigin: (x: Int, y: Int), scale: Int,
+                           row: Int, column: Int) -> (minColumn: Int, maxColumn: Int)? {
+        func alpha(_ column: Int) -> CGFloat {
+            rep.colorAt(x: iconOrigin.x + column, y: iconOrigin.y + row)?.alphaComponent ?? 0
+        }
+        let side = 18 * scale
+        guard alpha(column) < 0.5 else { return nil }
+        var left = column, right = column
+        while left > 0, alpha(left - 1) < 0.5 { left -= 1 }
+        while right < side - 1, alpha(right + 1) < 0.5 { right += 1 }
+        guard left > 0, right < side - 1 else { return nil }
+        return (left, right)
     }
 
     static func hasInk(_ rep: NSBitmapImageRep, columns: Range<Int>) -> Bool {
@@ -351,6 +398,15 @@ import Foundation
         let rates = NetworkSpeedRates(downloadBytesPerSecond: 1_468_006,
                                       uploadBytesPerSecond: 33_178)
         let icon = ReplicaBrand.menuBarImage()
+        // 图标本身：18×18 模板图，并且**来自矢量 PDF**（用户提供的 SVG 转写）。
+        // 资源没进测试包时 menuBarImage() 会退回一张空图，这里立刻失败而不是静默通过。
+        check(icon.size == NSSize(width: 18, height: 18),
+              "菜单栏图标逻辑尺寸不是 18×18：\(icon.size)")
+        check(icon.isTemplate, "菜单栏图标不是模板图（深色/高亮菜单栏会看不清）")
+        check(icon.representations.contains { $0 is NSPDFImageRep },
+              "菜单栏图标不是矢量 PDF：\(icon.representations)")
+        check(icon.accessibilityDescription == ReplicaBrand.name,
+              "菜单栏图标的无障碍描述不对：\(icon.accessibilityDescription ?? "nil")")
         let lines = NetworkSpeedStatusItem.lines(rates: rates, unit: .bytesPerSecond)
         // ---- ② 第一行 `↑`（上传）、第二行 `↓`（下载） -----------------------
         check(lines.upload == "↑32.4K", "第一行（上传）不对：\(lines.upload)")
@@ -449,18 +505,79 @@ import Foundation
               "两行左边缘之差随读数变化（不是同一个排版原点）：\(leftOffsets)")
 
         var bandEvidence: [String: Any] = [:]
+        var markEvidence: [String: Any] = [:]
         if let rep = rasterize(lopsidedImage, scale: 2) {
             let scale = 2
             check(hasInk(rep, columns: 0..<(18 * scale)), "两行图左侧 18pt 图标区域没有墨迹")
             check(!hasInk(rep, columns: (18 * scale)..<(24 * scale)), "两行图图标与文字之间（6pt 间距）有墨迹")
             // 图标朝向：本图是 flipped 上下文，图标若用默认 `draw(in:)` 会被上下颠倒
-            // （真机菜单栏实测：横条跑到下半、右下切角跑到右上）。这里断言横条仍在卡片上半。
+            // （上一版真机实测：横条跑到卡片上半、右上角被挖掉的四角星跑到右下）。
+            // 新图标（用户矢量图）最窄的一笔是四角星上尖、落在右上；最宽的一笔是卡片底边、
+            // 落在下方。两条都要成立，任一颠倒都会双双失败。
             let iconOrigin = (x: 0, y: Int((NetworkSpeedStatusItem.TwoLines.height
                                             - NetworkSpeedStatusItem.TwoLines.iconWidth) / 2 * CGFloat(scale)))
-            if let relative = barRelativePosition(rep, iconOrigin: iconOrigin) {
-                check(relative < 0.5, "两行图里的图标上下颠倒了：横条在卡片相对高度 \(relative)")
+            if let rows = firstAndLastInkRows(rep, iconOrigin: iconOrigin, scale: scale) {
+                let topWidth = Double(rows.top.width) / Double(scale)
+                let topCentre = rows.top.centre / Double(scale)
+                let bottomWidth = Double(rows.bottom.width) / Double(scale)
+                let bottomCentre = rows.bottom.centre / Double(scale)
+                check(topWidth <= 2,
+                      "图标最上一行不是星尖（\(topWidth)pt 宽，星尖应 ≤2pt）：上下颠倒了？")
+                check(topCentre >= 9,
+                      "星尖不在右上：最上一行中心 x=\(topCentre)pt（应在 9pt 右侧）")
+                check(bottomWidth >= 10,
+                      "图标最下一行不是卡片宽底边（只有 \(bottomWidth)pt 宽）：上下颠倒了？")
+                check(abs(bottomCentre - 9) <= 1.5,
+                      "卡片底边不居中：中心 x=\(bottomCentre)pt")
+                markEvidence = ["starTipRow": rows.top.row, "starTipWidth": topWidth,
+                                "starTipCentre": topCentre, "cardBottomWidth": bottomWidth,
+                                "cardBottomCentre": bottomCentre]
+                // 卡内两条挖空横条：x=6.6pt 一列上，上下被墨夹住的负空间恰好两条。
+                // 设计值（24 单位 → 16pt）：短条 y 9.7…11.0pt、长条 y 13.0…14.3pt，
+                // 两条左端都在 x=5 单位（4.33pt），长条多伸 3.33pt。
+                let barColumn = Int((6.6 * Double(scale)).rounded())
+                let bands = hollowBands(rep, iconOrigin: iconOrigin, scale: scale, column: barColumn)
+                check(bands.count == 2, "卡内挖空横条不是两条：\(bands)")
+                if bands.count == 2 {
+                    let cardTop = Double(rows.top.row) / Double(scale)
+                    let cardBottom = Double(rows.bottom.row) / Double(scale)
+                    var spans: [(minColumn: Int, maxColumn: Int)] = []
+                    for band in bands {
+                        let middle = (band.from + band.to) / 2
+                        guard let span = hollowSpan(rep, iconOrigin: iconOrigin, scale: scale,
+                                                    row: middle, column: barColumn) else {
+                            check(false, "横条行 \(middle) 的负空间没有被墨夹住，量不到左右边界")
+                            continue
+                        }
+                        spans.append(span)
+                        let centre = (Double(band.from) + Double(band.to)) / 2 / Double(scale)
+                        let relative = (centre - cardTop) / (cardBottom - cardTop)
+                        check(relative >= 0.45 && relative <= 0.90,
+                              "横条不在卡片下部（相对位置 \(relative)，设计值 0.57 / 0.80）")
+                    }
+                    if spans.count == 2 {
+                        let leftDifference = abs(spans[0].minColumn - spans[1].minColumn)
+                        check(leftDifference <= 1,
+                              "两条横条左边界差 \(Double(leftDifference) / Double(scale))pt（应 ≤0.5pt）")
+                        // 设计值：长条比短条多伸 5 个单位 = 3.33pt（@2x 6.7px）；实测 6px。
+                        // 门槛取 4px（2pt），仍只有「长条在下」才成立。
+                        let extra = spans[1].maxColumn - spans[0].maxColumn
+                        check(extra >= 4,
+                              "下面那条横条没有比上面长（只多 \(extra)px，设计值 +3.33pt ≈ 6.7px@2x）")
+                        markEvidence["bars"] = [
+                            "short": ["x": Double(spans[0].minColumn) / Double(scale),
+                                      "width": Double(spans[0].maxColumn - spans[0].minColumn + 1) / Double(scale),
+                                      "rows": bands[0].to - bands[0].from + 1],
+                            "long": ["x": Double(spans[1].minColumn) / Double(scale),
+                                     "width": Double(spans[1].maxColumn - spans[1].minColumn + 1) / Double(scale),
+                                     "rows": bands[1].to - bands[1].from + 1],
+                            "leftDifference": Double(leftDifference) / Double(scale),
+                            "longExtra": Double(extra) / Double(scale),
+                        ]
+                    }
+                }
             } else {
-                check(false, "两行图里的图标找不到横条与卡片边，无法判定朝向")
+                check(false, "两行图里的图标没有墨迹，无法判定朝向")
             }
             let bands = inkBands(rep, columns: (20 * scale)..<rep.pixelsWide)
             check(bands.count == 2, "两行文字没有分成两段：\(bands)")
@@ -625,6 +742,7 @@ import Foundation
             "frameButtonWidths": frameButtonWidthList,
             "frameImageWidth": Double((image.size.width * 100).rounded() / 100),
             "bands": bandEvidence,
+            "mark": markEvidence,
             "lines": ["upload": lines.upload, "download": lines.download],
             "formatSamples": carrySamples.map { ["bytes": $0.0, "full": $0.1, "compact": $0.2] },
             "boundarySamples": boundaries.map { ["bytes": $0.0, "full": $0.1, "compact": $0.2] },

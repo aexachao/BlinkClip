@@ -103,6 +103,8 @@ def packaged_layout(name):
  (fixture/'BlinkClip_BlinkClipCore.bundle'/'Info.plist').write_text('guard fixture')
  for entry in ['BlinkClipAppIcon.icns','Sparkle-LICENSE.txt','capcap-LICENSE.txt','LICENSE.txt','NOTICE.txt']:
   (fixture/entry).write_text('guard fixture')
+ # 菜单栏图标是矢量 PDF：白名单同时校验文件头与页面尺寸，因此夹具得是一份像样的 PDF。
+ (fixture/'BlinkClipMenuBarMark.pdf').write_text('%PDF-1.4\n<< /MediaBox [0 0 18 18] >>\n')
  for language,members in {'en.lproj':['InfoPlist.strings','Localizable.strings'],
                           'zh-Hans.lproj':['InfoPlist.strings','Localizable.strings'],
                           'zh-Hant.lproj':['InfoPlist.strings']}.items():
@@ -126,11 +128,20 @@ for relative,marker in [('Assets.car','Unexpected packaged resource'),
  for directory in ['fr.lproj']:
   leftover=packaged/directory
   if leftover.is_dir() and not any(leftover.iterdir()): leftover.rmdir()
-for name in ['LICENSE.txt','NOTICE.txt','capcap-LICENSE.txt','Sparkle-LICENSE.txt']:
+for name in ['LICENSE.txt','NOTICE.txt','capcap-LICENSE.txt','Sparkle-LICENSE.txt','BlinkClipMenuBarMark.pdf']:
  contents=(packaged/name).read_bytes();(packaged/name).unlink()
  result=packaged_guard_result(packaged)
  checks['packaging-resources-reject-missing-'+name]=result.returncode!=0 and 'Missing packaged resource' in result.stderr
  (packaged/name).write_bytes(contents)
+# 菜单栏图标是运行时直接画进状态栏的矢量 PDF：坏文件或页面不是 18×18pt 时 AppKit 会
+# 画出一张空图标（菜单栏上什么都不剩），所以打包必须拒绝，而不是等应用跑起来才发现。
+mark=packaged/'BlinkClipMenuBarMark.pdf'
+mark_contents=mark.read_bytes()
+for index,broken in enumerate([b'not a pdf at all\n', b'%PDF-1.4\n<< /MediaBox [0 0 24 24] >>\n']):
+ mark.write_bytes(broken)
+ result=packaged_guard_result(packaged)
+ checks['packaging-rejects-invalid-menu-bar-mark-'+str(index)]=result.returncode!=0 and 'Invalid menu bar mark' in result.stderr
+mark.write_bytes(mark_contents)
 shutil.rmtree(packaged/'zh-Hant.lproj')
 result=packaged_guard_result(packaged)
 checks['packaging-resources-reject-missing-language']=result.returncode!=0 and 'Missing packaged resource' in result.stderr

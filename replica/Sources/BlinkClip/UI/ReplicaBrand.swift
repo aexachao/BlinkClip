@@ -15,140 +15,49 @@ enum ReplicaBrand {
 
     // MARK: - Menu bar mark
 
-    /// The card block of the 18pt mark, in the `NSImage(flipped: true)` space (y grows downwards).
+    /// The menu bar mark is a **vector PDF** transcribed point-for-point from the 24 × 24 SVG the
+    /// user drew and confirmed (`1.svg`: one compound path, `fill="black"`, nonzero winding).
     ///
-    /// The mark is the BlinkClip app icon in one colour: four viewfinder brackets around a card
-    /// whose bottom-right corner is cut open, with a solid bar a quarter down the card. Card
-    /// centre (8.75, 9.25) keeps the app icon's 0.25pt down-left offset from the viewfinder centre,
-    /// so the mark sits where the previous one sat in the status bar. Measurements and trade-offs:
-    /// `evidence/patches/menubar-icon-final-report.md`.
-    private enum MenuBarMarkMetrics {
-        /// 8.0 x 7.9pt card at (4.75, 5.3).
-        static let card = NSRect(x: 4.75, y: 5.3, width: 8.0, height: 7.9)
-        /// 1.4pt outer corner radius.
-        static let cardRadius: CGFloat = 1.4
-        /// The card is hollow: a 1.2pt stroke, the thinnest line in the mark after the solid bar.
-        static let cardStrokeWidth: CGFloat = 1.2
-        /// Bottom-right corner sliced off along this leg; the cut is the only trace of the peeled page.
-        static let foldLeg: CGFloat = 3.2
-        /// Solid 5.2 x 0.9pt capsule at (6.15, 7.42), a quarter down the card and centred on it.
-        static let bar = NSRect(x: 6.15, y: 7.42, width: 5.2, height: 0.9)
-    }
-
-    /// A monochrome template rendition of the BlinkClip viewfinder + cut-corner card mark for both
-    /// menu bar appearances.
+    /// - card: rounded rect x 2…22, y 2…24, r ≈ 2, with its top-right corner bitten off by a
+    ///   large four-pointed star whose tips reach y = 0 and x = 23;
+    /// - the star itself is inked and sits in that bite with a ≈ 0.8pt negative-space gap, so the
+    ///   corner reads as "card corner replaced by a star" rather than a blob;
+    /// - two horizontal bars are knocked **out** of the solid card (y 13…15 short, y 18…20 long,
+    ///   both starting at x = 5), i.e. negative space, not ink.
     ///
-    /// The construction follows `Assets/BlinkClipIcon.png` measured on its 1024pt canvas: the
-    /// viewfinder box is the full mark, the card is the note in the middle, the bar sits a quarter
-    /// down the card, and the page corner peels at the bottom right. At 18pt the mark needs optical
-    /// corrections over the pure scale — a 1.2pt card stroke, a solid bar instead of the icon's
-    /// negative-space slot, and no sparkle: the four-point star survives the scale only as partial
-    /// pixels and needs a negative-space ring that eats the card's top edge.
+    /// The PDF page is 18 × 18pt and the 24-unit box is uniformly scaled to 16pt and centred, so
+    /// the ink keeps the SVG's proportions and leaves 1pt of optical padding on every side (macOS
+    /// status-bar art is ~16pt tall in an 18pt slot). Nothing about the shape is redrawn: the path
+    /// commands are the SVG's own `m/l/c/h` with a y-flip, filled nonzero like SVG's default.
     ///
     /// `isTemplate = true`: AppKit tints it black on a light menu bar, white on a dark one, and
-    /// inverts it while the item is highlighted.
+    /// inverts it while the item is highlighted. Resource: `Assets/BlinkClipMenuBarMark.pdf`,
+    /// copied to `Contents/Resources` by `build-app.sh` (whose packaged-resource whitelist fails the
+    /// build if it is missing, undeclared, or not an 18pt PDF).
     static func menuBarImage() -> NSImage {
-        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
-            drawMenuBarMark()
-            return true
-        }
+        let image = menuBarMarkURL().flatMap { NSImage(contentsOf: $0) } ?? missingMenuBarMark()
+        image.size = menuBarMarkSize
         image.isTemplate = true
         image.accessibilityDescription = name
         return image
     }
 
-    private static func drawMenuBarMark() {
-        NSColor.black.setStroke()
-        NSColor.black.setFill()
+    /// Logical size every consumer measures (status item, two-line composite, tests).
+    private static let menuBarMarkSize = NSSize(width: 18, height: 18)
+    private static let menuBarMarkResource = (name: "BlinkClipMenuBarMark", extension: "pdf")
 
-        let halfStroke: CGFloat = 0.7        // 1.4pt stroke
-
-        // 1. Viewfinder: four brackets. 14.4pt outer box (1.8 … 16.2), 1.7pt outer corner radius,
-        //    3.6pt arms with round caps.
-        let loop: CGFloat = 1.8 + halfStroke           // 2.5 centre line of the outer box
-        let farLoop: CGFloat = 16.2 - halfStroke       // 15.5
-        let cornerRadius: CGFloat = 1.0                // centre line (1.7 outer radius)
-        let nearArm: CGFloat = 1.8 + 3.6 - halfStroke  // 4.7 centre line, cap tip at 5.4
-        let farArm: CGFloat = 16.2 - 3.6 + halfStroke  // 13.3 centre line, cap tip at 12.6
-        let cornerHandle: CGFloat = cornerRadius * 0.5523
-
-        let brackets = NSBezierPath()
-        brackets.lineWidth = halfStroke * 2
-        brackets.lineCapStyle = .round
-        brackets.lineJoinStyle = .round
-
-        brackets.move(to: NSPoint(x: loop, y: nearArm))
-        brackets.line(to: NSPoint(x: loop, y: loop + cornerRadius))
-        brackets.curve(to: NSPoint(x: loop + cornerRadius, y: loop),
-                       controlPoint1: NSPoint(x: loop, y: loop + cornerRadius - cornerHandle),
-                       controlPoint2: NSPoint(x: loop + cornerRadius - cornerHandle, y: loop))
-        brackets.line(to: NSPoint(x: nearArm, y: loop))
-
-        brackets.move(to: NSPoint(x: farArm, y: loop))
-        brackets.line(to: NSPoint(x: farLoop - cornerRadius, y: loop))
-        brackets.curve(to: NSPoint(x: farLoop, y: loop + cornerRadius),
-                       controlPoint1: NSPoint(x: farLoop - cornerRadius + cornerHandle, y: loop),
-                       controlPoint2: NSPoint(x: farLoop, y: loop + cornerRadius - cornerHandle))
-        brackets.line(to: NSPoint(x: farLoop, y: nearArm))
-
-        brackets.move(to: NSPoint(x: farLoop, y: farArm))
-        brackets.line(to: NSPoint(x: farLoop, y: farLoop - cornerRadius))
-        brackets.curve(to: NSPoint(x: farLoop - cornerRadius, y: farLoop),
-                       controlPoint1: NSPoint(x: farLoop, y: farLoop - cornerRadius + cornerHandle),
-                       controlPoint2: NSPoint(x: farLoop - cornerRadius + cornerHandle, y: farLoop))
-        brackets.line(to: NSPoint(x: farArm, y: farLoop))
-
-        brackets.move(to: NSPoint(x: nearArm, y: farLoop))
-        brackets.line(to: NSPoint(x: loop + cornerRadius, y: farLoop))
-        brackets.curve(to: NSPoint(x: loop, y: farLoop - cornerRadius),
-                       controlPoint1: NSPoint(x: loop + cornerRadius - cornerHandle, y: farLoop),
-                       controlPoint2: NSPoint(x: loop, y: farLoop - cornerRadius + cornerHandle))
-        brackets.line(to: NSPoint(x: loop, y: farArm))
-        brackets.stroke()
-
-        // 2. Card: hollow note, bottom-right corner sliced off. The cut edge is the only trace of the
-        //    peeled page — at 18pt a filled flap would close up against the card into a blob.
-        let card = cardOutline()
-        card.lineWidth = MenuBarMarkMetrics.cardStrokeWidth
-        card.lineJoinStyle = .round
-        card.stroke()
-
-        // 3. Bar: solid capsule, where the app icon's orange bar sits a quarter down the card. Solid
-        //    rather than the icon's negative-space slot, because a 0.9pt slot inside a stroked card
-        //    has no card body to be knocked out of.
-        barPath().fill()
+    private static func menuBarMarkURL() -> URL? {
+        Bundle.main.url(forResource: menuBarMarkResource.name,
+                        withExtension: menuBarMarkResource.extension)
     }
 
-    /// The card silhouette: rounded note with the bottom-right corner sliced off along the fold leg.
-    private static func cardOutline() -> NSBezierPath {
-        let card = MenuBarMarkMetrics.card
-        let radius = MenuBarMarkMetrics.cardRadius
-        let handle = radius * 0.5523
-        let fold = MenuBarMarkMetrics.foldLeg
-        let left = card.minX, right = card.maxX
-        let top = card.minY, bottom = card.maxY
-        let outline = NSBezierPath()
-        outline.move(to: NSPoint(x: left + radius, y: top))
-        outline.line(to: NSPoint(x: right - radius, y: top))
-        outline.curve(to: NSPoint(x: right, y: top + radius),
-                      controlPoint1: NSPoint(x: right - radius + handle, y: top),
-                      controlPoint2: NSPoint(x: right, y: top + radius - handle))
-        outline.line(to: NSPoint(x: right, y: bottom - fold))
-        outline.line(to: NSPoint(x: right - fold, y: bottom))
-        outline.line(to: NSPoint(x: left + radius, y: bottom))
-        outline.curve(to: NSPoint(x: left, y: bottom - radius),
-                      controlPoint1: NSPoint(x: left + radius - handle, y: bottom),
-                      controlPoint2: NSPoint(x: left, y: bottom - radius + handle))
-        outline.line(to: NSPoint(x: left, y: top + radius))
-        outline.curve(to: NSPoint(x: left + radius, y: top),
-                      controlPoint1: NSPoint(x: left, y: top + radius - handle),
-                      controlPoint2: NSPoint(x: left + radius - handle, y: top))
-        outline.close()
-        return outline
-    }
-
-    private static func barPath() -> NSBezierPath {
-        let bar = MenuBarMarkMetrics.bar
-        return NSBezierPath(roundedRect: bar, xRadius: bar.height / 2, yRadius: bar.height / 2)
+    /// Unreachable in a real build (`build-app.sh` refuses to package without the PDF, and
+    /// `test-network-speed.sh` copies it into the harness bundle). Kept so a broken resource can
+    /// never crash the status bar: log it, hand back an empty 18pt template so the item still
+    /// lays out at 24/68pt instead of trapping.
+    private static func missingMenuBarMark() -> NSImage {
+        NSLog("BlinkClip: 缺少菜单栏图标资源 %@.%@",
+              menuBarMarkResource.name, menuBarMarkResource.extension)
+        return NSImage(size: menuBarMarkSize)
     }
 }

@@ -99,6 +99,9 @@ cp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"
 cmp "$replica_root/../LICENSE" "$bundle/Contents/Resources/LICENSE.txt"
 cmp "$replica_root/../NOTICE.md" "$bundle/Contents/Resources/NOTICE.txt"
 cp "$replica_root/Assets/BlinkClipAppIcon.icns" "$bundle/Contents/Resources/BlinkClipAppIcon.icns"
+# 菜单栏图标：用户提供的 24×24 矢量图转成的 18×18pt PDF（造型逐点转写，不重画）。
+# 走矢量而不是 @2x 栅格，AppKit 按当前屏幕倍率矢量化，1×/2× 都拿到原始轮廓。
+cp "$replica_root/Assets/BlinkClipMenuBarMark.pdf" "$bundle/Contents/Resources/BlinkClipMenuBarMark.pdf"
 ditto "$binary_root/BlinkClip_BlinkClipCore.bundle" "$bundle/Contents/Resources/BlinkClip_BlinkClipCore.bundle"
 # Fail closed if a stale build reintroduces extracted artwork, ships undeclared
 # feedback audio, or drops a language table.
@@ -256,6 +259,7 @@ import sys
 resources = Path(sys.argv[1])
 declared_files = {
     "BlinkClipAppIcon.icns",
+    "BlinkClipMenuBarMark.pdf",
     "Sparkle-LICENSE.txt",
     "capcap-LICENSE.txt",
     "LICENSE.txt",
@@ -276,6 +280,11 @@ for entry in sorted(resources.iterdir()):
         assert entry.is_file() and entry.name in declared_files, f"Unexpected packaged resource: {entry.name}"
 for name in sorted(declared_files):
     assert (resources / name).is_file(), f"Missing packaged resource: {name}"
+# 菜单栏图标是矢量 PDF：文件损坏或页面尺寸不是 18×18pt 时 AppKit 会画出一张空图标
+# （菜单栏上什么都不剩），所以按文件头与 MediaBox 兜底，别让坏图悄悄进包。
+mark = (resources / "BlinkClipMenuBarMark.pdf").read_bytes()
+assert mark.startswith(b"%PDF-") and b"/MediaBox [0 0 18 18]" in mark, (
+    "Invalid menu bar mark PDF: " + str(len(mark)) + " bytes")
 for name in sorted(opaque_directories | declared_directories):
     assert (resources / name).is_dir(), f"Missing packaged resource: {name}"
 PACKAGED_RESOURCES

@@ -30,6 +30,11 @@ compile_native_test_harness network-speed \
   "$replica_root/Sources/BlinkClip/UI/ReplicaBrand.swift" \
   "$replica_root/Tests/Native/NetworkSpeedHarness.swift" \
   > "$ARTIFACT_TASK_DIR/out/compile.log" 2>&1
+# 菜单栏图标是包内矢量 PDF：测试 app 的 Resources 里放同一份文件，让
+# `ReplicaBrand.menuBarImage()` 走生产的 `Bundle.main` 查找路径（找不到就会是空图标，
+# harness 立刻断言失败，不会静默测一张空白图）。
+cp "$replica_root/Assets/BlinkClipMenuBarMark.pdf" \
+  "$test_root/network-speed.app/Contents/Resources/BlinkClipMenuBarMark.pdf"
 "$test_harness" "$@" | tee "$ARTIFACT_TASK_DIR/out/test.log"
 
 # 源码门：单一呈现意味着渲染器里不该再有单行路径、补位字符或字距补偿。
